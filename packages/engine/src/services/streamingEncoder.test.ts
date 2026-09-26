@@ -24,6 +24,7 @@ import {
   type StreamingEncoderOptions,
 } from "./streamingEncoder.js";
 import { DEFAULT_HDR10_MASTERING } from "../utils/hdr.js";
+import { SDR_CAPTURE_TO_BT709_FILTER } from "../utils/sdrCaptureColor.js";
 
 const baseHdrPq: StreamingEncoderOptions = {
   fps: { num: 30, den: 1 },
@@ -167,13 +168,13 @@ describe("buildStreamingArgs", () => {
       expect(args[args.indexOf("-color_primaries:v") + 1]).toBe("bt709");
       expect(args[args.indexOf("-colorspace:v") + 1]).toBe("bt709");
       expect(args[args.indexOf("-color_range") + 1]).toBe("tv");
-      expect(args[args.indexOf("-vf") + 1]).toBe("scale=in_range=pc:out_range=tv");
+      expect(args[args.indexOf("-vf") + 1]).toBe(SDR_CAPTURE_TO_BT709_FILTER);
     });
 
     it("adds the pad after range conversion for odd SDR output dimensions", () => {
       const args = buildStreamingArgs({ ...baseSdr, height: 1081 }, "/tmp/out.mp4");
       expect(args[args.indexOf("-vf") + 1]).toBe(
-        "scale=in_range=pc:out_range=tv,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        `${SDR_CAPTURE_TO_BT709_FILTER},pad=ceil(iw/2)*2:ceil(ih/2)*2`,
       );
     });
   });
@@ -340,27 +341,26 @@ describe("buildStreamingArgs", () => {
       expect(h265Args[h265Args.indexOf("-qp_i") + 1]).toBe("23");
     });
 
-    // 4:2:0 HW encode aborts on odd dims just like libx264, and these paths
-    // feed software frames straight to the encoder with no `-vf`, so the
-    // even-dim pad (and only the pad, not the SW range scale) must be added.
-    it("pads odd dimensions (no range scale) for non-VAAPI GPU encoding", () => {
+    // 4:2:0 HW encode aborts on odd dims just like libx264, so the pad follows the colour conversion.
+    it("converts to BT.709 and pads odd dimensions for non-VAAPI GPU encoding", () => {
       for (const gpu of ["nvenc", "videotoolbox", "qsv", "amf"] as const) {
         const args = buildStreamingArgs({ ...baseGpu, height: 1081 }, "/tmp/out.mp4", gpu);
         const vfIdx = args.indexOf("-vf");
-        expect(args[vfIdx + 1]).toBe("pad=ceil(iw/2)*2:ceil(ih/2)*2");
-        expect(args[vfIdx + 1]).not.toContain("scale=in_range");
+        expect(args[vfIdx + 1]).toBe(
+          `${SDR_CAPTURE_TO_BT709_FILTER},pad=ceil(iw/2)*2:ceil(ih/2)*2`,
+        );
       }
     });
 
     it("does not require the pad filter for even GPU output dimensions", () => {
       const args = buildStreamingArgs(baseGpu, "/tmp/out.mp4", "videotoolbox");
-      expect(args).not.toContain("-vf");
+      expect(args[args.indexOf("-vf") + 1]).toBe(SDR_CAPTURE_TO_BT709_FILTER);
     });
 
     it("prepends range conversion to VAAPI chain (nv12 covers even-dim)", () => {
       const args = buildStreamingArgs(baseGpu, "/tmp/out.mp4", "vaapi");
       const vfIdx = args.indexOf("-vf");
-      expect(args[vfIdx + 1]).toBe("scale=in_range=pc:out_range=tv,format=nv12,hwupload");
+      expect(args[vfIdx + 1]).toBe(`${SDR_CAPTURE_TO_BT709_FILTER},format=nv12,hwupload`);
     });
   });
 

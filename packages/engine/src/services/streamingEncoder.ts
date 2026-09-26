@@ -35,6 +35,7 @@ import { formatFfmpegError, isExternalFfmpegInterruption } from "../utils/runFfm
 import { getFfmpegBinary } from "../utils/ffmpegBinaries.js";
 import { getHdrEncoderColorParams } from "../utils/hdr.js";
 import { withEvenDimensionPad } from "../utils/evenDimensions.js";
+import { SDR_CAPTURE_TO_BT709_FILTER } from "../utils/sdrCaptureColor.js";
 import { DEFAULT_CONFIG, type EngineConfig } from "../config.js";
 import { fpsToFfmpegArg, fpsToNumber, type Fps } from "@hyperframes/core";
 import { appendVp9CpuUsedArg } from "./vp9Options.js";
@@ -415,7 +416,7 @@ export function buildStreamingArgs(
 
     // Video filter for range/color conversion.
     // Raw HDR input (from WebGPU pipeline) is already PQ-encoded — no conversion needed.
-    // Chrome screenshots need full→TV range conversion.
+    // Chrome screenshots need full→TV range and BT.709 matrix conversion.
     if (options.rawInputFormat) {
       // No filter needed — PQ data goes straight to encoder
     } else if (gpuEncoder === "vaapi") {
@@ -423,23 +424,15 @@ export function buildStreamingArgs(
       // odd dimensions before upload, so only prepend the range conversion.
       const vfIdx = args.indexOf("-vf");
       if (vfIdx !== -1) {
-        args[vfIdx + 1] = `scale=in_range=pc:out_range=tv,${args[vfIdx + 1]}`;
+        args[vfIdx + 1] = `${SDR_CAPTURE_TO_BT709_FILTER},${args[vfIdx + 1]}`;
       }
-    } else if (shouldUseGpu) {
-      // nvenc/videotoolbox/qsv/amf feed software frames straight to the HW
-      // encoder with no `-vf`. They hit the same "height not divisible by 2"
-      // abort as libx264 on an odd-sized 4:2:0 canvas, so pad odd dimensions
-      // up to even on the software side before the encode.
-      const vf = withEvenDimensionPad("", pixelFormat, options.width, options.height);
-      if (vf) args.push("-vf", vf);
     } else {
-      // Range conversion: Chrome screenshots are full-range RGB. Pad odd
-      // dimensions up to even so libx264/libx265 (4:2:0) don't abort with
-      // "height not divisible by 2" on an odd-sized composition canvas.
+      // Pad odd dimensions up to even so 4:2:0 encoders (software and
+      // nvenc/videotoolbox/qsv/amf) don't abort with "height not divisible by 2".
       args.push(
         "-vf",
         withEvenDimensionPad(
-          "scale=in_range=pc:out_range=tv",
+          SDR_CAPTURE_TO_BT709_FILTER,
           pixelFormat,
           options.width,
           options.height,

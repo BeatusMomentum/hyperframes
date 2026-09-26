@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +14,10 @@ import {
   resolveLockedGopSize,
 } from "./chunkEncoder.js";
 import { renderProvenanceArgs } from "../utils/renderProvenance.js";
+import { SDR_CAPTURE_TO_BT709_FILTER } from "../utils/sdrCaptureColor.js";
+import { getFfmpegBinary } from "../utils/ffmpegBinaries.js";
+
+const HAS_FFMPEG = spawnSync(getFfmpegBinary(), ["-version"]).status === 0;
 
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEElEQVR4nGP8wwACLGCSAQANBAECv1AVswAAAABJRU5ErkJggg==",
@@ -1071,7 +1076,7 @@ describe("buildEncoderArgs color space", () => {
     );
     const vfIdx = args.indexOf("-vf");
     expect(vfIdx).toBeGreaterThan(-1);
-    expect(args[vfIdx + 1]).toBe("scale=in_range=pc:out_range=tv");
+    expect(args[vfIdx + 1]).toBe(SDR_CAPTURE_TO_BT709_FILTER);
   });
 
   it("adds the pad after range conversion for odd CPU output dimensions", () => {
@@ -1081,7 +1086,7 @@ describe("buildEncoderArgs color space", () => {
       "out.mp4",
     );
     const vfIdx = args.indexOf("-vf");
-    expect(args[vfIdx + 1]).toBe("scale=in_range=pc:out_range=tv,pad=ceil(iw/2)*2:ceil(ih/2)*2");
+    expect(args[vfIdx + 1]).toBe(`${SDR_CAPTURE_TO_BT709_FILTER},pad=ceil(iw/2)*2:ceil(ih/2)*2`);
   });
 
   it("prepends range conversion to VAAPI filter chain", () => {
@@ -1093,10 +1098,10 @@ describe("buildEncoderArgs color space", () => {
     );
     const vfIdx = args.indexOf("-vf");
     expect(vfIdx).toBeGreaterThan(-1);
-    expect(args[vfIdx + 1]).toBe("scale=in_range=pc:out_range=tv,format=nv12,hwupload");
+    expect(args[vfIdx + 1]).toBe(`${SDR_CAPTURE_TO_BT709_FILTER},format=nv12,hwupload`);
   });
 
-  it("pads odd dimensions (no range scale) for non-VAAPI GPU encoding", () => {
+  it("converts to BT.709 and pads odd dimensions for non-VAAPI GPU encoding", () => {
     for (const gpu of ["nvenc", "videotoolbox", "qsv", "amf"] as const) {
       const args = buildEncoderArgs(
         {
@@ -1112,10 +1117,7 @@ describe("buildEncoderArgs color space", () => {
         gpu,
       );
       const vfIdx = args.indexOf("-vf");
-      // 4:2:0 HW encode still aborts on odd dims, so the pad must be present —
-      // but the range scale belongs to the SW path only.
-      expect(args[vfIdx + 1]).toBe("pad=ceil(iw/2)*2:ceil(ih/2)*2");
-      expect(args[vfIdx + 1]).not.toContain("scale=in_range");
+      expect(args[vfIdx + 1]).toBe(`${SDR_CAPTURE_TO_BT709_FILTER},pad=ceil(iw/2)*2:ceil(ih/2)*2`);
       // but still has color metadata
       expect(args).toContain("-colorspace:v");
     }
@@ -1128,7 +1130,7 @@ describe("buildEncoderArgs color space", () => {
       "out.mp4",
       "videotoolbox",
     );
-    expect(args).not.toContain("-vf");
+    expect(args[args.indexOf("-vf") + 1]).toBe(SDR_CAPTURE_TO_BT709_FILTER);
   });
 
   it("pads odd dimensions for 10-bit (yuv420p10le) GPU HDR encoding", () => {
@@ -1684,14 +1686,14 @@ describe("buildEncoderArgs HDR color space", () => {
     expect(args[vfIdx + 1]).toContain("scale=in_range=pc:out_range=tv");
   });
 
-  it("uses same range conversion for SDR CPU encoding", () => {
+  it("converts SDR CPU captures to the BT.709 matrix", () => {
     const args = buildEncoderArgs(
       { ...baseOptions, codec: "h264", preset: "medium", quality: 23 },
       inputArgs,
       "out.mp4",
     );
     const vfIdx = args.indexOf("-vf");
-    expect(args[vfIdx + 1]).toContain("scale=in_range=pc:out_range=tv");
+    expect(args[vfIdx + 1]).toBe(SDR_CAPTURE_TO_BT709_FILTER);
   });
 
   it("tags BT.2020 + transfer for HDR GPU H.265 (no mastering metadata via -x265-params)", () => {
@@ -1740,4 +1742,71 @@ describe("buildConcatArgs", () => {
     expect(args.at(-2)).toBe("-y");
     expect(args.at(-1)).toBe("/w/video-only.mp4");
   });
+});
+
+describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
+  // Chrome captures JPEG frames as BT.601; the mp4 used to keep that matrix under its BT.709 tag,
+  // so a CSS #C83C28 decoded as #D44824.
+  it("delivers Chrome's JPEG colours in the BT.709 the mp4 is tagged with", () => {
+    const ffmpeg = getFfmpegBinary();
+    const dir = mkdtempSync(join(tmpdir(), "hf-sdr-colour-"));
+    const rgbAt = (file: string, decode: string): number[] => [
+      ...spawnSync(ffmpeg, [
+        "-v",
+        "error",
+        "-i",
+        file,
+        "-vf",
+        `${decode}format=rgb24,crop=1:1:8:8`,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-",
+      ]).stdout,
+    ];
+    try {
+      for (const color of ["0xC83C28", "0x101010", "0x2050E0"]) {
+        const jpg = join(dir, "frame.jpg");
+        const out = join(dir, "out.mp4");
+        const synth = spawnSync(ffmpeg, [
+          "-v",
+          "error",
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          `color=c=${color}:s=16x16`,
+          "-frames:v",
+          "1",
+          "-pix_fmt",
+          "yuvj420p",
+          jpg,
+        ]);
+        expect(synth.status).toBe(0);
+        const args = buildEncoderArgs(
+          {
+            fps: { num: 30, den: 1 },
+            width: 16,
+            height: 16,
+            codec: "h264",
+            preset: "ultrafast",
+            quality: 0,
+          },
+          ["-i", jpg],
+          out,
+        );
+        expect(spawnSync(ffmpeg, args).status).toBe(0);
+
+        const captured = rgbAt(jpg, "");
+        const delivered = rgbAt(out, "scale=in_color_matrix=bt709:in_range=tv,");
+        const worst = Math.max(...delivered.map((v, i) => Math.abs(v - captured[i]!)));
+        expect(worst, `${color}: capture ${captured} delivered ${delivered}`).toBeLessThanOrEqual(
+          1,
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
