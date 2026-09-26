@@ -9,10 +9,14 @@ import {
   lstatSync,
   realpathSync,
 } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { readNodeRequestBody } from "./vite.request-body.js";
 import { watch } from "chokidar";
-import { createProjectSignatureCache, createViteAdapter } from "./vite.adapter";
+import {
+  createProjectSignatureCache,
+  createViteAdapter,
+  projectIdForWatchedFile,
+} from "./vite.adapter";
 import { previewConfigPayload } from "./vite.preview-config";
 import { loadStudioServerDevModule } from "./vite.studio-server-module";
 import type { openProjectHistory } from "@hyperframes/studio-server";
@@ -254,6 +258,13 @@ function devProjectApi(): Plugin {
           !filePath.endsWith(".json")
         )
           return;
+        // Mirrors the CLI host's `project.id` field on the same event — see its
+        // doc comment for why a stale tab needs this to ignore another
+        // project's saves on a shared connection. This host is multi-project
+        // (any dir under `dataDir` resolves), so unlike the CLI host it can't
+        // assume one fixed id.
+        const projectId = projectIdForWatchedFile(dataDir, filePath);
+        if (!projectId) return;
         console.log(`[Studio] File changed: ${filePath}`);
         // The receipt is matched on the file's current bytes, not just its path,
         // so a write is only recognised as ours when the version agrees. Calling
@@ -269,13 +280,6 @@ function devProjectApi(): Plugin {
         const receipt = studioServer
           ? studioServer.identifyFileWrite(filePath, version ?? studioServer.DELETED_VERSION)
           : null;
-        // First path segment under `dataDir` is the project id (`data/projects/<id>/...`).
-        // Mirrors the CLI host's `project.id` field on the same event — see its
-        // doc comment for why a stale tab needs this to ignore another
-        // project's saves on a shared connection. This host is multi-project
-        // (any dir under `dataDir` resolves), so unlike the CLI host it can't
-        // assume one fixed id.
-        const projectId = relative(dataDir, filePath).split(sep)[0];
         server.ws.send({
           type: "custom",
           event: "hf:file-change",

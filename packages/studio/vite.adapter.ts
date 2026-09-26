@@ -42,6 +42,27 @@ function isPathWithin(parentDir: string, childPath: string): boolean {
   );
 }
 
+/** The project under `dataDir` that owns a watched file; a symlinked project is watched by its real path. */
+export function projectIdForWatchedFile(dataDir: string, filePath: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(dataDir);
+  } catch {
+    return null;
+  }
+  for (const id of entries) {
+    const linked = join(dataDir, id);
+    let real = linked;
+    try {
+      real = realpathSync(linked);
+    } catch {
+      // A broken symlink owns no files.
+    }
+    if (isPathWithin(linked, filePath) || isPathWithin(real, filePath)) return id;
+  }
+  return null;
+}
+
 export function resolveViteAutoProxy(value: string | undefined): boolean {
   return value !== "false";
 }

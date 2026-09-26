@@ -15,7 +15,11 @@ import { join, win32 } from "node:path";
 import { isValidProjectId } from "./src/utils/projectRouting";
 import { createStudioApi, type ProjectHistory } from "@hyperframes/studio-server";
 import type { ViteDevServer } from "vite";
-import { createProjectSignatureCache, createViteAdapter } from "./vite.adapter";
+import {
+  createProjectSignatureCache,
+  createViteAdapter,
+  projectIdForWatchedFile,
+} from "./vite.adapter";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -173,5 +177,20 @@ describe("Vite project resolution boundary", () => {
     const { sessions, adapter } = fixture();
     writeFileSync(join(sessions, "alias.json"), JSON.stringify({ projectId: "../sessions" }));
     expect(adapter.resolveProject("alias")).toBeNull();
+  });
+});
+
+describe("Vite dev watcher project id", () => {
+  it("names a symlinked project from the real path the watcher reports", () => {
+    const { root, data } = fixture();
+    const real = join(root, "elsewhere");
+    mkdirSync(join(real, "assets"), { recursive: true });
+    symlinkSync(real, join(data, "promo"), "junction");
+    mkdirSync(join(data, "..plain"));
+
+    expect(projectIdForWatchedFile(data, join(realpathSync(real), "index.html"))).toBe("promo");
+    expect(projectIdForWatchedFile(data, join(real, "assets", "a.css"))).toBe("promo");
+    expect(projectIdForWatchedFile(data, join(data, "..plain", "index.html"))).toBe("..plain");
+    expect(projectIdForWatchedFile(data, join(root, "sessions", "x.json"))).toBeNull();
   });
 });
