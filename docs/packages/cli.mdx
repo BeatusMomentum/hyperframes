@@ -319,8 +319,9 @@ npx hyperframes models install parakeet --json   # one JSON result
 `parakeet` installs the sherpa-onnx runtime from npm and NVIDIA's Parakeet TDT
 0.6B v3 speech model (int8, about 640 MB, CC-BY-4.0) into
 `~/.cache/hyperframes`. Every file is checked against a pinned size and
-sha256. Re-running is a no-op on a good install and reinstalls any missing or
-corrupt part, including a runtime whose native binary is gone. It runs on macOS
+sha256. Re-running loads the runtime in a separate process and re-checks each
+model file's sha256, reinstalls whichever fails, and changes nothing on a good
+install. It runs on macOS
 (arm64, x64), Windows (x64, ia32) and Linux (x64, arm64, glibc 2.32 or newer),
 and refuses up front anywhere else. Ctrl-C stops the download and keeps no
 partial file.

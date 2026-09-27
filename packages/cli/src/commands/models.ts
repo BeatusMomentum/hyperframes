@@ -37,17 +37,13 @@ type Spinner = ReturnType<typeof clack.spinner> | null;
 
 /** Installs what is missing; true when anything changed. */
 async function installMissing(sherpa: Sherpa, spin: Spinner, signal: AbortSignal) {
-  const runtimeMissing = !sherpa.sherpaRuntimeInstalled();
-  if (runtimeMissing) {
-    spin?.message("Installing the sherpa-onnx runtime from npm...");
-    await sherpa.installSherpaRuntime({ signal });
-  }
+  const runtimeInstalled = await sherpa.installSherpaRuntime({ signal });
   spin?.message("Verifying the Parakeet model...");
   const modelFetched = await sherpa.ensureParakeetModel({
     signal,
     onBytes: downloadProgress(spin),
   });
-  return runtimeMissing || modelFetched;
+  return runtimeInstalled || modelFetched;
 }
 
 async function installParakeet(json: boolean): Promise<void> {
@@ -58,7 +54,7 @@ async function installParakeet(json: boolean): Promise<void> {
   const spin = json ? null : clack.spinner({ output: process.stderr });
   // Ctrl-C must stop a 650 MB download, not just print "Canceled" over it.
   const cancellation = createRenderCancellationScope();
-  spin?.start("Checking the sherpa-onnx runtime...");
+  spin?.start("Checking the sherpa-onnx runtime (installing it from npm if it does not load)...");
   try {
     const changed = await installMissing(sherpa, spin, cancellation.signal);
     spin?.stop(c.success(changed ? "Parakeet installed" : "Parakeet is already installed"));
