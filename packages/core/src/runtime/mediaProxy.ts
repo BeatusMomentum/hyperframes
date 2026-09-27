@@ -47,6 +47,10 @@ type ProxyTrigger = "proactive" | "reactive" | "tertiary";
 // still gets its own single diagnostic.
 const unavailableDiagnosedElements = new WeakSet<HTMLMediaElement>();
 
+// Swapped elements reloaded once without having waited for their proxy, so a
+// proxy that is served but will not decode is diagnosed instead of reloaded again.
+const reloadedWithoutWait = new WeakSet<HTMLMediaElement>();
+
 function currentSrcValue(el: HTMLMediaElement): string {
   return el.currentSrc || el.src;
 }
@@ -254,6 +258,41 @@ export function swapToProxy(
   );
 }
 
+/** Asks for one byte of the proxy (an element never sees its status) while the
+ * server answers 202 (copy being made) or 503 (queue full), after each Retry-After. */
+async function proxyServed(
+  href: string,
+  live: () => boolean,
+): Promise<{ served: boolean; waited: boolean }> {
+  let waited = false;
+  while (live()) {
+    const res = await fetch(href, { headers: { Range: "bytes=0-0" }, cache: "no-store" }).catch(
+      () => null,
+    );
+    void res?.body?.cancel().catch(() => {});
+    if (res?.status !== 202 && res?.status !== 503) return { served: res?.ok ?? false, waited };
+    waited = true;
+    const seconds = Math.min(Number(res.headers.get("Retry-After")) || 2, 30);
+    await new Promise((resolveWait) => setTimeout(resolveWait, seconds * 1000));
+  }
+  return { served: false, waited };
+}
+
+/** A swapped element that errored: reload it once its proxy is served, or diagnose. */
+function reloadWhenProxyServed(el: HTMLMediaElement, src: string): void {
+  const live = () => el.isConnected && currentSrcValue(el) === src;
+  void proxyServed(src, live).then(({ served, waited }) => {
+    if (!live()) return;
+    if (served && (waited || !reloadedWithoutWait.has(el))) {
+      if (!waited) reloadedWithoutWait.add(el);
+      evictMediaSyncState(el);
+      el.load();
+      return;
+    }
+    emitUnavailableDiagnostic(el, "proxy_playback_failed", src);
+  });
+}
+
 /**
  * Proactive trigger: consult the codec map before an element's first
  * `load()` and swap ahead of time when the browser is known-unlikely to
@@ -320,14 +359,15 @@ export function handleMetadataForProxy(el: HTMLMediaElement): void {
  * it and `loadedmetadata` never fires. Same guards and once-per-element
  * behavior as the reactive path, plus one extra skip: an entry the scan
  * mapped as browser-SAFE that still errors is a corrupt-but-safe file — an
- * proxy of a broken source can't help, so only diagnose.
+ * proxy of a broken source can't help, so only diagnose. An already-swapped
+ * element's error is usually its proxy still being made (202), so it waits.
  */
 export function handleErrorForProxy(el: HTMLMediaElement): void {
   if (isRenderMode(el)) return;
   if (!isVideoElement(el)) return;
   const src = currentSrcValue(el);
   if (swappedElements.has(el)) {
-    emitUnavailableDiagnostic(el, "proxy_playback_failed", src);
+    reloadWhenProxyServed(el, src);
     return;
   }
   const map = window.__HF_MEDIA_CODEC_MAP__;

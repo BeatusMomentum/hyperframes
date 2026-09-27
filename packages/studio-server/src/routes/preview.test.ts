@@ -956,8 +956,13 @@ describe("hf-proxy negotiation and media codec map injection (U3)", () => {
           "",
         );
       });
+    const { waitForProxy, ProxyWaitTimeoutError } = await vi.importActual<
+      typeof import("../helpers/proxyTranscoder.js")
+    >("../helpers/proxyTranscoder.js");
     vi.doMock("../helpers/proxyTranscoder.js", () => ({
       resolveProxy,
+      waitForProxy,
+      ProxyWaitTimeoutError,
       ProxyTranscodeError: FakeProxyTranscodeError,
       ProxyCapacityError: FakeProxyCapacityError,
       PROXY_PARAMS_VERSION: "v1",
@@ -1292,6 +1297,44 @@ describe("hf-proxy negotiation and media codec map injection (U3)", () => {
       );
       expect(res.status).toBe(503);
       expect(res.headers.get("Retry-After")).toBe("5");
+    });
+
+    it("answers 202 at once while the copy is made, then serves the copy once it lands", async () => {
+      const projectDir = createProjectDir();
+      writeFileSync(join(projectDir, "clip.mp4"), "original-hevc-bytes");
+      const proxyPath = join(projectDir, "proxy.mp4");
+      let landCopy!: () => void;
+      const transcode = new Promise<string>((resolveCopy) => {
+        landCopy = () => {
+          writeFileSync(proxyPath, "proxy-bytes");
+          resolveCopy(proxyPath);
+        };
+      });
+      const { registerPreviewRoutes: register } = await loadPreviewModule({
+        resolveProxyImpl: () => transcode,
+      });
+      const { mediaProxyDemand } = await import("../helpers/mediaCodecMap.js");
+      const before = mediaProxyDemand().proxyRequests;
+      const app = new Hono();
+      register(app, createAdapter(projectDir));
+      const url = "http://localhost/projects/demo/preview/clip.mp4?hf-proxy=h264";
+
+      const pending = await Promise.race([
+        app.request(url),
+        new Promise<"held">((resolveHeld) => setTimeout(resolveHeld, 1000, "held")),
+      ]);
+      expect(pending, "a cold copy must not hold the request for the transcode").not.toBe("held");
+      const cold = pending as Response;
+      expect(cold.status).toBe(202);
+      expect(cold.headers.get("Retry-After")).toBe("2");
+      expect(cold.headers.get("Cache-Control")).toBe("no-store");
+      expect(mediaProxyDemand().proxyRequests - before).toBe(0);
+
+      landCopy();
+      const ready = await app.request(url);
+      expect(ready.status).toBe(200);
+      expect(await ready.text()).toBe("proxy-bytes");
+      expect(mediaProxyDemand().proxyRequests - before).toBe(1);
     });
 
     it("rejects a path-traversal attempt through the proxied path (404, no transcode)", async () => {

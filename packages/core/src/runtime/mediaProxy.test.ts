@@ -66,7 +66,19 @@ function isProxied(el: HTMLMediaElement): boolean {
   return proxyVariant(el) !== null;
 }
 
+/** Stubs the proxy route's answers to the one-byte ask, in order; 202 and 503 carry a Retry-After. */
+function stubProxyRoute(...statuses: number[]) {
+  const route = vi.fn(async () => {
+    const status = statuses.shift() ?? 404;
+    const retry = status === 202 || status === 503 ? { "Retry-After": "2" } : undefined;
+    return new Response(status === 206 ? "x" : null, { status, headers: retry });
+  });
+  vi.stubGlobal("fetch", route);
+  return route;
+}
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -413,14 +425,17 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("the proxy URL itself erroring: no second swap, diagnostic reports the failure instead", () => {
+  it("the proxy URL itself erroring: no second swap, diagnostic reports the failure instead", async () => {
+    const route = stubProxyRoute(502);
     const el = createVideo("/video.mp4");
     swapToProxy(el, HEVC_ENTRY, "proactive");
     expect(el.load).toHaveBeenCalledTimes(1);
     postRuntimeMessageMock.mockClear();
 
     handleErrorForProxy(el);
+    await vi.waitFor(() => expect(postRuntimeMessageMock).toHaveBeenCalled());
 
+    expect(route).toHaveBeenCalledTimes(1);
     expect(el.load).toHaveBeenCalledTimes(1); // no second load()/swap
     expect(postRuntimeMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -428,6 +443,57 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
         details: expect.objectContaining({ reason: "proxy_playback_failed" }),
       }),
     );
+  });
+
+  it("a proxy still being made is asked again after each Retry-After, and the video reloads once it is served", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(202, 503, 202, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
+
+    handleErrorForProxy(el);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(route).toHaveBeenCalledTimes(4);
+    expect(route).toHaveBeenCalledWith(
+      el.src,
+      expect.objectContaining({ headers: { Range: "bytes=0-0" } }),
+    );
+    expect(el.load).toHaveBeenCalledTimes(2);
+    expect(isProxied(el)).toBe(true);
+    expect(postRuntimeMessageMock).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("a served proxy that errors is reloaded once, then diagnosed", async () => {
+    stubProxyRoute(206, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
+
+    handleErrorForProxy(el);
+    await vi.waitFor(() => expect(el.load).toHaveBeenCalledTimes(2));
+    handleErrorForProxy(el);
+    await vi.waitFor(() => expect(postRuntimeMessageMock).toHaveBeenCalled());
+
+    expect(el.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops asking once the element leaves the document", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(202, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+
+    handleErrorForProxy(el);
+    await vi.advanceTimersByTimeAsync(0);
+    el.remove();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(el.load).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });
 
