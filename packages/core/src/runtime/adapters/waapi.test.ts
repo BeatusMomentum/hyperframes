@@ -166,7 +166,9 @@ describe("waapi adapter", () => {
 
   it("keeps scanning after an empty discover while the page authors CSS animations", () => {
     const getAnimations = setAnimations([]);
-    const adapter = createWaapiAdapter({ authored: { hasAny: () => true } });
+    const adapter = createWaapiAdapter({
+      authored: { has: () => false, hasAny: () => true, drivenByCssAdapter: () => false },
+    });
     adapter.discover();
     adapter.seek({ time: 1.9 });
     // A class adds it as the playhead enters its clip.
@@ -299,6 +301,152 @@ describe("waapi adapter", () => {
         (globalThis as { Element?: unknown }).Element = originalElement;
       }
     }
+  });
+
+  describe("CSS animations", () => {
+    // Structural stand-ins: a CSSAnimation has animationName; a ShadowRoot is a fragment with a host.
+    const inTree = (root: object) => ({ getRootNode: () => root, closest: () => null });
+    const makeCssAnimation = (target: object, currentTime = 0) =>
+      Object.assign(makeAnimation(currentTime), { animationName: "slide", effect: { target } });
+    type Fake = ReturnType<typeof makeCssAnimation>;
+    // `authored`: the ones computed style named at discover; `cssDriven`: the CSS adapter's.
+    const adapterWith = (
+      starts: Map<object, number>,
+      authored: Fake[] = [],
+      cssDriven: Fake[] = [],
+    ) =>
+      createWaapiAdapter({
+        resolveStartSeconds: (element) => starts.get(element) ?? 0,
+        authored: {
+          has: (animation) => authored.includes(animation as unknown as Fake),
+          hasAny: () => authored.length > 0,
+          drivenByCssAdapter: (animation) => cssDriven.includes(animation as unknown as Fake),
+        },
+      });
+
+    describe("an authored one starts with its clip", () => {
+      it("however long it ran before it was first tracked", () => {
+        const animation = makeCssAnimation(inTree(document), 437);
+        setAnimations([animation]);
+
+        const adapter = adapterWith(new Map(), [animation]);
+        adapter.discover();
+        adapter.seek({ time: 2 });
+
+        expect(animation.currentTime).toBe(2000);
+      });
+
+      it("on a pseudo-element, at its owner's clip start", () => {
+        const owner = inTree(document);
+        const animation = Object.assign(makeCssAnimation(owner, 250), {
+          effect: { target: owner, pseudoElement: "::before" },
+        });
+        setAnimations([animation]);
+
+        const adapter = adapterWith(new Map([[owner, 3]]), [animation]);
+        adapter.discover();
+        adapter.seek({ time: 4 });
+
+        expect(animation.currentTime).toBe(1000);
+      });
+
+      it("in nested shadow roots, at the outer host's clip start", () => {
+        const outerHost = inTree(document);
+        const outer = { nodeType: 11, host: outerHost };
+        const inner = { nodeType: 11, host: inTree(outer) };
+        const animation = makeCssAnimation(inTree(inner), 180);
+        setAnimations([animation]);
+
+        const adapter = adapterWith(new Map([[outerHost, 3]]), [animation]);
+        adapter.discover();
+        adapter.seek({ time: 4 });
+
+        expect(animation.currentTime).toBe(1000);
+      });
+
+      it("when its clip, hidden at discover, is shown mid-film", () => {
+        const el = inTree(document);
+        const shown = makeCssAnimation(el);
+        const getAnimations = setAnimations([]);
+
+        const adapter = adapterWith(new Map([[el, 3]]), [shown]);
+        adapter.discover();
+        adapter.seek({ time: 2 });
+        getAnimations.mockReturnValue([shown]);
+        adapter.seek({ time: 4 });
+
+        expect(shown.currentTime).toBe(1000);
+      });
+
+      it("and its clip start gives the duration", () => {
+        const owner = inTree(document);
+        const animation = Object.assign(makeCssAnimation(owner), {
+          effect: { target: owner, getComputedTiming: () => ({ endTime: 4000 }) },
+        });
+        setAnimations([animation]);
+
+        const adapter = adapterWith(new Map([[owner, 3]]), [animation]);
+        expect(adapter.getInferredDurationSeconds?.()).toBe(7);
+      });
+    });
+
+    describe("one the page did not author starts where it is first seen", () => {
+      // First seen at 2 s; an authored animation elsewhere keeps the scan on.
+      const secondsIntoIt = (animation: Fake) => {
+        const other = makeCssAnimation(inTree(document));
+        const getAnimations = setAnimations([other]);
+        const adapter = adapterWith(new Map(), [other]);
+        adapter.discover();
+        adapter.seek({ time: 1.9 });
+        getAnimations.mockReturnValue([other, animation]);
+        adapter.seek({ time: 2 });
+        adapter.seek({ time: 2.5 });
+        return animation.currentTime;
+      };
+
+      it("when a class adds it, whatever its wall-clock time", () => {
+        expect(secondsIntoIt(makeCssAnimation(inTree(document), 437))).toBe(500);
+      });
+
+      it("on a ::before", () => {
+        const owner = inTree(document);
+        const animation = Object.assign(makeCssAnimation(owner), {
+          effect: { target: owner, pseudoElement: "::before" },
+        });
+        expect(secondsIntoIt(animation)).toBe(500);
+      });
+
+      it("on an element appended into its clip", () => {
+        const clip = inTree(document);
+        const appended = { getRootNode: () => document, closest: () => clip };
+        expect(secondsIntoIt(makeCssAnimation(appended))).toBe(500);
+      });
+    });
+
+    it("keeps anchoring a script-created animation where it was first seen", () => {
+      const target = inTree(document);
+      const animation = Object.assign(makeAnimation(700), { effect: { target } });
+      setAnimations([animation]);
+
+      const adapter = adapterWith(new Map([[target, 3]]));
+      adapter.discover();
+      adapter.seek({ time: 1 });
+
+      expect(animation.currentTime).toBe(1700);
+    });
+
+    it("never writes to one the CSS adapter drives", () => {
+      const animation = makeCssAnimation(inTree(document), 437);
+      setAnimations([animation]);
+
+      const adapter = adapterWith(new Map(), [animation], [animation]);
+      adapter.discover();
+      adapter.seek({ time: 2 });
+      adapter.pause();
+
+      expect(animation.currentTime).toBe(437);
+      expect(animation.pause).not.toHaveBeenCalled();
+    });
   });
 
   describe("getInferredDurationSeconds", () => {

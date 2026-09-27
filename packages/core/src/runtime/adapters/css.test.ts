@@ -2,15 +2,17 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { createCssAdapter } from "./css";
 import { createAuthoredCssAnimations } from "./cssAnimation";
 
-// jsdom has no Animation subclasses; the adapter tells them apart with instanceof CSSAnimation.
+// jsdom has no Animation subclasses; the adapter tells a CSSAnimation by its animationName.
 class FakeAnimation {}
 class FakeCSSAnimation extends FakeAnimation {}
 class FakeCSSTransition extends FakeAnimation {}
 
-// Named as its element's computed style names it at the time, so it counts as authored.
+// A CSSAnimation is named as its element's computed style names it then, so it counts as authored.
 const makeAnimation = (target: Element, kind: typeof FakeAnimation = FakeCSSAnimation) =>
   Object.assign(new kind(), {
-    animationName: window.getComputedStyle(target).animationName,
+    ...(kind === FakeCSSAnimation && {
+      animationName: window.getComputedStyle(target).animationName,
+    }),
     currentTime: 0,
     pause: vi.fn(),
     play: vi.fn(),
@@ -495,6 +497,15 @@ describe("css adapter", () => {
         expect(el.style.animationDelay).toBe("");
         expect(el.style.animationPlayState).toBe("");
       });
+    });
+
+    it("seeks a CSSAnimation from another realm, which is no instance of this one's", () => {
+      const animation = Object.assign(makeAnimation(el, FakeAnimation), { animationName: "slide" });
+      const { adapter } = setup([animation]);
+
+      adapter.seek({ time: 3 });
+
+      expect(animation.currentTime).toBe(2000);
     });
 
     it("seeks every animation where the browser has no CSSAnimation to tell them apart", () => {

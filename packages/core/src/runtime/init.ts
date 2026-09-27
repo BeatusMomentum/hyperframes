@@ -250,10 +250,10 @@ const SLOW_IDLE_HEARTBEAT_MS = 1000;
 // GSAP `data` on the tweens the runtime adds to stretch a timeline; never animation.
 const RUNTIME_FILLER = "hf-runtime-filler";
 
-// One document.getAnimations() per seek and the pause after it, read on first use, shared by all adapters.
-function pageAnimationsForOnePass(): () => Animation[] {
+// One page scan per seek and the pause after it, read on first use, shared by all adapters.
+function pageAnimationsForOnePass(read: () => Animation[]): () => Animation[] {
   let list: Animation[] | undefined;
-  return () => (list ??= document.getAnimations());
+  return () => (list ??= read());
 }
 
 export function initSandboxRuntimeModular(): void {
@@ -3056,6 +3056,10 @@ export function initSandboxRuntimeModular(): void {
     postState(true);
   };
 
+  const authoredCss = createAuthoredCssAnimations();
+  const readPageAnimations = () =>
+    [document, ...authoredCss.shadowRoots()].flatMap((scope) => scope.getAnimations());
+
   const runAdapters = (
     method: "discover" | "pause" | "play",
     timeSeconds = 0,
@@ -3577,17 +3581,12 @@ export function initSandboxRuntimeModular(): void {
     compositionId: findRootCompositionElement()?.getAttribute("data-composition-id") ?? null,
   });
 
-  const authoredCss = createAuthoredCssAnimations();
+  const resolveStartSeconds = (element: Element) => resolveStartForElement(element, 0);
   state.deterministicAdapters = [
-    createWaapiAdapter({ authored: authoredCss }),
-    createCssAdapter({
-      resolveStartSeconds: (element) => resolveStartForElement(element, 0),
-      authored: authoredCss,
-    }),
+    createCssAdapter({ resolveStartSeconds, authored: authoredCss }),
+    createWaapiAdapter({ resolveStartSeconds, readPageAnimations, authored: authoredCss }),
     createAnimeJsAdapter(),
-    createLottieAdapter({
-      resolveStartSeconds: (element) => resolveStartForElement(element, 0),
-    }),
+    createLottieAdapter({ resolveStartSeconds }),
     createThreeAdapter(),
     createMapboxAdapter(),
     createLeafletAdapter(),
@@ -3959,7 +3958,7 @@ export function initSandboxRuntimeModular(): void {
     // the deterministic adapters, syncTimedElementVisibility, the hf-timelines-built
     // handler and __hfReseekGpu. It only ever moved the state the seek left behind.
     seekStandaloneRegisteredTimelines(t, opts);
-    const pageAnimations = pageAnimationsForOnePass();
+    const pageAnimations = pageAnimationsForOnePass(readPageAnimations);
     for (const adapter of state.deterministicAdapters) {
       if (adapter.name === "gsap" && tl) continue;
       try {

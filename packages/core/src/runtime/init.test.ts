@@ -3721,7 +3721,7 @@ describe("initSandboxRuntimeModular", () => {
         animationName: target === animated ? "slide" : "none",
       } as CSSStyleDeclaration;
     });
-    // jsdom has no CSSAnimation; the CSS adapter seeks only its instances named at discover.
+    // jsdom has no CSSAnimation; both adapters tell one by its animationName.
     class CSSAnimation {}
     vi.stubGlobal("CSSAnimation", CSSAnimation);
     const animation = Object.assign(new CSSAnimation(), {
@@ -3740,10 +3740,12 @@ describe("initSandboxRuntimeModular", () => {
       initSandboxRuntimeModular();
 
       getAnimations.mockClear();
+      vi.mocked(animation.pause).mockClear();
       window.__player!.renderSeek(2);
       expect(getAnimations).toHaveBeenCalledTimes(1);
-      // The WAAPI adapter writes 2000; only the CSS adapter, reading the same list, writes clip time.
+      // Only the CSS adapter writes it: its seek, then the pass's pause.
       expect(animation.currentTime).toBe(1000);
+      expect(animation.pause).toHaveBeenCalledTimes(2);
 
       getAnimations.mockClear();
       window.__player!.seek(3);
@@ -3804,6 +3806,222 @@ describe("initSandboxRuntimeModular", () => {
     });
   });
 
+  it("times a clip's ::before and nested shadow-tree CSS animations with the clip, in one page scan", () => {
+    const root = document.createElement("div");
+    root.setAttribute("data-composition-id", "main");
+    root.setAttribute("data-root", "true");
+    root.setAttribute("data-start", "0");
+    root.setAttribute("data-duration", "10");
+    root.setAttribute("data-width", "1920");
+    root.setAttribute("data-height", "1080");
+    const host = document.createElement("div");
+    host.setAttribute("data-start", "1");
+    root.appendChild(host);
+    document.body.appendChild(root);
+    const outerShadow = host.attachShadow({ mode: "open" });
+    const innerHost = document.createElement("div");
+    outerShadow.appendChild(innerHost);
+    const innerShadow = innerHost.attachShadow({ mode: "open" });
+    const leaf = document.createElement("span");
+    innerShadow.appendChild(leaf);
+
+    vi.spyOn(window, "getComputedStyle").mockImplementation(
+      (target) =>
+        ({
+          animationName: target === host || target === leaf ? "slide" : "none",
+        }) as CSSStyleDeclaration,
+    );
+    class CSSAnimation {}
+    vi.stubGlobal("CSSAnimation", CSSAnimation);
+    const cssAnimation = (effect: object) =>
+      Object.assign(new CSSAnimation(), {
+        animationName: "slide",
+        currentTime: 437,
+        pause: vi.fn(),
+        play: vi.fn(),
+        addEventListener: vi.fn(),
+        effect,
+      }) as unknown as Animation;
+    // The CSS adapter seeks the host's own; the WAAPI adapter the ::before and the shadow tree's.
+    const own = cssAnimation({ target: host });
+    const before = cssAnimation({ target: host, pseudoElement: "::before" });
+    const inShadow = cssAnimation({ target: leaf });
+    const scans = [vi.fn(() => [own, before]), vi.fn(() => []), vi.fn(() => [inShadow])];
+    const [documentScan, outerScan, innerScan] = scans;
+    document.getAnimations = documentScan!;
+    Object.assign(outerShadow, { getAnimations: outerScan });
+    Object.assign(innerShadow, { getAnimations: innerScan });
+    window.__timelines = {};
+
+    try {
+      initSandboxRuntimeModular();
+      const player = window.__player!;
+      for (const [move, time] of [
+        [player.renderSeek, 2],
+        [player.seek, 3],
+      ] as const) {
+        for (const scan of scans) scan.mockClear();
+        move(time);
+        for (const scan of scans) expect(scan).toHaveBeenCalledTimes(1);
+        const clipMs = (time - 1) * 1000;
+        expect([own, before, inShadow].map((a) => a.currentTime)).toEqual([clipMs, clipMs, clipMs]);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(document, "getAnimations");
+    }
+  });
+
+  describe("a CSS animation in a shadow tree", () => {
+    const mount = (rootAttrs: string) => {
+      document.body.innerHTML = `<div data-composition-id="main" data-root="true" data-start="0" ${rootAttrs} data-width="1920" data-height="1080"><div id="first"></div><div id="host" data-start="3"></div></div>`;
+      window.__timelines = {};
+      document.getAnimations = () => [];
+      return (hostId = "host") => {
+        const leaf = document.createElement("span");
+        leaf.style.animationName = "slide";
+        const shadow = document.getElementById(hostId)!.attachShadow({ mode: "open" });
+        shadow.appendChild(leaf);
+        const animation = {
+          animationName: "slide",
+          currentTime: 437,
+          pause: vi.fn(),
+          addEventListener: vi.fn(),
+          effect: { target: leaf, getComputedTiming: () => ({ endTime: 4000 }) },
+        } as unknown as Animation;
+        Object.assign(shadow, { getAnimations: () => [animation] });
+        return animation;
+      };
+    };
+
+    afterEach(() => {
+      Reflect.deleteProperty(document, "getAnimations");
+    });
+
+    it("gives a root with no data-duration and no timeline its length", () => {
+      mount("")();
+      initSandboxRuntimeModular();
+      expect(window.__player?.getDuration()).toBe(7);
+    });
+
+    it("is seeked when its shadow root was attached after the first discover", async () => {
+      const attach = mount('data-duration="10"');
+      attach("first");
+      initSandboxRuntimeModular();
+      const animation = attach();
+      // The runtime discovers again once the page's inline scripts had their turn.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      window.__player!.seek(4);
+      expect(animation.currentTime).toBe(1000);
+    });
+  });
+
+  describe("a CSS animation a class adds mid-clip", () => {
+    const cssAnimation = (target: Element, animationName: string) =>
+      ({
+        animationName,
+        currentTime: 437,
+        pause: vi.fn(),
+        addEventListener: vi.fn(),
+        effect: { target },
+      }) as unknown as Animation;
+    // An in-flow clip from 1 s in a scene; `keep` is the page's authored animation; the class adds `slide`.
+    const mount = (keep = true) => {
+      document.body.innerHTML = `<div data-composition-id="main" data-root="true" data-start="0" data-duration="10" data-width="1920" data-height="1080"><div id="keep" style="${keep ? "animation-name: pulse" : ""}"></div><div data-start="0" data-duration="10"><div id="el" data-start="1" data-duration="6"></div></div><div id="w"></div></div>`;
+      window.__timelines = {};
+      const live = keep ? [cssAnimation(document.getElementById("keep")!, "pulse")] : [];
+      document.getAnimations = () => live;
+      const slide = cssAnimation(document.getElementById("el")!, "slide");
+      return { slide, live, addClass: () => live.push(slide) };
+    };
+
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, "animate");
+      Reflect.deleteProperty(Element.prototype, "__hfOriginalAnimate");
+      Reflect.deleteProperty(document, "getAnimations");
+    });
+
+    it("starts at a jump into its clip, not at the clip's start", () => {
+      const { slide, addClass } = mount();
+      initSandboxRuntimeModular();
+      window.__player!.seek(0.5);
+      addClass();
+      window.__player!.seek(3.5);
+      expect(slide.currentTime).toBe(0);
+      window.__player!.seek(3.6);
+      expect(slide.currentTime).toBeCloseTo(100);
+    });
+
+    it("starts at a cold first render frame inside its clip", () => {
+      const { slide, addClass } = mount();
+      initSandboxRuntimeModular();
+      addClass();
+      window.__player!.renderSeek(3.2);
+      expect(slide.currentTime).toBe(0);
+      window.__player!.renderSeek(3.5);
+      expect(slide.currentTime).toBeCloseTo(300);
+    });
+
+    it("starts where it is first seen once a script animation turns the scan on", async () => {
+      const { slide, live, addClass } = mount(false);
+      const script = { currentTime: 0, pause: vi.fn(), addEventListener: vi.fn() };
+      Object.assign(Element.prototype, { animate: () => script });
+      initSandboxRuntimeModular();
+      // The runtime discovers again once the page's inline scripts had their turn.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      window.__player!.seek(2);
+      addClass();
+      window.__player!.seek(2.4);
+      document.getElementById("w")!.animate([], 5000);
+      live.push(script as unknown as Animation);
+      window.__player!.seek(2.5);
+      window.__player!.seek(2.6);
+      expect(slide.currentTime).toBeCloseTo(100);
+    });
+  });
+
+  it("times an authored ::before and shadow-tree animation from a clip hidden at discover", () => {
+    document.body.innerHTML = `<div data-composition-id="main" data-root="true" data-start="0" data-duration="10" data-width="1920" data-height="1080"><div id="el" data-start="3" data-duration="6"></div><div id="host" data-start="3" data-duration="6"></div></div>`;
+    window.__timelines = {};
+    const el = document.getElementById("el")!;
+    const shadow = document.getElementById("host")!.attachShadow({ mode: "open" });
+    const leaf = document.createElement("span");
+    shadow.appendChild(leaf);
+    vi.spyOn(window, "getComputedStyle").mockImplementation(
+      (target, pseudo) =>
+        ({
+          animationName:
+            (target === el && pseudo === "::before") || target === leaf ? "slide" : "none",
+        }) as CSSStyleDeclaration,
+    );
+    const cssAnimation = (effect: object) =>
+      ({
+        animationName: "slide",
+        currentTime: 437,
+        pause: vi.fn(),
+        addEventListener: vi.fn(),
+        effect,
+      }) as unknown as Animation;
+    const before = cssAnimation({ target: el, pseudoElement: "::before" });
+    const inShadow = cssAnimation({ target: leaf });
+    // The browser creates them when the runtime shows the clips.
+    let shown = false;
+    document.getAnimations = () => (shown ? [before] : []);
+    Object.assign(shadow, { getAnimations: () => (shown ? [inShadow] : []) });
+
+    try {
+      initSandboxRuntimeModular();
+      window.__player!.seek(1);
+      shown = true;
+      window.__player!.seek(4);
+      expect([before.currentTime, inShadow.currentTime]).toEqual([1000, 1000]);
+      window.__player!.renderSeek(5);
+      expect([before.currentTime, inShadow.currentTime]).toEqual([2000, 2000]);
+    } finally {
+      Reflect.deleteProperty(document, "getAnimations");
+    }
+  });
+
   it("times a CSS animation without data-start from its clip inside a nested composition", () => {
     const root = document.createElement("div");
     root.setAttribute("data-composition-id", "main");
@@ -3831,15 +4049,19 @@ describe("initSandboxRuntimeModular", () => {
     );
     class CSSAnimation {}
     vi.stubGlobal("CSSAnimation", CSSAnimation);
-    const animation = Object.assign(new CSSAnimation(), {
-      animationName: "slide",
-      currentTime: 0,
-      pause: vi.fn(),
-      play: vi.fn(),
-      addEventListener: vi.fn(),
-      effect: { target: box },
-    }) as unknown as Animation;
-    document.getAnimations = () => [animation];
+    const cssAnimation = (effect: object) =>
+      Object.assign(new CSSAnimation(), {
+        animationName: "slide",
+        currentTime: 0,
+        pause: vi.fn(),
+        play: vi.fn(),
+        addEventListener: vi.fn(),
+        effect,
+      }) as unknown as Animation;
+    const animation = cssAnimation({ target: box });
+    // Only the WAAPI adapter seeks a ::before.
+    const before = cssAnimation({ target: box, pseudoElement: "::before" });
+    document.getAnimations = () => [animation, before];
     window.__timelines = {};
 
     try {
@@ -3847,9 +4069,9 @@ describe("initSandboxRuntimeModular", () => {
 
       // The clip starts 1 s into a sub-composition hosted at 6 s: 8 s is 1 s into the clip.
       window.__player!.seek(8);
-      expect(animation.currentTime).toBe(1000);
+      expect([animation.currentTime, before.currentTime]).toEqual([1000, 1000]);
       window.__player!.renderSeek(9);
-      expect(animation.currentTime).toBe(2000);
+      expect([animation.currentTime, before.currentTime]).toEqual([2000, 2000]);
     } finally {
       vi.unstubAllGlobals();
       Reflect.deleteProperty(document, "getAnimations");

@@ -1,9 +1,17 @@
 import type { RuntimeDeterministicAdapter } from "../types";
 import { swallow } from "../diagnostics";
-import { type AuthoredCssAnimations, createAuthoredCssAnimations } from "./cssAnimation";
+import {
+  type AuthoredCssAnimations,
+  clipStartSeconds,
+  createAuthoredCssAnimations,
+  cssClip,
+  isCssAnimation,
+} from "./cssAnimation";
 
 export function createWaapiAdapter(params?: {
-  authored?: Pick<AuthoredCssAnimations, "hasAny">;
+  resolveStartSeconds?: (element: Element) => number;
+  readPageAnimations?: () => Animation[];
+  authored?: Pick<AuthoredCssAnimations, "has" | "hasAny" | "drivenByCssAdapter">;
 }): RuntimeDeterministicAdapter {
   const authored = params?.authored ?? createAuthoredCssAnimations();
   let didDiscover = false;
@@ -18,15 +26,13 @@ export function createWaapiAdapter(params?: {
   let originalAnimate: Element["animate"] | undefined;
   let installedAnimate: Element["animate"] | undefined;
   const animations = new Set<Animation>();
-  let baselines = new WeakMap<
-    Animation,
-    {
-      compositionTimeMs: number;
-      animationTimeMs: number;
-    }
-  >();
+  type Baseline = { compositionTimeMs: number; animationTimeMs: number };
+  type StartsWithClip = { clip: Element };
+  let baselines = new WeakMap<Animation, Baseline | StartsWithClip>();
 
-  const snapshotAnimations = (read = () => document.getAnimations()) => {
+  const snapshotAnimations = (
+    read = params?.readPageAnimations ?? (() => document.getAnimations()),
+  ) => {
     if (!document.getAnimations) return [];
     try {
       return read();
@@ -34,6 +40,21 @@ export function createWaapiAdapter(params?: {
       return [];
     }
   };
+
+  const cssAnimationClip = (animation: Animation): Element | null => {
+    const target = isCssAnimation(animation)
+      ? (animation.effect as KeyframeEffect | null)?.target
+      : null;
+    return target ? cssClip(target) : null;
+  };
+
+  const anchorOf = (baseline: Baseline | StartsWithClip): Baseline =>
+    "clip" in baseline
+      ? {
+          compositionTimeMs: clipStartSeconds(baseline.clip, params?.resolveStartSeconds) * 1000,
+          animationTimeMs: 0,
+        }
+      : baseline;
 
   const readAnimationTimeMs = (animation: Animation) => {
     const raw = Number(animation.currentTime);
@@ -58,12 +79,18 @@ export function createWaapiAdapter(params?: {
       return existing;
     }
 
-    const baseline = {
-      compositionTimeMs,
-      animationTimeMs: didDiscover
-        ? normalizeInitialAnimationTimeMs(readAnimationTimeMs(animation), compositionTimeMs)
-        : readAnimationTimeMs(animation),
-    };
+    const clip = cssAnimationClip(animation);
+    // A CSS animation's live currentTime is wall-clock time, never a timeline position.
+    const baseline = clip
+      ? authored.has(animation as CSSAnimation)
+        ? { clip }
+        : { compositionTimeMs, animationTimeMs: 0 }
+      : {
+          compositionTimeMs,
+          animationTimeMs: didDiscover
+            ? normalizeInitialAnimationTimeMs(readAnimationTimeMs(animation), compositionTimeMs)
+            : readAnimationTimeMs(animation),
+        };
     baselines.set(animation, baseline);
     return baseline;
   };
@@ -144,7 +171,9 @@ export function createWaapiAdapter(params?: {
     if (!timing) return {};
     const endTimeMs = Number(timing.endTime);
     if (!Number.isFinite(endTimeMs)) return { unbounded: true };
-    const compositionStartSeconds = (baselines.get(animation)?.compositionTimeMs ?? 0) / 1000;
+    const clip = cssAnimationClip(animation);
+    const baseline = baselines.get(animation) ?? (clip && { clip });
+    const compositionStartSeconds = (baseline ? anchorOf(baseline).compositionTimeMs : 0) / 1000;
     return { endSeconds: compositionStartSeconds + endTimeMs / 1000 };
   };
 
@@ -162,9 +191,8 @@ export function createWaapiAdapter(params?: {
         trackAnimations(snapshotAnimations(ctx.pageAnimations), didDiscover ? timeMs : 0);
       }
       for (const animation of animations) {
-        const baseline = didDiscover
-          ? ensureBaseline(animation, timeMs)
-          : ensureBaseline(animation, 0);
+        if (authored.drivenByCssAdapter(animation)) continue;
+        const baseline = anchorOf(ensureBaseline(animation, didDiscover ? timeMs : 0));
         const localTimeMs =
           baseline.animationTimeMs + Math.max(0, timeMs - baseline.compositionTimeMs);
         try {
@@ -186,6 +214,7 @@ export function createWaapiAdapter(params?: {
         trackAnimations(snapshotAnimations(ctx?.pageAnimations), lastSeekTimeMs);
       }
       for (const animation of animations) {
+        if (authored.drivenByCssAdapter(animation)) continue;
         try {
           animation.pause();
         } catch (err) {

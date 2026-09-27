@@ -1,9 +1,11 @@
 import type { RuntimeDeterministicAdapter } from "../types";
 import { swallow } from "../diagnostics";
-import { isHtmlElement } from "../domRealm";
 import {
   type AuthoredCssAnimations,
+  clipStartSeconds,
   createAuthoredCssAnimations,
+  cssClip,
+  isCssAnimation,
   splitNames,
 } from "./cssAnimation";
 
@@ -43,15 +45,14 @@ export function createCssAdapter(params?: {
     const byElement = new Map<Element, Animation[]>();
     if (entries.length === 0) return byElement;
     const canTellCss = typeof CSSAnimation !== "undefined";
-    const isAuthored = (animation: Animation) =>
-      !canTellCss || authored.has(animation as CSSAnimation);
+    const drives = (animation: Animation) => !canTellCss || authored.drivenByCssAdapter(animation);
     for (const animation of safeGetAnimations(document, pageAnimations)) {
-      if (canTellCss && !(animation instanceof CSSAnimation)) continue;
+      if (canTellCss && !isCssAnimation(animation)) continue;
       const target = ownTarget(animation);
       if (!target) continue;
       const list = byElement.get(target) ?? [];
       byElement.set(target, list);
-      if (isAuthored(animation)) list.push(animation);
+      if (drives(animation)) list.push(animation);
     }
     return byElement;
   };
@@ -62,12 +63,8 @@ export function createCssAdapter(params?: {
     ...known.filter((animation) => !scanned.includes(animation) && animation.playState !== "idle"),
   ];
 
-  const resolveEntryStartSeconds = (el: HTMLElement): number => {
-    const clip = el.closest("[data-start]") ?? el;
-    return params?.resolveStartSeconds
-      ? params.resolveStartSeconds(clip)
-      : Number.parseFloat(clip.getAttribute("data-start") ?? "0") || 0;
-  };
+  const resolveEntryStartSeconds = (el: HTMLElement): number =>
+    clipStartSeconds(cssClip(el), params?.resolveStartSeconds);
 
   // Computed lists pair by index, repeating the shorter; unlike getAnimations(), they outlive display:none.
   const readAnimationTimes = (style: CSSStyleDeclaration) => {
@@ -181,21 +178,15 @@ export function createCssAdapter(params?: {
       for (const entry of entries) restoreInlineStyles(entry);
       const known = new Map(entries.map((entry) => [entry.el, entry.handles]));
       entries = [];
-      authored.reset();
-      const all = document.querySelectorAll("*");
-      for (const rawEl of all) {
-        if (!isHtmlElement(rawEl)) continue;
-        const style = window.getComputedStyle(rawEl);
-        if (!style.animationName || style.animationName === "none") continue;
-        authored.record(rawEl, style);
+      authored.discover((el, style) => {
         entries.push({
-          el: rawEl,
-          baseDelay: rawEl.style.animationDelay || "",
-          basePlayState: rawEl.style.animationPlayState || "",
+          el,
+          baseDelay: el.style.animationDelay || "",
+          basePlayState: el.style.animationPlayState || "",
           ...readAnimationTimes(style),
-          handles: known.get(rawEl) ?? [],
+          handles: known.get(el) ?? [],
         });
-      }
+      });
     },
     getAnimationCycleEndSeconds: () => {
       let end = 0;
