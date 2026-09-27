@@ -4250,12 +4250,12 @@ async function executeRenderPipeline(input: {
           "screenshot per output frame.",
       );
     }
+    // GIF and PNG sequences always blend page-side, so they never reach the layered path's encoder.
     const useLayeredComposite =
       !usePageSideCompositingForTransitions &&
       shouldUseLayeredComposite({
         hasHdrContent,
-        hasShaderTransitions: compiled.hasShaderTransitions && !isGif,
-        isPngSequence,
+        hasShaderTransitions: compiled.hasShaderTransitions,
       });
     const inversionFallback = resolveInversionRetryPlan({
       deWorkerInversion,

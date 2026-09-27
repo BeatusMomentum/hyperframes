@@ -1547,19 +1547,8 @@ describe("shouldUseLayeredComposite", () => {
       shouldUseLayeredComposite({
         hasHdrContent: false,
         hasShaderTransitions: true,
-        isPngSequence: false,
       }),
     ).toBe(true);
-  });
-
-  it("does not route PNG sequence shader renders through the streaming layered compositor", () => {
-    expect(
-      shouldUseLayeredComposite({
-        hasHdrContent: false,
-        hasShaderTransitions: true,
-        isPngSequence: true,
-      }),
-    ).toBe(false);
   });
 
   it("keeps HDR content on the layered compositor even without shader transitions", () => {
@@ -1567,7 +1556,6 @@ describe("shouldUseLayeredComposite", () => {
       shouldUseLayeredComposite({
         hasHdrContent: true,
         hasShaderTransitions: false,
-        isPngSequence: false,
       }),
     ).toBe(true);
   });

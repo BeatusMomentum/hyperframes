@@ -422,9 +422,8 @@ export type CompositeTransfer = HdrTransfer | "srgb";
 export function shouldUseLayeredComposite(options: {
   hasHdrContent: boolean;
   hasShaderTransitions: boolean;
-  isPngSequence: boolean;
 }): boolean {
-  return options.hasHdrContent || (options.hasShaderTransitions && !options.isPngSequence);
+  return options.hasHdrContent || options.hasShaderTransitions;
 }
 
 export function resolveCompositeTransfer(
