@@ -191,6 +191,45 @@ describe("an edit to a picked element whose id another scene shares", () => {
     expect(synced[0]?.["compositions/second.html"]).toContain('style="color: red"');
   });
 
+  it("writes the picked copy when source edits left two elements with one pinned hf-id", () => {
+    const saved =
+      '<div data-composition-id="main"><span id="original" data-hf-id="hf-x">a</span>' +
+      '<span id="copy" data-hf-id="hf-x">b</span></div>';
+    const { picker, synced } = mountPicker({ "index.html": saved }, "#copy", "", true, {
+      page: `<!doctype html><html><body>${saved}</body></html>`,
+      id: "copy",
+    });
+    act(() => picker().setStyle("color", "red"));
+    expect(synced[0]?.["index.html"]).toContain('id="copy" data-hf-id="hf-x" style="color: red"');
+    expect(synced[0]?.["index.html"]).toContain('id="original" data-hf-id="hf-x">');
+  });
+
+  it("writes nothing when neither the hf-id nor the id picks one element", () => {
+    const saved =
+      '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-x">a</span>' +
+      '<span id="dupe" data-hf-id="hf-x">b</span></div>';
+    const { picker, synced } = mountPicker({ "index.html": saved }, "span:nth-of-type(2)", "", true, {
+      page: `<!doctype html><html><body>${saved}</body></html>`,
+      id: "dupe",
+    });
+    act(() => picker().setStyle("color", "red"));
+    expect(synced).toEqual([]);
+  });
+
+  it("writes nothing by a shared id when the scene is unknown and the hf-id is in two files", () => {
+    const first = '<span id="dupe" data-hf-id="hf-x">a</span>';
+    const second = '<span id="dupe" data-hf-id="hf-x">b</span>';
+    const { picker, synced } = mountPicker(
+      { "one.html": first, "two.html": second },
+      "#dupe",
+      "",
+      true,
+      { page: `<!doctype html><html><body>${first}</body></html>`, id: "dupe" },
+    );
+    act(() => picker().setStyle("color", "red"));
+    expect(synced).toEqual([]);
+  });
+
   it("still saves an element that has an id but no hf-id, by its id", () => {
     const saved = '<div data-composition-id="main"><span id="solo">a</span></div>';
     const { picker, synced } = mountPicker({ "index.html": saved }, "#solo", "", true, {

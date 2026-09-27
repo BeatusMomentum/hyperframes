@@ -4,7 +4,7 @@ import {
   resolveSourceFile,
   applyPatch,
   applyPatchByTarget,
-  findTagByTarget,
+  countTagsWithAttr,
   type PatchOperation,
 } from "../utils/sourcePatcher";
 import {
@@ -144,8 +144,11 @@ export function useElementPicker(
       const hfId = live.getAttribute("data-hf-id");
       const pending = pendingWritesRef.current;
       const files = withPendingWrites(opts.workspaceFiles, pending);
-      const byHfId = hfId ? patchByHfId(files, hfId, ownSourceFile(live, iframe), op) : null;
-      const patch = byHfId ?? (picked.id ? patchById(files, picked.id, picked.selector, op) : null);
+      const patch = hfId
+        ? patchByIdentity(files, hfId, picked.id, ownSourceFile(live, iframe), op)
+        : picked.id
+          ? patchById(files, picked.id, picked.selector, op)
+          : null;
       if (!patch || patch.after === patch.before) return;
       recordPendingWrite(pending, patch.path, opts.workspaceFiles[patch.path], patch.after);
       opts.onSyncFiles({ [patch.path]: patch.after });
@@ -338,16 +341,33 @@ function ownSourceFile(live: HTMLElement, iframe: HTMLIFrameElement): string {
   return getSourceFileForElement(live, previewed).sourceFile;
 }
 
-function patchByHfId(
+function patchByIdentity(
   files: Record<string, string>,
   hfId: string,
+  id: string | null | undefined,
   ownFile: string,
   op: PatchOperation,
 ): SourcePatch | null {
-  const matches = Object.keys(files).filter((file) => findTagByTarget(files[file] ?? "", { hfId }));
-  const path = matches.includes(ownFile) ? ownFile : matches.length === 1 ? matches[0] : undefined;
+  const holding = (attr: string, value: string) =>
+    Object.keys(files).filter((file) => countTagsWithAttr(files[file] ?? "", attr, value) > 0);
+  const withHfId = holding("data-hf-id", hfId);
+  const withId = id ? holding("id", id) : [];
+  const path = withHfId.includes(ownFile)
+    ? ownFile
+    : withHfId.length === 1
+      ? withHfId[0]
+      : withId.length === 1
+        ? withId[0]
+        : undefined;
   const before = path ? files[path] : undefined;
-  return path && before ? { path, before, after: applyPatchByTarget(before, { hfId }, op) } : null;
+  if (!path || !before) return null;
+  const target =
+    countTagsWithAttr(before, "data-hf-id", hfId) === 1
+      ? { hfId }
+      : id && countTagsWithAttr(before, "id", id) === 1
+        ? { id }
+        : null;
+  return target ? { path, before, after: applyPatchByTarget(before, target, op) } : null;
 }
 
 /** Read a subset of computed styles from an element in the iframe */

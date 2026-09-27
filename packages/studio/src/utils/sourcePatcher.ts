@@ -272,6 +272,11 @@ function findTagByClass(html: string, target: PatchTarget): TagMatch | null {
   return null;
 }
 
+export function countTagsWithAttr(html: string, attr: string, value: string): number {
+  const pattern = new RegExp(`<[^>]*\\s${attr}=(["'])${escapeRegex(value)}\\1[^>]*>`, "gi");
+  return html.match(pattern)?.length ?? 0;
+}
+
 export function findTagByTarget(html: string, target: PatchTarget): TagMatch | null {
   if (target.hfId) {
     const result = execDataAttrPattern(html, "data-hf-id", target.hfId);
