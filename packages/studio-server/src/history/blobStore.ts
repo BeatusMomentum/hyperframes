@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, renameSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -7,14 +7,16 @@ import { dirname, join } from "node:path";
 export interface BlobStore {
   /** Copies the file in (a clone where the file system can) and returns the copy's hash. */
   put(absPath: string): Promise<string>;
+  has(hash: string): boolean;
   read(hash: string): Promise<Buffer>;
   /** Writes the blob's bytes to `absPath` by clone-or-copy and rename, so a reader never sees half a file. */
-  writeTo(hash: string, absPath: string): Promise<void>;
+  writeTo(hash: string, absPath: string, beforeReplace?: () => void): Promise<void>;
   bytes(): number;
   size(hash: string): number;
-  /** Deletes every blob not in `keep`. */
   prune(keep: ReadonlySet<string>): Promise<void>;
 }
+
+const BLOB_HASH = /^[0-9a-f]{64}$/;
 
 async function hashFile(path: string): Promise<string> {
   const hash = createHash("sha256");
@@ -22,12 +24,13 @@ async function hashFile(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
-async function cloneOrCopy(from: string, to: string): Promise<void> {
+async function cloneOrCopy(from: string, to: string, beforeReplace?: () => void): Promise<void> {
   await mkdir(dirname(to), { recursive: true });
   const temp = `${to}.${randomUUID()}.tmp`;
   try {
     await copyFile(from, temp, constants.COPYFILE_FICLONE);
-    await rename(temp, to);
+    beforeReplace?.();
+    renameSync(temp, to);
   } catch (error) {
     await rm(temp, { force: true });
     throw error;
@@ -40,7 +43,11 @@ export async function openBlobStore(dir: string): Promise<BlobStore> {
   for (const shard of await readdir(dir))
     for (const hash of await readdir(join(dir, shard)).catch(() => []))
       sizes.set(hash, (await stat(join(dir, shard, hash))).size);
-  const pathOf = (hash: string) => join(dir, hash.slice(0, 2), hash);
+  const pathOf = (hash: string) => {
+    // Checked where the path is joined, so no caller can read or write outside the store.
+    if (!BLOB_HASH.test(hash)) throw new Error("That is not a history blob.");
+    return join(dir, hash.slice(0, 2), hash);
+  };
   let total = [...sizes.values()].reduce((sum, size) => sum + size, 0);
 
   return {
@@ -62,8 +69,10 @@ export async function openBlobStore(dir: string): Promise<BlobStore> {
       total += size;
       return hash;
     },
-    read: (hash) => readFile(pathOf(hash)),
-    writeTo: (hash, absPath) => cloneOrCopy(pathOf(hash), absPath),
+    has: (hash) => sizes.has(hash),
+    read: async (hash) => readFile(pathOf(hash)),
+    writeTo: async (hash, absPath, beforeReplace) =>
+      cloneOrCopy(pathOf(hash), absPath, beforeReplace),
     bytes: () => total,
     size: (hash) => sizes.get(hash) ?? 0,
     async prune(keep) {

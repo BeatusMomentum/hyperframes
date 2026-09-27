@@ -178,6 +178,11 @@ and tags, shaped for agents to parse; `--json` is the structured form. Each
 dimensions, duration and `preview` (`video` and `poster` URLs) when it has them.
 `--human-friendly` opens a picker that runs `add` on whatever you select.
 
+`--query "<what you want>"` searches by description instead of listing
+everything, and `--on-device` switches that search from word match to meaning
+search after a one-time 33 MB download. What each does, what is downloaded and
+what stays on your machine: [How catalog search works](/developers/catalog-search).
+
 `--installed` lists the catalog items in the current project instead: name,
 type, file, and whether the video (`index.html`) uses it. Items come from what
 `add` recorded in `hyperframes.json` plus any registry item whose file sits at

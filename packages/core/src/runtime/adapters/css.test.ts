@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { createCssAdapter } from "./css";
 
 describe("css adapter", () => {
@@ -327,6 +327,84 @@ describe("css adapter", () => {
 
       expect(adapter.getInferredDurationSeconds?.()).toBeNull();
       vi.restoreAllMocks();
+    });
+  });
+
+  describe("cycle end", () => {
+    const mountAnimated = (style: Partial<CSSStyleDeclaration>) => {
+      const el = document.createElement("div");
+      el.setAttribute("data-start", "2");
+      document.body.appendChild(el);
+      vi.spyOn(window, "getComputedStyle").mockImplementation(
+        () =>
+          ({ animationDelay: el.style.animationDelay || "0s", ...style }) as CSSStyleDeclaration,
+      );
+      return el;
+    };
+
+    afterEach(() => {
+      document.body.replaceChildren();
+      vi.restoreAllMocks();
+    });
+
+    it("reads one cycle per animation from the computed lists, not the live animations", () => {
+      // A display:none clip or a finished animation has no live handle; its CSS still counts.
+      const el = mountAnimated({
+        animationName: "a, none, b, c",
+        animationDuration: "1s, 9s, 1500ms",
+        animationDelay: "0s, 0s, 0s, 2s",
+      });
+      el.getAnimations = () => [];
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      // c pairs the 2s delay with the first duration again: 2 + 2 + 1.
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBe(5);
+      expect(adapter.getInferredDurationSeconds?.()).toBeNull();
+    });
+
+    it("skips an animation whose negative delay ends it before it starts", () => {
+      mountAnimated({ animationName: "a", animationDuration: "1s", animationDelay: "-2s" });
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBeNull();
+    });
+
+    it("keeps the authored delay when rediscovered after a fallback seek", () => {
+      const el = mountAnimated({ animationName: "pulse", animationDuration: "1s" });
+      el.getAnimations = () => [];
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+      adapter.seek({ time: 5 });
+      expect(el.style.animationDelay).toBe("-3s");
+      adapter.discover();
+      adapter.pause();
+
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBe(3);
+      expect(el.style.animationDelay).toBe("");
+    });
+
+    it("skips an element removed after discover", () => {
+      const el = mountAnimated({});
+      vi.mocked(window.getComputedStyle).mockImplementation(
+        (node) =>
+          ({
+            animationName: node === el ? "a" : "none",
+            animationDuration: "1s",
+            animationDelay: "0s",
+          }) as CSSStyleDeclaration,
+      );
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBe(3);
+      el.remove();
+
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBeNull();
     });
   });
 });

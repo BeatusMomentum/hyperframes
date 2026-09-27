@@ -10,6 +10,7 @@ export function createCssAdapter(params?: {
     baseDelay: string;
     basePlayState: string;
     animations: Animation[];
+    cycleSeconds: number;
   }> = [];
 
   const getAnimationsForElement = (el: HTMLElement): Animation[] => {
@@ -25,6 +26,23 @@ export function createCssAdapter(params?: {
     params?.resolveStartSeconds
       ? params.resolveStartSeconds(el)
       : Number.parseFloat(el.getAttribute("data-start") ?? "0") || 0;
+
+  // Computed lists pair by index, repeating the shorter; unlike getAnimations(), they outlive display:none.
+  const readCycleSeconds = (style: CSSStyleDeclaration): number => {
+    const seconds = (list: string | undefined) =>
+      (list || "")
+        .split(",")
+        .map((v) => Number.parseFloat(v) / (v.trim().endsWith("ms") ? 1000 : 1));
+    const durations = seconds(style.animationDuration);
+    const delays = seconds(style.animationDelay);
+    let end = 0;
+    style.animationName.split(",").forEach((name, i) => {
+      if (name.trim() === "none") return;
+      const cycle = delays[i % delays.length]! + durations[i % durations.length]!;
+      if (cycle > end) end = cycle;
+    });
+    return end;
+  };
 
   /**
    * End time (seconds, relative to composition start) for one WAAPI
@@ -105,6 +123,8 @@ export function createCssAdapter(params?: {
   return {
     name: "css",
     discover: () => {
+      // A fallback seek's inline delay must not be read back as the authored one.
+      for (const entry of entries) restoreInlineStyles(entry);
       entries = [];
       const all = document.querySelectorAll("*");
       for (const rawEl of all) {
@@ -116,8 +136,17 @@ export function createCssAdapter(params?: {
           baseDelay: rawEl.style.animationDelay || "",
           basePlayState: rawEl.style.animationPlayState || "",
           animations: getAnimationsForElement(rawEl),
+          cycleSeconds: readCycleSeconds(style),
         });
       }
+    },
+    getAnimationCycleEndSeconds: () => {
+      let end = 0;
+      for (const entry of entries) {
+        if (!entry.el.isConnected || entry.cycleSeconds <= 0) continue;
+        end = Math.max(end, resolveEntryStartSeconds(entry.el) + entry.cycleSeconds);
+      }
+      return end > 0 ? end : null;
     },
     getInferredDurationSeconds: () => {
       let maxEndSeconds = 0;
