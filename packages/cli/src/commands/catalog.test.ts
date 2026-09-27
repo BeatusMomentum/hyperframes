@@ -1,8 +1,8 @@
 // fallow-ignore-file code-duplication
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RegistryItem } from "@hyperframes/core";
 import {
@@ -958,11 +958,17 @@ describe("installedViewLines", () => {
 });
 
 describe("catalog --installed", () => {
+  const projects: string[] = [];
   const inProject = (files: Record<string, string>) => {
     const dir = mkdtempSync(join(tmpdir(), "hf-catalog-installed-"));
+    projects.push(dir);
     for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
     vi.spyOn(process, "cwd").mockReturnValue(dir);
   };
+  afterEach(() => {
+    vi.mocked(process.cwd).mockRestore();
+    for (const dir of projects.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
   it("fails outside a project, as other project commands do, before fetching the registry", async () => {
     inProject({});
