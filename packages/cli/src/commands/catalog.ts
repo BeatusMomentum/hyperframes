@@ -565,20 +565,18 @@ function printInstalledView(
 export function installedViewLines(
   items: ProjectCatalogItem[],
   scannedFiles: boolean,
-  manifestUnreadable = false,
+  configUnreadable = false,
 ): string[] {
   const note = [
-    ...(scannedFiles
-      ? []
-      : [c.dim("Registry list unavailable: showing only items recorded by hyperframes add.")]),
-    ...(manifestUnreadable
-      ? [
-          c.dim(
-            "hyperframes.json could not be read: items recorded by hyperframes add are missing.",
-          ),
-        ]
-      : []),
-  ];
+    scannedFiles
+      ? null
+      : "Registry list unavailable: showing only items recorded by hyperframes add.",
+    configUnreadable
+      ? "hyperframes.json could not be read: items recorded by hyperframes add are missing."
+      : null,
+  ]
+    .filter((line) => line !== null)
+    .map((line) => c.dim(line));
   if (items.length === 0) {
     return [
       "No catalog items in this project yet.",
