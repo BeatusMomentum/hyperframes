@@ -39,7 +39,6 @@ const RENDER_CANCELLATION_SIGNALS: readonly RenderCancellationSignal[] = [
   "SIGHUP",
 ];
 
-/** A child killed by one of the signals above: the user's stop, unless Node killed it (timeout, limit). */
 export function stoppedByCancelSignal(stop: {
   code?: unknown;
   signal?: string | null;
