@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mergeTokensToWords, mergeWindowsToWords, silenceCuts } from "./parakeet.js";
+import {
+  hasDroppedSpeech,
+  mergeTokensToWords,
+  mergeWindowsToWords,
+  silenceCuts,
+} from "./parakeet.js";
 
 describe("mergeTokensToWords", () => {
   it("joins Parakeet sub-word tokens into words on the space boundary", () => {
@@ -63,5 +68,35 @@ describe("silenceCuts", () => {
 
   it("leaves audio shorter than one window whole", () => {
     expect(silenceCuts(loud(42), rate)).toEqual([0, 4200]);
+  });
+
+  it("makes no window for empty audio", () => {
+    expect(silenceCuts(new Float32Array(0), rate)).toEqual([0]);
+  });
+});
+
+describe("hasDroppedSpeech", () => {
+  const rate = 100;
+  const tokens = (timestamps: number[]) => ({
+    tokens: timestamps.map(() => " w"),
+    timestamps,
+    durations: timestamps.map(() => 0.2),
+  });
+
+  it("flags a second of loud audio before the first token", () => {
+    const speech = new Float32Array(6 * rate).fill(0.5);
+    expect(hasDroppedSpeech(speech, rate, tokens([2.08, 2.5, 3, 3.5, 4, 4.5, 5, 5.5]))).toBe(true);
+    expect(
+      hasDroppedSpeech(speech, rate, tokens([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5])),
+    ).toBe(false);
+  });
+
+  it("ignores a quiet pause and silence with no tokens", () => {
+    const pause = new Float32Array(6 * rate).fill(0.5);
+    pause.fill(0, 2 * rate, 4 * rate);
+    expect(hasDroppedSpeech(pause, rate, tokens([0.1, 0.6, 1.1, 1.6, 4.1, 4.6, 5.1, 5.6]))).toBe(
+      false,
+    );
+    expect(hasDroppedSpeech(new Float32Array(3 * rate), rate, tokens([]))).toBe(false);
   });
 });

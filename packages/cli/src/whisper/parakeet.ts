@@ -130,12 +130,37 @@ export function mergeWindowsToWords(windows: SherpaWindow[]): Word[] {
   });
 }
 
+function meanEnergy(samples: Float32Array, from: number, to: number): number {
+  let energy = 0;
+  for (let i = from; i < to; i++) energy += samples[i]! * samples[i]!;
+  return energy / Math.max(1, to - from);
+}
+
+/**
+ * True when a stretch of at least 1 s without tokens is about as loud as the window: the model
+ * skipped speech there. Measured: a 61.91 s window lost its first 9 words this way (ratio 0.94).
+ */
+export function hasDroppedSpeech(
+  samples: Float32Array,
+  sampleRate: number,
+  decoded: Omit<SherpaWindow, "offset">,
+): boolean {
+  const loud = 0.3 * meanEnergy(samples, 0, samples.length);
+  const { timestamps, durations } = decoded;
+  const gapStarts = [0, ...timestamps.map((t, i) => t + (durations?.[i] ?? 0))];
+  const gapEnds = [...timestamps, samples.length / sampleRate];
+  return gapStarts.some((from, i) => {
+    const to = gapEnds[i]!;
+    const at = (seconds: number) => Math.round(seconds * sampleRate);
+    return to - from >= 1 && meanEnergy(samples, at(from), at(to)) > loud;
+  });
+}
+
 function quietestBlockCenter(samples: Float32Array, lo: number, hi: number, block: number): number {
   let best = hi;
   let bestEnergy = Infinity;
   for (let s = lo; s + block <= hi; s += block) {
-    let energy = 0;
-    for (let i = s; i < s + block; i++) energy += samples[i]! * samples[i]!;
+    const energy = meanEnergy(samples, s, s + block);
     if (energy < bestEnergy) {
       bestEnergy = energy;
       best = s + block / 2;
@@ -162,7 +187,7 @@ export function silenceCuts(
     const hi = Math.min(target + slack, samples.length);
     cuts.push(quietestBlockCenter(samples, target - slack, hi, sampleRate / 10));
   }
-  cuts.push(samples.length);
+  if (samples.length > 0) cuts.push(samples.length);
   return cuts;
 }
 

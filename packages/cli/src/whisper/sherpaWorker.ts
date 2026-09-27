@@ -1,5 +1,6 @@
 import { loadInstalled } from "../utils/optionalPackages.js";
 import {
+  hasDroppedSpeech,
   silenceCuts,
   SHERPA_ERROR_PREFIX,
   SHERPA_RESULT_PREFIX,
@@ -22,6 +23,24 @@ interface SherpaOnnx {
 
 const { wavPath, runtimeDir, config } = JSON.parse(process.env.HYPERFRAMES_PARAKEET_INPUT ?? "{}");
 
+/** Leading silence moves the frame grid; 0.5 s recovered the dropped clause at every length tried. */
+const RETRY_PAD_SECONDS = 0.5;
+
+function decodeWindow(
+  recognizer: InstanceType<SherpaOnnx["OfflineRecognizer"]>,
+  wave: Wave,
+  padSeconds = 0,
+): Omit<SherpaWindow, "offset"> {
+  const pad = Math.round(padSeconds * wave.sampleRate);
+  const samples = new Float32Array(pad + wave.samples.length);
+  samples.set(wave.samples, pad);
+  const stream = recognizer.createStream();
+  stream.acceptWaveform({ sampleRate: wave.sampleRate, samples });
+  recognizer.decode(stream);
+  const { tokens, timestamps, durations } = recognizer.getResult(stream);
+  return { tokens, timestamps: timestamps.map((t) => Math.max(0, t - padSeconds)), durations };
+}
+
 try {
   const sherpa = loadInstalled(runtimeDir, "sherpa-onnx-node") as SherpaOnnx | null;
   if (!sherpa) throw new Error(`sherpa-onnx-node is not installed in ${runtimeDir}`);
@@ -30,12 +49,16 @@ try {
   const cuts = silenceCuts(wave.samples, wave.sampleRate);
   const windows: SherpaWindow[] = [];
   for (let k = 0; k + 1 < cuts.length; k++) {
-    const stream = recognizer.createStream();
-    const samples = wave.samples.subarray(cuts[k], cuts[k + 1]);
-    stream.acceptWaveform({ sampleRate: wave.sampleRate, samples });
-    recognizer.decode(stream);
-    const { tokens, timestamps, durations } = recognizer.getResult(stream);
-    windows.push({ offset: cuts[k]! / wave.sampleRate, tokens, timestamps, durations });
+    const slice = {
+      sampleRate: wave.sampleRate,
+      samples: wave.samples.subarray(cuts[k], cuts[k + 1]),
+    };
+    let decoded = decodeWindow(recognizer, slice);
+    if (hasDroppedSpeech(slice.samples, slice.sampleRate, decoded)) {
+      const retry = decodeWindow(recognizer, slice, RETRY_PAD_SECONDS);
+      if (retry.tokens.length > decoded.tokens.length) decoded = retry;
+    }
+    windows.push({ offset: cuts[k]! / wave.sampleRate, ...decoded });
   }
   process.stdout.write(`${SHERPA_RESULT_PREFIX}${JSON.stringify(windows)}\n`);
 } catch (err) {
