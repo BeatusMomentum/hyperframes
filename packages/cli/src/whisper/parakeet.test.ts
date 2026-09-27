@@ -109,21 +109,57 @@ describe("droppedSpeechGaps", () => {
 });
 
 describe("spliceGap", () => {
-  it("adds, in order, the re-decoded tokens inside the gap, minus its re-heard neighbours", () => {
-    const decoded = {
-      tokens: [" so", " A", "sk"],
-      timestamps: [9.5, 13, 13.25],
-      durations: [0.25, 0.25, 0.25],
-    };
-    const patch = {
-      tokens: [" so", " ask", " not", ",", " a", "sk"],
-      timestamps: [0.5, 0.75, 2.75, 3.25, 3.5, 3.75],
-      durations: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
-    };
-    expect(spliceGap(decoded, patch, 9.25, [9.75, 13])).toEqual({
-      tokens: [" so", " ask", " not", ",", " A", "sk"],
-      timestamps: [9.5, 10, 12, 12.5, 13, 13.25],
-      durations: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
-    });
+  const w = (...pairs: [string, number][]) => ({
+    tokens: pairs.map(([text]) => text),
+    timestamps: pairs.map(([, start]) => start),
+    durations: pairs.map(() => 0.1),
+  });
+  const text = (r: ReturnType<typeof spliceGap>) =>
+    mergeWindowsToWords([{ offset: 0, ...r }])
+      .map((word) => word.text)
+      .join(" ");
+
+  it("adds the gap's words in order and drops neighbours re-heard off time, in another case", () => {
+    const decoded = w([" so", 9.5], [" A", 13], ["sk", 13.25]);
+    const patch = w(
+      [" so", 0.5],
+      [" ask", 0.75],
+      [" not", 2.75],
+      [",", 3.25],
+      [" a", 3.5],
+      ["sk", 3.75],
+    );
+    expect(text(spliceGap(decoded, patch, 9.25, [9.75, 13]))).toBe("so ask not, Ask");
+  });
+
+  it("drops a right neighbour the patch splits into other tokens", () => {
+    const decoded = w([" so", 9], [" ask", 10]);
+    const patch = w([" so", 8.95], [" not", 9.4], [" a", 9.8], ["sk", 9.95]);
+    expect(text(spliceGap(decoded, patch, 0, [9.2, 10]))).toBe("so not ask");
+  });
+
+  it("never glues the rest of a re-split left neighbour onto it", () => {
+    const decoded = w([" thing", 5], [" right", 7]);
+    const patch = w([" th", 5], ["ing", 5.35], [" we", 5.8], [" said", 6.3]);
+    expect(text(spliceGap(decoded, patch, 0, [5.3, 7]))).toBe("thing we said right");
+  });
+
+  it("compares whole words, so a gap word is not eaten by a neighbour's last token", () => {
+    const decoded = w([" it", 3], ["'s", 3.2], [" now", 5]);
+    const patch = w([" s", 3.4], ["o", 3.5], [" what", 4]);
+    expect(text(spliceGap(decoded, patch, 0, [3.3, 5]))).toBe("it's so what now");
+  });
+
+  it("keeps a real repeat that starts well inside the gap", () => {
+    const decoded = w([" that", 2], [" right", 4]);
+    const patch = w([" that", 3], [" is", 3.4]);
+    expect(text(spliceGap(decoded, patch, 0, [2.2, 4]))).toBe("that that is right");
+  });
+
+  it("adds a word shared by two gaps once, however each patch splits it", () => {
+    const decoded = w([" a", 1], [" mid", 3], [" z", 5]);
+    const first = spliceGap(decoded, w([" one", 1.8], [" m", 2.8], ["id", 2.95]), 0, [1.2, 3]);
+    const both = spliceGap(first, w([" mi", 3.35], ["d", 3.45], [" two", 4]), 0, [3.3, 5]);
+    expect(text(both)).toBe("a one mid two z");
   });
 });

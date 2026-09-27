@@ -8,8 +8,8 @@ import { SHERPA_ERROR_PREFIX, SHERPA_RESULT_PREFIX } from "./parakeet.js";
 
 const WORKER = fileURLToPath(new URL("./sherpaWorker.ts", import.meta.url));
 
-// A stand-in sherpa-onnx-node: 3 s of steady sound. The whole window drops the first 2 s, as the real
-// model did on a 61.91 s window; a padded window, or the gap alone for speech.wav, hears it all.
+// Stand-in sherpa-onnx-node, 3 s of sound: the whole window (300 samples) drops the first 2 s; the
+// padded window (350) hears it, and for speech.wav so does the padded gap +-0.5 s (308) alone.
 const FAKE_SHERPA = `
 let path;
 module.exports = {
@@ -22,13 +22,11 @@ module.exports = {
     createStream() { return { acceptWaveform(w) { this.w = w; } }; }
     decode() {}
     getResult(stream) {
-      const samples = stream.w.samples;
-      if (samples[0] === 0) {
-        return { tokens: [" ask", " not"], timestamps: [0.75, 1.5], durations: [0.4, 0.4] };
-      }
-      if (samples.length === 300) return { tokens: [" not"], timestamps: [2.08], durations: [0.4] };
-      return path.endsWith("speech.wav")
-        ? { tokens: [" ask", " not"], timestamps: [0.5, 2.08], durations: [0.4, 0.4] }
+      const n = stream.w.samples.length;
+      if (n === 300) return { tokens: [" not"], timestamps: [2.08], durations: [0.4] };
+      if (n === 350) return { tokens: [" ask", " not"], timestamps: [0.75, 1.5], durations: [0.4, 0.4] };
+      return n === 308 && path.endsWith("speech.wav")
+        ? { tokens: [" ask", " not"], timestamps: [1, 2.58], durations: [0.4, 0.4] }
         : { tokens: [], timestamps: [], durations: [] };
     }
   },

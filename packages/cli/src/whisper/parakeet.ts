@@ -165,9 +165,35 @@ function overlap(a: string[], b: string[]): number {
   return 0;
 }
 
+interface Token {
+  text: string;
+  start: number;
+  duration: number;
+}
+
+/** Tokens grouped into words: a token with a leading space starts one. */
+function wordsOf(tokens: Token[]): Token[][] {
+  const words: Token[][] = [];
+  for (const t of tokens) {
+    if (t.text.startsWith(" ") || words.length === 0) words.push([t]);
+    else words.at(-1)!.push(t);
+  }
+  return words;
+}
+
+const letters = (word: Token[]) =>
+  word
+    .map((t) => t.text)
+    .join("")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/** How far from a gap edge the patch may re-hear the neighbouring word (measured: 0.26 s). */
+const EDGE_SECONDS = 0.3;
+
 /**
- * Adds the `patch` tokens, decoded from `offset` s into the window, that start inside the gap.
- * The patch re-hears the gap's neighbours up to 0.3 s off, so those go by letters (not case).
+ * Adds the `patch` words, decoded from `offset` s into the window, that start inside the gap, minus
+ * the gap's neighbours re-heard near its edges (compared as whole words, by letters).
  */
 export function spliceGap(
   decoded: Omit<SherpaWindow, "offset">,
@@ -175,27 +201,24 @@ export function spliceGap(
   offset: number,
   [from, to]: [number, number],
 ): Omit<SherpaWindow, "offset"> {
-  const token = (w: Omit<SherpaWindow, "offset">, i: number, shift: number) => ({
-    text: w.tokens[i]!,
-    start: shift + w.timestamps[i]!,
-    duration: w.durations?.[i] ?? 0,
-  });
-  const kept = decoded.tokens.map((_, i) => token(decoded, i, 0));
-  const texts = (tokens: typeof kept) => tokens.map((t) => t.text);
-  const letters = (tokens: typeof kept) =>
-    tokens.map((t) => t.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ""));
-  const added = patch.tokens
-    .map((_, i) => token(patch, i, offset))
-    .filter(({ start }) => start >= from && start < to);
-  const before = letters(kept.filter((t) => t.start < from));
-  const after = letters(kept.filter((t) => t.start >= to));
-  const fresh = added.slice(
-    overlap(before, letters(added)),
-    added.length - overlap(letters(added), after),
+  const tokens = (w: Omit<SherpaWindow, "offset">, shift: number): Token[] =>
+    w.tokens.map((text, i) => ({
+      text,
+      start: shift + w.timestamps[i]!,
+      duration: w.durations?.[i] ?? 0,
+    }));
+  const kept = wordsOf(tokens(decoded, 0));
+  const added = wordsOf(tokens(patch, offset)).filter(
+    ([first]) => first!.text.startsWith(" ") && first!.start >= from && first!.start < to,
   );
-  const merged = [...kept, ...fresh].sort((a, b) => a.start - b.start);
+  const before = kept.filter(([first]) => first!.start < from).map(letters);
+  const after = kept.filter(([first]) => first!.start >= to).map(letters);
+  const head = added.filter(([first]) => first!.start < from + EDGE_SECONDS).map(letters);
+  const tail = added.filter(([first]) => first!.start >= to - EDGE_SECONDS).map(letters);
+  const fresh = added.slice(overlap(before, head), added.length - overlap(tail, after));
+  const merged = [...kept, ...fresh].sort((a, b) => a[0]!.start - b[0]!.start).flat();
   return {
-    tokens: texts(merged),
+    tokens: merged.map((t) => t.text),
     timestamps: merged.map((t) => t.start),
     durations: merged.map((t) => t.duration),
   };

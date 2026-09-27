@@ -63,7 +63,11 @@ try {
       const lo = Math.max(0, from - GAP_MARGIN_SECONDS);
       const at = (seconds: number) => Math.round(seconds * slice.sampleRate);
       const samples = slice.samples.subarray(at(lo), at(to + GAP_MARGIN_SECONDS));
-      const patch = decodeWindow(recognizer, { sampleRate: slice.sampleRate, samples });
+      const patch = decodeWindow(
+        recognizer,
+        { sampleRate: slice.sampleRate, samples },
+        RETRY_PAD_SECONDS,
+      );
       spliced = spliceGap(spliced, patch, lo, [from, to]);
     }
     if (spliced.tokens.length > decoded.tokens.length) decoded = spliced;
