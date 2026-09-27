@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
-import { parseArgs } from "node:util";
+import { parseArgs, stripVTControlCharacters } from "node:util";
 import { mergeTokensToWords } from "./lib/parakeet-words.mjs";
 import { track } from "./lib/telemetry.mjs";
 import { resolveNpxInvocation } from "./lib/npx-sync.mjs";
@@ -139,14 +139,15 @@ function runWhisper() {
       execFileSync(resolved.cmd, resolved.args, resolved.opts);
     } catch (e) {
       // stderr holds spinner redraws; the last lines carry the reason.
-      const tail = String(e.stderr ?? "")
-        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+      const tail = stripVTControlCharacters(String(e.stderr ?? ""))
         .split(/[\r\n]+/)
         .map((l) => l.trim())
         .filter((l) => l && l !== "│")
         .slice(-3)
         .join("\n");
-      throw new Error(`hyperframes transcribe failed (exit ${e.status ?? e.code})${tail ? `:\n${tail}` : ""}`);
+      throw new Error(
+        `hyperframes transcribe failed (exit ${e.status ?? e.code})${tail ? `:\n${tail}` : ""}`,
+      );
     }
     const produced = join(workDir, "transcript.json");
     if (!existsSync(produced)) throw new Error("whisper produced no transcript.json");
