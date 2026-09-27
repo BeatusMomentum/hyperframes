@@ -360,7 +360,7 @@ describe("resolveProxy", () => {
       // skipping the tone map gives ~60, a BT.601 conversion ~56.
       const reference = meanLuma(
         sourcePath,
-        `${hdrToSdrToneMapFilter({ colorTransfer: "arib-std-b67" })},format=gbrp,scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,`,
+        `${hdrToSdrToneMapFilter({ colorTransfer: "arib-std-b67" }, { colorTransfer: "arib-std-b67" })},format=gbrp,scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,`,
       );
       expect(Math.abs(meanLuma(proxyPath) - reference)).toBeLessThan(1);
     },
@@ -392,20 +392,27 @@ describe("resolveProxy", () => {
         return path;
       };
       const pq = segment(16);
-      const mixedProxy = await resolveProxy(projectDir, mux("hlg-then-pq", Buffer.concat([segment(18), pq])));
+      const mixedProxy = await resolveProxy(
+        projectDir,
+        mux("hlg-then-pq", Buffer.concat([segment(18), pq])),
+      );
       const pqProxy = await resolveProxy(projectDir, mux("pq-only", pq));
 
-      // Frame 5 is the first PQ frame; read as HLG it lands near 30 dB, encoder noise near 42.
-      const psnr = spawnSync(
-        realFfmpeg!,
-        [
-          ...["-i", mixedProxy, "-i", pqProxy, "-lavfi"],
-          "[0:v]select=eq(n\\,5),setpts=PTS-STARTPTS[a];[1:v]select=eq(n\\,0),setpts=PTS-STARTPTS[b];[a][b]psnr",
-          ...["-frames:v", "1", "-f", "null", "-"],
-        ],
-        { encoding: "utf8" },
-      ).stderr;
-      expect(Number(/average:([\d.]+)/.exec(psnr)?.[1])).toBeGreaterThan(36);
+      // The proxy drops a frame or two, differently per ffmpeg, so match the PQ reference around the
+      // switch: a PQ frame tone-mapped as PQ lands near 42 dB, read as HLG near 30.
+      const psnrAt = (n: number) => {
+        const stats = spawnSync(
+          realFfmpeg!,
+          [
+            ...["-i", mixedProxy, "-i", pqProxy, "-lavfi"],
+            `[0:v]select=eq(n\\,${n}),setpts=PTS-STARTPTS[a];[1:v]select=eq(n\\,0),setpts=PTS-STARTPTS[b];[a][b]psnr`,
+            ...["-frames:v", "1", "-f", "null", "-"],
+          ],
+          { encoding: "utf8" },
+        ).stderr;
+        return Number(/average:([\d.]+)/.exec(stats)?.[1] ?? 0);
+      };
+      expect(Math.max(...[3, 4, 5, 6, 7].map(psnrAt))).toBeGreaterThan(36);
     },
     60_000,
   );
