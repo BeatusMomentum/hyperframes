@@ -93,6 +93,20 @@ describe("useEditHistoryActions", () => {
     expect(deps.editHistory.undoEntry).toHaveBeenCalledWith("turn-1", expect.anything());
   });
 
+  it("offers no undo of the later change when a redo is refused", async () => {
+    const { deps, actions } = mount({
+      ok: false,
+      reason: "content-mismatch",
+      paths: ["index.html"],
+      changedSince: { id: "turn-1", label: "Agent turn" },
+    });
+    await act(() => actions.redo());
+    expect(deps.showToast).toHaveBeenCalledWith(
+      "Can't redo: index.html changed since that edit.",
+      "info",
+    );
+  });
+
   it("names the files that changed since the edit when an undo is refused", async () => {
     const { deps, actions } = mount({
       ok: false,

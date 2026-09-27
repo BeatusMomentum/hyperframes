@@ -1669,6 +1669,51 @@ describe("claim: a writer that records after writing", () => {
     expect(history.next("back", you)?.id).toBe(turn!.id);
   });
 
+  it("names the change made since that is still in effect, past the person's own undo", async () => {
+    const { history, write } = await project({ "index.html": "A" });
+    write("index.html", "B");
+    await history.claim(you, "Moved Title", ["index.html"]);
+    const turn = await change(history, agent, "Agent turn", () => write("index.html", "C"));
+    write("index.html", "D");
+    await history.claim(you, "Moved Title", ["index.html"]);
+    await history.step("back", you);
+
+    expect(await history.step("back", you)).toMatchObject({ ok: false });
+    expect(history.changedSince(history.next("back", you)!.id)?.id).toBe(turn.id);
+  });
+
+  it("names the agent's earlier turn, not its undo of a later one or the turn it undid", async () => {
+    const { history, write } = await project({ "index.html": "A" });
+    write("index.html", "B");
+    await history.claim(you, "Moved Title", ["index.html"]);
+    const first = await change(history, agent, "Agent turn", () => write("index.html", "C"));
+    const second = await change(history, agent, "Agent turn 2", () => write("index.html", "D"));
+    await history.undo(second.id, { who: agent });
+
+    expect(history.changedSince(history.next("back", you)!.id)?.id).toBe(first.id);
+  });
+
+  it("names no change since for an entry still pending", async () => {
+    const { history, write } = await project({ "index.html": "A" });
+    const window = await history.beginWindow(agent, "Agent turn");
+    write("index.html", "B");
+    await history.claim(you, "sweep", []);
+    write("index.html", "C");
+    await history.claim(you, "Dragged Title", ["index.html"], {
+      coalesceKey: "drag",
+      idleMs: 60_000,
+      overwrote: { "index.html": fileContentVersion("B") },
+    });
+    write("index.html", "D");
+    history.noteChange("index.html");
+    await vi.waitFor(() => expect(history.next("back", agent)?.id).toBe(window.id));
+
+    const drag = history.next("back", you)!;
+    expect(drag.label).toBe("Dragged Title");
+    expect(history.changedSince(drag.id)).toBeUndefined();
+    await window.close();
+  });
+
   it("undoes a turn's parts last first and keeps the person's edit between them", async () => {
     const { history, write, read } = await project({ "index.html": "A", "b.js": "1" });
     const window = await history.beginWindow(agent, "Agent turn");

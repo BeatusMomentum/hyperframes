@@ -147,8 +147,8 @@ export interface ProjectHistory {
   step(direction: "back" | "forward", who: HistoryWho, options?: Writing): Promise<HistoryResult>;
   /** The entry `who`'s next step reverts, pending changes included, as of the last scan (a step scans first). */
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined;
-  /** The newest later entry that changed one of `entry`'s files, while that file still differs from it. */
-  changedSince(entry: HistoryEntry): HistoryEntry | undefined;
+  /** The newest later change still in effect (not an undo) to a file that differs from logged entry `id`. */
+  changedSince(id: string): HistoryEntry | undefined;
   /** A file changed since returns a conflict; `mode` takes a choice (keep-later-edits: null when none is left). */
   undo(id: string, options: { who: HistoryWho; mode?: UndoMode } & Writing): Promise<HistoryResult>;
   /** Makes the files equal what they were right after `point` (an entry id, or START). */
@@ -1015,11 +1015,14 @@ class Engine {
         this.assertOpen();
         return this.next(direction, who);
       },
-      changedSince: (entry) => {
+      changedSince: (id) => {
         this.assertOpen();
-        const changed = this.movedOn(entry);
-        const newest = changed.length ? this.conflict(entry, changed).newer.at(-1) : undefined;
-        return newest ? this.entry(newest) : undefined;
+        const entry = this.log.entries.find((candidate) => candidate.id === id);
+        const changed = entry ? this.movedOn(entry) : [];
+        if (!entry || !changed.length) return undefined;
+        const undone = undoneIds(this.log.entries);
+        const newer = this.conflict(entry, changed).newer.map((later) => this.entry(later));
+        return newer.reverse().find((later) => !later.undoes && !undone.has(later.id));
       },
       readBlob: async (hash) => {
         this.assertOpen();

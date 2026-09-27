@@ -226,6 +226,58 @@ describe("history routes", () => {
     });
   });
 
+  it("name the agent's turn on a refused step after the person undid their own later edit", async () => {
+    const { projectDir, history, call } = await demoProject();
+    const write = (text: string) => writeFileSync(join(projectDir, "index.html"), text);
+    write("B");
+    await call("/claim", { label: "Moved Title", paths: ["index.html"] });
+    const window = await history.beginWindow({ kind: "agent", name: "Agent" }, "Agent turn");
+    write("C");
+    const turn = await window.close();
+    write("D");
+    await call("/claim", { label: "Moved Title", paths: ["index.html"] });
+    await call("/step", { direction: "back" });
+
+    const refused = await (await call("/step", { direction: "back" })).json();
+    expect(refused).toMatchObject({
+      ok: false,
+      changedSince: { id: turn!.id, label: "Agent turn" },
+    });
+  });
+
+  it("offer no later change on a refused redo", async () => {
+    const { projectDir, history, call } = await demoProject();
+    writeFileSync(join(projectDir, "index.html"), "B");
+    await call("/claim", { label: "Moved Title", paths: ["index.html"] });
+    await call("/step", { direction: "back" });
+    const window = await history.beginWindow({ kind: "agent", name: "Agent" }, "Agent turn");
+    writeFileSync(join(projectDir, "index.html"), "C");
+    await window.close();
+
+    const refused = await (await call("/step", { direction: "forward" })).json();
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused).not.toHaveProperty("changedSince");
+  });
+
+  it("name the next later change when undoing the offered one is refused too", async () => {
+    const { projectDir, history, call } = await demoProject();
+    const agent = { kind: "agent", name: "Agent" } as const;
+    const turn = async (text: string, label: string) => {
+      const window = await history.beginWindow(agent, label);
+      writeFileSync(join(projectDir, "index.html"), text);
+      return (await window.close())!;
+    };
+    writeFileSync(join(projectDir, "index.html"), "B");
+    await call("/claim", { label: "Moved Title", paths: ["index.html"] });
+    const first = await turn("C", "Agent turn");
+    const second = await turn("D", "Agent turn 2");
+
+    expect(await (await call("/undo", { entryId: first.id })).json()).toMatchObject({
+      ok: false,
+      changedSince: { id: second.id, label: "Agent turn 2" },
+    });
+  });
+
   it("label an undo's writes with Studio's write token, so their echo reads as Studio's own", async () => {
     const { projectDir, call } = await demoProject();
     writeFileSync(join(projectDir, "index.html"), "B");

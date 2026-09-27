@@ -79,7 +79,7 @@ export function useEditHistoryActions({
         const files = result.paths?.join(", ");
         const since = result.changedSince;
         const { undoEntry } = editHistory;
-        if (since && undoEntry) {
+        if (since && undoEntry && direction === "undo") {
           showToast(
             `Can't ${direction}: ${since.label} changed ${files} since that edit.`,
             "info",

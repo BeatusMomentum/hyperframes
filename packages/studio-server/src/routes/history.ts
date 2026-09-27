@@ -4,6 +4,7 @@ import { createWriteToken } from "../helpers/fileVersion.js";
 import {
   MAX_WINDOW_IDLE_MS,
   UNDO_MODES,
+  type HistoryResult,
   type HistoryWindow,
   type ProjectHistory,
 } from "../history/projectHistory.js";
@@ -58,12 +59,16 @@ function nextStep(history: ProjectHistory, direction: "back" | "forward") {
   const target = history.next(direction, YOU);
   if (!target) return null;
   const paths = target.files.map((file) => file.path);
-  const changedSince = direction === "back" ? nameOf(history.changedSince(target)) : undefined;
+  const changedSince = direction === "back" ? nameOf(history.changedSince(target.id)) : undefined;
   return { id: target.id, label: target.label, endedAt: target.endedAt, paths, changedSince };
 }
 
 function nameOf(entry: HistoryEntry | undefined) {
   return entry && { id: entry.id, label: entry.label };
+}
+
+function withChangedSince(history: ProjectHistory, refused: HistoryResult, id: string | undefined) {
+  return { ...refused, changedSince: nameOf(id ? history.changedSince(id) : undefined) };
 }
 
 /** Runs `task` on the project's history; no history is a 404, an engine refusal ("no longer kept") a 409. */
@@ -95,23 +100,18 @@ export function registerHistoryRoutes(api: Hono, adapter: StudioApiAdapter): voi
   );
   api.post(`${base}/step`, (c) =>
     withHistory(adapter, c, async (history, body) => {
-      const result = await history.step(
-        body.direction === "forward" ? "forward" : "back",
-        YOU,
-        writing(c),
-      );
-      if (result.ok) return result;
-      const newest = result.conflict.newer.at(-1);
-      return {
-        ...result,
-        changedSince: nameOf(history.list().find((entry) => entry.id === newest)),
-      };
+      const direction = body.direction === "forward" ? "forward" : "back";
+      const result = await history.step(direction, YOU, writing(c));
+      if (result.ok || direction === "forward") return result;
+      return withChangedSince(history, result, history.next("back", YOU)?.id);
     }),
   );
   api.post(`${base}/undo`, (c) =>
-    withHistory(adapter, c, (history, body) => {
+    withHistory(adapter, c, async (history, body) => {
       const mode = UNDO_MODES.find((known) => known === body.mode);
-      return history.undo(text(body.entryId) ?? "", { who: whoOf(body), mode, ...writing(c) });
+      const entryId = text(body.entryId) ?? "";
+      const result = await history.undo(entryId, { who: whoOf(body), mode, ...writing(c) });
+      return result.ok ? result : withChangedSince(history, result, entryId);
     }),
   );
   api.post(`${base}/restore`, (c) =>
