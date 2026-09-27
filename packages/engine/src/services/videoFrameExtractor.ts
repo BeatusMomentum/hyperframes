@@ -37,6 +37,7 @@ import { isKnownInactiveTimelineWindow } from "./mediaTimelineWindow.js";
 import {
   extractFinalVideoFrameTimestamp,
   extractMediaMetadata,
+  readHdrSignalPeak,
   type VideoMetadata,
 } from "../utils/ffprobe.js";
 import {
@@ -53,6 +54,7 @@ import {
 } from "../utils/urlDownloader.js";
 import { runFfmpeg, runFfmpegPipeline, type RunFfmpegResult } from "../utils/runFfmpeg.js";
 import { isFfmpegFilterAvailable } from "../utils/psnrFilterAvailability.js";
+import { residentFfmpegDropsVfrDurations } from "../utils/ffmpegVersion.js";
 import { DEFAULT_CONFIG, type EngineConfig } from "../config.js";
 import { unwrapTemplate } from "../utils/htmlTemplate.js";
 import {
@@ -905,7 +907,12 @@ export async function extractVideoFramesRange(
   const isHdr = isHdrColorSpaceUtil(metadata.colorSpace);
   const isMacOS = process.platform === "darwin";
   const toneMappedToSdr = options.toneMapHdrToSdr === true && isHdr && (await toneMapsWithZscale());
-  const decodeWithVideoToolbox = isHdr && isMacOS && !toneMappedToSdr;
+  const resampleVfrToCfr = !options.finalFrameOnly && metadata.isVFR;
+  const filtersDropVfrFrames = resampleVfrToCfr && (await residentFfmpegDropsVfrDurations());
+  const nutCarriesPixels = NUT_RAW_PIXEL_FORMATS.has(metadata.pixelFormat ?? "");
+  const hdrThroughPipeline = isHdr && filtersDropVfrFrames && nutCarriesPixels;
+  // VideoToolbox needs a format filter, so where filters drop VFR frames HDR decodes as on Linux.
+  const decodeWithVideoToolbox = isHdr && isMacOS && !toneMappedToSdr && !filtersDropVfrFrames;
 
   const args: string[] = [];
   if (decodeWithVideoToolbox) {
@@ -952,7 +959,9 @@ export async function extractVideoFramesRange(
   }
   if (toneMappedToSdr) {
     const frameColour = await readFirstFrameColour(videoPath, signal);
-    vfFilters.push(hdrToSdrToneMapFilter(metadata.colorSpace ?? {}, frameColour));
+    // The second process below reads frames without their HDR10 light levels, so it gets the peak.
+    const peak = hdrThroughPipeline ? await readHdrSignalPeak(videoPath, signal) : undefined;
+    vfFilters.push(hdrToSdrToneMapFilter(metadata.colorSpace ?? {}, frameColour, peak));
   }
   if (toneMappedToSdr || (!isHdr && !options.sdrToHdrTransfer)) {
     vfFilters.push(
@@ -967,17 +976,12 @@ export async function extractVideoFramesRange(
   encodeArgs.push("-y", outputPattern);
 
   const runOptions = { signal, timeout: ffmpegProcessTimeout };
-  const resampleVfrToCfr = !options.finalFrameOnly && metadata.isVFR;
   if (resampleVfrToCfr) args.push("-fps_mode", "cfr", "-r", ffmpegFps);
   let processResult: RunFfmpegResult;
-  if (
-    resampleVfrToCfr &&
-    vfFilters.length > 0 &&
-    !isHdr &&
-    NUT_RAW_PIXEL_FORMATS.has(metadata.pixelFormat ?? "")
-  ) {
-    // ffmpeg <6.1 ignores frame durations in CFR resampling once any -vf is set,
-    // cutting a trailing still short, so the SDR filters run in a second process.
+  if (resampleVfrToCfr && vfFilters.length > 0 && (isHdr ? hdrThroughPipeline : nutCarriesPixels)) {
+    // ffmpeg <6.1 ignores frame durations in CFR resampling once any -vf is set, cutting a
+    // trailing still short, so the filters run in a second process. HDR goes there only on
+    // those versions: from 8.0 a one-process tone map ignores the light levels, so a set peak would differ.
     processResult = await runFfmpegPipeline(
       [...args, "-an", "-sn", "-dn", "-c:v", "rawvideo", "-f", "nut", "pipe:1"],
       [

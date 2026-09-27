@@ -10,11 +10,13 @@ function known(value: string | undefined): string | undefined {
 
 /**
  * HDR to SDR BT.709 with zscale and hable. zscale reads each frame's own tags, so only those the
- * first frame lacks are set: from ffprobe, which may see the container's, else BT.2020.
+ * first frame lacks are set: from ffprobe, which may see the container's, else BT.2020. `peak`
+ * (100-nit units) replaces the one tonemap would read from the frames' HDR10 light levels.
  */
 export function hdrToSdrToneMapFilter(
   probed: ToneMapSourceColour,
   firstFrame: ToneMapSourceColour,
+  peak?: number,
 ): string {
   const fill = (key: keyof ToneMapSourceColour, fallback?: string) =>
     known(firstFrame[key]) ? undefined : (known(probed[key]) ?? fallback);
@@ -24,7 +26,7 @@ export function hdrToSdrToneMapFilter(
     ["color_trc", fill("colorTransfer")],
   ].filter(([, value]) => value);
   const setTags = tags.length ? `setparams=${tags.map((tag) => tag.join("=")).join(":")},` : "";
-  return `${setTags}zscale=t=linear:npl=100,tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv`;
+  return `${setTags}zscale=t=linear:npl=100,tonemap=hable:desat=0${peak ? `:peak=${peak}` : ""},zscale=p=bt709:t=bt709:m=bt709:r=tv`;
 }
 
 /** ffmpeg args printing the first shown frame's tags; ffprobe's packet-bounded reads miss edit-list pre-roll. */

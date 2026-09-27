@@ -19,6 +19,10 @@ describe("hdrToSdrToneMapFilter", () => {
     );
   });
 
+  it("passes an explicit peak to the tone map", () => {
+    expect(hdrToSdrToneMapFilter(PQ, PQ, 40)).toContain("tonemap=hable:desat=0:peak=40,");
+  });
+
   it("treats a missing matrix or primaries as BT.2020 and leaves an unknown transfer to the frames", () => {
     expect(
       hdrToSdrToneMapFilter(

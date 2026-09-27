@@ -206,6 +206,37 @@ describe("extractMediaMetadata nb_frames duration cross-check", () => {
   });
 });
 
+describe("readHdrSignalPeak", () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  async function peakFor(sideData: object[] | undefined): Promise<number | undefined> {
+    const frames = sideData ? [{ side_data_list: sideData }] : [];
+    const { spawn } = createSpawnSpy([
+      { kind: "exit", code: 0, stdout: JSON.stringify({ frames }) },
+    ]);
+    vi.resetModules();
+    vi.doMock("child_process", () => ({ spawn }));
+    const { readHdrSignalPeak } = await import("./ffprobe.js");
+    return readHdrSignalPeak("/tmp/hdr10.mp4");
+  }
+
+  it("uses MaxCLL first, then the mastering display's max luminance, in 100-nit units", async () => {
+    const mastering = {
+      side_data_type: "Mastering display metadata",
+      max_luminance: "10000000/10000",
+    };
+    const cll = { side_data_type: "Content light level metadata", max_content: 4000 };
+    expect(await peakFor([mastering, cll])).toBe(40);
+    expect(await peakFor([mastering, { ...cll, max_content: 0 }])).toBe(10);
+    expect(await peakFor([{ side_data_type: "H.26[45] User Data Unregistered SEI message" }])).toBe(
+      undefined,
+    );
+    expect(await peakFor(undefined)).toBe(undefined);
+  });
+});
+
 describe("extractPngMetadataFromBuffer", () => {
   it("accepts a valid cICP chunk before IDAT", () => {
     const metadata = extractPngMetadataFromBuffer(buildMinimalPng());

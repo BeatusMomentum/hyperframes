@@ -910,6 +910,42 @@ export async function extractFinalVideoFrameTimestamp(
 }
 
 /**
+ * The first frame's HDR10 peak in 100-nit units, by tonemap's own rule (which reads it per frame):
+ * MaxCLL, else the mastering display's max luminance. Undefined when the frame carries neither.
+ */
+export async function readHdrSignalPeak(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  const stdout = await runFfprobe(
+    filePath,
+    [
+      "-select_streams",
+      "v:0",
+      "-read_intervals",
+      "%+#1",
+      "-show_entries",
+      "frame_side_data=max_content,max_luminance",
+      "-of",
+      "json",
+    ],
+    signal,
+  );
+  type LightLevels = { max_content?: number | string; max_luminance?: number | string };
+  const { frames } = JSON.parse(stdout) as { frames?: Array<{ side_data_list?: LightLevels[] }> };
+  const sideData = frames?.[0]?.side_data_list ?? [];
+  const nits = (value: number | string | undefined): number => {
+    const [num, den = "1"] = String(value ?? "").split("/");
+    const parsed = Number(num) / Number(den);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  };
+  const maxCll = Math.max(0, ...sideData.map((entry) => nits(entry.max_content)));
+  const mastering = Math.max(0, ...sideData.map((entry) => nits(entry.max_luminance)));
+  const peakNits = maxCll || mastering;
+  return peakNits > 0 ? peakNits / 100 : undefined;
+}
+
+/**
  * @deprecated Use `extractMediaMetadata` — this name is kept for backward
  * compatibility with consumers that imported the original video-only name
  * before still-image (PNG) support was added. New callers should prefer

@@ -1708,6 +1708,60 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
     expect(pngChunkTypes(result.framePaths.get(0)!)).not.toContain("sRGB");
   }, 60_000);
 
+  it("keeps every frame of a VFR window converted SDR to HDR that ends on a still", async () => {
+    const fixture = join(FIXTURE_DIR, "vfr-still-sdr-to-hdr.mp4");
+    const synth = await runFfmpeg([
+      "-y",
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=0xC83C28:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=2:r=60`,
+      "-vf",
+      "select='not(between(n\\,30\\,89))'",
+      "-fps_mode",
+      "vfr",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-pix_fmt",
+      "yuv420p",
+      fixture,
+    ]);
+    if (!synth.success) throw new Error(`fixture synthesis failed: ${synth.stderr.slice(-400)}`);
+    const window = 0.616666;
+    const unfilteredDir = join(FIXTURE_DIR, "out-vfr-still-sdr-to-hdr-unfiltered");
+    mkdirSync(unfilteredDir, { recursive: true });
+    const unfiltered = await runFfmpeg([
+      "-v",
+      "error",
+      "-ss",
+      "0",
+      "-i",
+      fixture,
+      "-t",
+      String(window),
+      "-fps_mode",
+      "cfr",
+      "-r",
+      "30",
+      join(unfilteredDir, "f_%05d.png"),
+    ]);
+    expect(unfiltered.success).toBe(true);
+
+    const result = await extractVideoFramesRange(fixture, "vfr-still-sdr-to-hdr", 0, window, {
+      fps: 30,
+      outputDir: join(FIXTURE_DIR, "out-vfr-still-sdr-to-hdr"),
+      format: "png",
+      sdrToHdrTransfer: "pq",
+    });
+
+    expect(result.metadata.isVFR).toBe(true);
+    expect(result.totalFrames).toBe(readdirSync(unfilteredDir).length);
+  }, 60_000);
+
   it("keeps jpg and png extraction caches separate", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "hf-extract-format-cache-"));
     try {
@@ -3447,8 +3501,8 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
     }
   }, 60_000);
 
-  // A second process would read the frames back without the HDR10 light-level metadata the tone map uses.
-  it("tone-maps a VFR HDR10 window in one process, exactly as the unfiltered resample would", async () => {
+  // On ffmpeg <6.1 this window runs through a second process, which is told the peak the frames carry.
+  it("tone-maps a VFR HDR10 window with its light levels, exactly as one process would", async () => {
     const source = join(fixtureDir, "pq-vfr-4000nit.mp4");
     const synthesized = await runFfmpeg([
       "-y",
@@ -3508,6 +3562,65 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
     expect(readFileSync(result.framePaths.get(0)!)).toEqual(
       readFileSync(join(referenceDir, referenceFrames[0]!)),
     );
+  }, 60_000);
+
+  // ffmpeg <6.1 drops the still that ends this window once the tone map is a -vf.
+  it("keeps every frame of a tone-mapped VFR HDR window that ends on a still", async () => {
+    const source = join(fixtureDir, "pq-vfr-x264.mp4");
+    const synthesized = await runFfmpeg([
+      "-y",
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=s=64x64:r=60:d=2",
+      "-vf",
+      "select='not(between(n\\,30\\,89))',zscale=pin=bt709:tin=bt709:min=bt709:p=bt2020:t=smpte2084:m=bt2020nc:r=tv:npl=1000,format=yuv420p10le",
+      "-fps_mode",
+      "vfr",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-x264-params",
+      "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+      source,
+    ]);
+    if (!synthesized.success)
+      throw new Error(`PQ fixture synthesis failed: ${synthesized.stderr.slice(-400)}`);
+    const unfilteredDir = join(fixtureDir, "pq-vfr-x264-unfiltered");
+    mkdirSync(unfilteredDir, { recursive: true });
+    const unfiltered = await runFfmpeg([
+      "-v",
+      "error",
+      "-ss",
+      "0",
+      "-i",
+      source,
+      "-t",
+      "0.616666",
+      "-fps_mode",
+      "cfr",
+      "-r",
+      "30",
+      join(unfilteredDir, "f_%05d.png"),
+    ]);
+    expect(unfiltered.success, unfiltered.stderr).toBe(true);
+
+    const result = await extractVideoFramesRange(source, "pq-vfr-x264", 0, 0.616666, {
+      fps: 30,
+      outputDir: join(fixtureDir, "pq-vfr-x264-out"),
+      format: "png",
+      toneMapHdrToSdr: true,
+    });
+
+    expect(result.metadata.isVFR).toBe(true);
+    expect(result.totalFrames).toBe(readdirSync(unfilteredDir).length);
+    // Output frames 16-18 hold the still (source frame 29); frame 15 is the moving frame before it.
+    const frame = (index: number) => readFileSync(result.framePaths.get(index)!);
+    expect(frame(result.totalFrames - 1)).toEqual(frame(16));
+    expect(frame(15)).not.toEqual(frame(16));
   }, 60_000);
 });
 
