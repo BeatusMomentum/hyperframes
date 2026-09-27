@@ -1,6 +1,15 @@
 // fallow-ignore-file complexity
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  mkdirSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { join, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -183,11 +192,16 @@ function getMediaDurationSeconds(filePath: string): number | null {
   }
 }
 
+/** From the header and file size only: a prepared WAV of a long recording is hundreds of MB. */
 export function getPreparedWavDurationSeconds(wavPath: string): number | null {
   try {
-    const dataChunk = findWavDataChunk(readFileSync(wavPath));
+    const header = Buffer.alloc(4096);
+    const fd = openSync(wavPath, "r");
+    const bytes = readSync(fd, header, 0, header.length, 0);
+    closeSync(fd);
+    const dataChunk = findWavDataChunk(header.subarray(0, bytes));
     if (!dataChunk) return null;
-    return dataChunk.size / (16_000 * 2);
+    return (statSync(wavPath).size - dataChunk.offset) / (16_000 * 2);
   } catch {
     return null;
   }

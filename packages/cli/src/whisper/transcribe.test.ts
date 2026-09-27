@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, test } from "vitest";
 import {
   dtwPresetForModel,
+  getPreparedWavDurationSeconds,
   initialModelForLanguage,
   isPcm16kMono,
   isWhisperTimeoutError,
@@ -273,5 +277,25 @@ describe("isPcm16kMono", () => {
     expect(isPcm16kMono(wav("pcm_s24le"))).toBe(false);
     expect(isPcm16kMono(wav("pcm_f32le"))).toBe(false);
     expect(isPcm16kMono({ ...wav("pcm_s16le"), sample_rate: "24000" })).toBe(false);
+  });
+});
+
+describe("getPreparedWavDurationSeconds", () => {
+  it("reads the length past a LIST chunk, and null for a file that is not a WAV", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-wav-duration-"));
+    const chunk = (id: string, body: Buffer) => {
+      const head = Buffer.alloc(8);
+      head.write(id, "ascii");
+      head.writeUInt32LE(body.length, 4);
+      return Buffer.concat([head, body]);
+    };
+    const wav = join(dir, "prepared.wav");
+    const riff = Buffer.from("RIFF\0\0\0\0WAVE", "latin1");
+    const list = chunk("LIST", Buffer.from("INFOISFT\x0e\0\0\0Lavf61.7.100\0\0", "latin1"));
+    writeFileSync(wav, Buffer.concat([riff, list, chunk("data", Buffer.alloc(1.5 * 32_000))]));
+    writeFileSync(join(dir, "not.wav"), "not a wav");
+    expect(getPreparedWavDurationSeconds(wav)).toBe(1.5);
+    expect(getPreparedWavDurationSeconds(join(dir, "not.wav"))).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
