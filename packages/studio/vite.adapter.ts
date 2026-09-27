@@ -44,6 +44,7 @@ function isPathWithin(parentDir: string, childPath: string): boolean {
 
 /** The project under `dataDir` that owns a watched file; a symlinked project is watched by its real path. */
 export function projectIdForWatchedFile(dataDir: string, filePath: string): string | null {
+  if (isPathWithin(dataDir, filePath)) return relative(dataDir, filePath).split(sep)[0] || null;
   let entries: string[];
   try {
     entries = readdirSync(dataDir);
@@ -51,14 +52,11 @@ export function projectIdForWatchedFile(dataDir: string, filePath: string): stri
     return null;
   }
   for (const id of entries) {
-    const linked = join(dataDir, id);
-    let real = linked;
     try {
-      real = realpathSync(linked);
+      if (isPathWithin(realpathSync.native(join(dataDir, id)), filePath)) return id;
     } catch {
       // A broken symlink owns no files.
     }
-    if (isPathWithin(linked, filePath) || isPathWithin(real, filePath)) return id;
   }
   return null;
 }

@@ -183,12 +183,12 @@ describe("Vite project resolution boundary", () => {
 describe("Vite dev watcher project id", () => {
   it("names a symlinked project from the real path the watcher reports", () => {
     const { root, data } = fixture();
-    const real = join(root, "elsewhere");
-    mkdirSync(join(real, "assets"), { recursive: true });
+    mkdirSync(join(root, "elsewhere", "assets"), { recursive: true });
+    const real = realpathSync(join(root, "elsewhere"));
     symlinkSync(real, join(data, "promo"), "junction");
     mkdirSync(join(data, "..plain"));
 
-    expect(projectIdForWatchedFile(data, join(realpathSync(real), "index.html"))).toBe("promo");
+    expect(projectIdForWatchedFile(data, join(real, "index.html"))).toBe("promo");
     expect(projectIdForWatchedFile(data, join(real, "assets", "a.css"))).toBe("promo");
     expect(projectIdForWatchedFile(data, join(data, "..plain", "index.html"))).toBe("..plain");
     expect(projectIdForWatchedFile(data, join(root, "sessions", "x.json"))).toBeNull();
