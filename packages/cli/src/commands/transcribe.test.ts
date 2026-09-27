@@ -237,7 +237,7 @@ describe("transcribe command", () => {
         "while ffmpeg prepares the audio",
         () =>
           prepareWavMock.mockImplementation(() => {
-            throw Object.assign(new Error("Command failed: ffmpeg"), { signal: "SIGINT" });
+            throw Object.assign(new Error("Command failed: ffmpeg"), { status: 255, signal: null });
           }),
       ],
     ])("stops with exit 130 on Ctrl-C %s instead of falling back", async (_when, interrupt) => {

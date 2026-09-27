@@ -1,15 +1,6 @@
 // fallow-ignore-file complexity
 import { execFileSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readFileSync,
-  readSync,
-  mkdirSync,
-  statSync,
-  unlinkSync,
-} from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -192,16 +183,10 @@ function getMediaDurationSeconds(filePath: string): number | null {
   }
 }
 
-/** From the header and file size only: a prepared WAV of a long recording is hundreds of MB. */
+/** A prepared WAV is 16 kHz mono s16, so its size gives the length (the header adds a few ms). */
 export function getPreparedWavDurationSeconds(wavPath: string): number | null {
   try {
-    const header = Buffer.alloc(4096);
-    const fd = openSync(wavPath, "r");
-    const bytes = readSync(fd, header, 0, header.length, 0);
-    closeSync(fd);
-    const dataChunk = findWavDataChunk(header.subarray(0, bytes));
-    if (!dataChunk) return null;
-    return (statSync(wavPath).size - dataChunk.offset) / (16_000 * 2);
+    return statSync(wavPath).size / (16_000 * 2);
   } catch {
     return null;
   }
@@ -313,6 +298,19 @@ function tempWavPath(): string {
   return join(tmpdir(), `hyperframes-audio-${process.pid}-${randomUUID()}.wav`);
 }
 
+function runFfmpeg(
+  ffmpegPath: string,
+  args: string[],
+  options: { stdio: "ignore"; timeout: number },
+) {
+  try {
+    execFileSync(ffmpegPath, args, options);
+  } catch (err) {
+    rmSync(args.at(-1)!, { force: true });
+    throw err;
+  }
+}
+
 /**
  * Extract audio from a video file as 16kHz mono WAV (whisper requirement).
  */
@@ -324,7 +322,7 @@ function extractAudio(videoPath: string): string {
     );
   }
   const wavPath = tempWavPath();
-  execFileSync(
+  runFfmpeg(
     ffmpegPath,
     ["-i", videoPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
     {
@@ -382,14 +380,10 @@ function prepareAudio(audioPath: string): string {
     throw new Error(`ffmpeg is required to prepare audio. Install: ${getFFmpegInstallHint()}`);
   }
   const wavPath = tempWavPath();
-  execFileSync(
-    ffmpegPath,
-    ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
-    {
-      stdio: "ignore",
-      timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
-    },
-  );
+  runFfmpeg(ffmpegPath, ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath], {
+    stdio: "ignore",
+    timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
+  });
   return wavPath;
 }
 

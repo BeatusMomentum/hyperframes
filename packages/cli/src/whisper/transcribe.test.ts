@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, test } from "vitest";
@@ -8,6 +8,7 @@ import {
   initialModelForLanguage,
   isPcm16kMono,
   isWhisperTimeoutError,
+  prepareWav,
   resolveAudioPreparationTimeoutMs,
   resolveWhisperTimeoutMs,
   whisperModelSlowdownFactor,
@@ -281,21 +282,38 @@ describe("isPcm16kMono", () => {
 });
 
 describe("getPreparedWavDurationSeconds", () => {
-  it("reads the length past a LIST chunk, and null for a file that is not a WAV", () => {
+  it("reads the length from the size alone, whatever comes before the samples", () => {
     const dir = mkdtempSync(join(tmpdir(), "hf-wav-duration-"));
-    const chunk = (id: string, body: Buffer) => {
-      const head = Buffer.alloc(8);
-      head.write(id, "ascii");
-      head.writeUInt32LE(body.length, 4);
-      return Buffer.concat([head, body]);
-    };
     const wav = join(dir, "prepared.wav");
-    const riff = Buffer.from("RIFF\0\0\0\0WAVE", "latin1");
-    const list = chunk("LIST", Buffer.from("INFOISFT\x0e\0\0\0Lavf61.7.100\0\0", "latin1"));
-    writeFileSync(wav, Buffer.concat([riff, list, chunk("data", Buffer.alloc(1.5 * 32_000))]));
-    writeFileSync(join(dir, "not.wav"), "not a wav");
-    expect(getPreparedWavDurationSeconds(wav)).toBe(1.5);
-    expect(getPreparedWavDurationSeconds(join(dir, "not.wav"))).toBeNull();
+    writeFileSync(wav, Buffer.concat([Buffer.alloc(6000), Buffer.alloc(1.5 * 32_000)]));
+    expect(getPreparedWavDurationSeconds(wav)).toBeCloseTo(1.69, 2);
+    expect(getPreparedWavDurationSeconds(join(dir, "missing.wav"))).toBeNull();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe.skipIf(process.platform === "win32")("prepareWav", () => {
+  it("removes the partial WAV when ffmpeg fails or is stopped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-prepare-wav-"));
+    const ffmpeg = join(dir, "ffmpeg");
+    writeFileSync(
+      ffmpeg,
+      `#!${process.execPath}\nrequire("fs").writeFileSync(process.argv.at(-1), "partial");\nprocess.exit(255);\n`,
+    );
+    chmodSync(ffmpeg, 0o755);
+    const leftovers = () =>
+      readdirSync(tmpdir()).filter((f) => f.startsWith(`hyperframes-audio-${process.pid}-`));
+    const saved = process.env.HYPERFRAMES_FFMPEG_PATH;
+    process.env.HYPERFRAMES_FFMPEG_PATH = ffmpeg;
+    try {
+      for (const input of ["talk.mp3", "talk.mp4"]) {
+        expect(() => prepareWav(join(dir, input))).toThrow(/Command failed/);
+        expect(leftovers()).toEqual([]);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.HYPERFRAMES_FFMPEG_PATH;
+      else process.env.HYPERFRAMES_FFMPEG_PATH = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
