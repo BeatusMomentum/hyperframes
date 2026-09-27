@@ -33,19 +33,35 @@ describe("gridRowKey", () => {
   });
 });
 
+const originalResizeObserver = globalThis.ResizeObserver;
+
 describe("BlockGrid layout", () => {
   let root: Root | null = null;
-  const saved = new Map<string, PropertyDescriptor | undefined>();
+  const savedProps = new Map<string, PropertyDescriptor | undefined>();
+  let savedResizeObserver: unknown;
   let observers: Array<{ callback: (entries: unknown[]) => void; targets: Element[] }> = [];
 
   beforeEach(() => {
-    // The virtualizer sizes its viewport from the scroller's box, which happy-dom reports as 0.
+    // happy-dom lays nothing out: the scroller is 400x600, and a row measures by its column count,
+    // 150px tall at 2 columns and 110px at 4.
+    const rowHeight = (el: HTMLElement) => {
+      const columns = /repeat\((\d+),/.exec(el.style?.gridTemplateColumns ?? "")?.[1];
+      if (!el.dataset?.index || !columns) return undefined;
+      return columns === "2" ? 150 : 110;
+    };
     for (const [prop, value] of [
-      ["offsetWidth", 400],
-      ["offsetHeight", 600],
+      ["offsetWidth", () => 400],
+      ["offsetHeight", (el: HTMLElement) => rowHeight(el) ?? 600],
     ] as const) {
-      Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
+      savedProps.set(prop, Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop));
+      Object.defineProperty(HTMLElement.prototype, prop, {
+        configurable: true,
+        get(this: HTMLElement) {
+          return value(this);
+        },
+      });
     }
+    savedResizeObserver = globalThis.ResizeObserver;
     observers = [];
     (globalThis as { ResizeObserver: unknown }).ResizeObserver = class {
       private readonly entry: { callback: (entries: unknown[]) => void; targets: Element[] };
@@ -65,9 +81,12 @@ describe("BlockGrid layout", () => {
     if (root) act(() => root?.unmount());
     root = null;
     document.body.innerHTML = "";
-    for (const [prop, descriptor] of saved) {
+    for (const [prop, descriptor] of savedProps) {
       if (descriptor) Object.defineProperty(HTMLElement.prototype, prop, descriptor);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
     }
+    savedProps.clear();
+    (globalThis as { ResizeObserver: unknown }).ResizeObserver = savedResizeObserver;
   });
 
   const blocks = Array.from({ length: 80 }, (_, i) => ({ name: `b${i}`, title: `B${i}` }));
@@ -112,6 +131,17 @@ describe("BlockGrid layout", () => {
     expect(firstRow(host)?.querySelectorAll("[data-card]")).toHaveLength(2);
   });
 
+  it("measures rows afresh when a resize changes the column count", () => {
+    const host = renderGrid();
+    resize(host, 360, 0);
+    const secondRow = () => host.querySelector<HTMLElement>("[data-index='1']");
+    expect(secondRow()?.style.transform).toBe("translateY(150px)");
+    resize(host, 520, 0);
+    expect(firstRow(host)?.style.gridTemplateColumns).toBe("repeat(4, minmax(0, 1fr))");
+    // A height cached at 2 columns would leave the second row at 150px.
+    expect(secondRow()?.style.transform).toBe("translateY(110px)");
+  });
+
   it("keeps its layout while the panel is hidden and measures zero wide", () => {
     const host = renderGrid();
     resize(host, 360, 40);
@@ -141,5 +171,16 @@ describe("BlockGrid layout", () => {
     const calls = renderCard.mock.calls.length;
     act(() => host.querySelector<HTMLButtonElement>("[data-card='b0']")?.focus());
     expect(renderCard.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("after the layout tests", () => {
+  it("has the layout stubs restored", () => {
+    const div = document.createElement("div");
+    div.dataset.index = "0";
+    div.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+    expect(div.offsetHeight).toBe(0);
+    expect(div.offsetWidth).toBe(0);
+    expect(globalThis.ResizeObserver).toBe(originalResizeObserver);
   });
 });
