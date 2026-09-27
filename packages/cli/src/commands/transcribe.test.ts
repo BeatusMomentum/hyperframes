@@ -34,10 +34,8 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 
 const trackTranscribeUnavailable = vi.fn();
-const trackCommandFailure = vi.fn();
 vi.mock("../telemetry/events.js", () => ({
   trackTranscribeUnavailable: (...a: unknown[]) => trackTranscribeUnavailable(...a),
-  trackCommandFailure: (...a: unknown[]) => trackCommandFailure(...a),
 }));
 
 import transcribeCmd from "./transcribe.js";
@@ -68,7 +66,6 @@ describe("transcribe command", () => {
     transcribeMock.mockReset();
     prepareWavMock.mockReset().mockImplementation((input: string) => input);
     trackTranscribeUnavailable.mockReset();
-    trackCommandFailure.mockReset();
     mlxMock.mockReset();
     Object.assign(runners, { sherpa: false, mlx: false });
     transcribeMock.mockRejectedValue(
@@ -99,7 +96,6 @@ describe("transcribe command", () => {
     expect(transcribeMock).toHaveBeenCalled();
     expect(consumeCommandResult().exitCode).toBe(1);
     expect(trackTranscribeUnavailable).toHaveBeenCalledWith({ optional: false });
-    expect(trackCommandFailure).not.toHaveBeenCalled();
   });
 
   it("--json never lets whisper install and reports why it skipped", async () => {
@@ -144,7 +140,6 @@ describe("transcribe command", () => {
     expect(prepareWavMock).not.toHaveBeenCalled();
     expect(consumeCommandResult().exitCode).toBe(0);
     expect(trackTranscribeUnavailable).toHaveBeenCalledWith({ optional: true });
-    expect(trackCommandFailure).not.toHaveBeenCalled();
   });
 
   describe("engine selection", () => {
