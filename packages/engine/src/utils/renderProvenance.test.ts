@@ -87,7 +87,8 @@ describe.skipIf(!HAS_FFMPEG)("provenance survives a real encode", () => {
     dir = mkdtempSync(join(tmpdir(), "hf-provenance-"));
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    // Windows can hold an ffmpeg output open for a moment after the process exits.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   const run = (args: string[]): void => {
@@ -264,7 +265,7 @@ describe.skipIf(!HAS_FFMPEG)("provenance survives a real encode", () => {
       renderer: PROVENANCE_RENDERER_NAME,
       version: PROVENANCE_VERSION,
     });
-  });
+  }, 60_000);
 });
 
 describe("resolveOwnVersionFrom", () => {
