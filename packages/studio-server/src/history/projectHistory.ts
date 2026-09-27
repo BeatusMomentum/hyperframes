@@ -147,7 +147,6 @@ export interface ProjectHistory {
   step(direction: "back" | "forward", who: HistoryWho, options?: Writing): Promise<HistoryResult>;
   /** The entry `who`'s next step reverts, pending changes included, as of the last scan (a step scans first). */
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined;
-  /** The newest later change still in effect (not an undo) to a file that differs from logged entry `id`. */
   changedSince(id: string): HistoryEntry | undefined;
   /** A file changed since returns a conflict; `mode` takes a choice (keep-later-edits: null when none is left). */
   undo(id: string, options: { who: HistoryWho; mode?: UndoMode } & Writing): Promise<HistoryResult>;
