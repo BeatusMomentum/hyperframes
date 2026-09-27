@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { affectsProjectSignature } from "@hyperframes/studio-server";
+import { affectsProjectSignature, shouldWatchProjectFile } from "@hyperframes/studio-server";
 
 export type FileChangeListener = (relativePath: string) => void;
 
@@ -10,32 +10,10 @@ export interface ProjectWatcher {
   close(): void;
 }
 
-const WATCHER_EXCLUDED_DIRS = new Set([
-  ".cache",
-  ".git",
-  ".hyperframes",
-  ".next",
-  ".thumbnails",
-  ".transcode-cache",
-  ".vite",
-  ".waveform-cache",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "outputs",
-  "renders",
-]);
 // A save reaches the preview QUIET_MS after the writes go quiet, but at most once per BURST_MS,
 // so a checkout or a multi-file tool doesn't start a rebuild for every file.
 const QUIET_MS = 30;
 const BURST_MS = 300;
-
-export function shouldWatchProjectFile(filename: string): boolean {
-  if (!filename) return false;
-  const parts = filename.split(/[\\/]+/);
-  return !parts.some((part) => WATCHER_EXCLUDED_DIRS.has(part));
-}
 
 function isDirectory(path: string): boolean {
   try {

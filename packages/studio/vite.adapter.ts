@@ -21,6 +21,7 @@ import {
   createBackgroundRemovalJob,
   createProjectSignature,
   affectsProjectSignature,
+  shouldWatchProjectFile,
   PREVIEW_BUNDLE_OPTIONS,
   DEFAULT_HISTORY_ROOT,
   openProjectHistory,
@@ -42,9 +43,20 @@ function isPathWithin(parentDir: string, childPath: string): boolean {
   );
 }
 
-/** The project under `dataDir` that owns a watched file; a symlinked project is watched by its real path. */
-export function projectIdForWatchedFile(dataDir: string, filePath: string): string | null {
-  if (isPathWithin(dataDir, filePath)) return relative(dataDir, filePath).split(sep)[0] || null;
+/**
+ * The project file a watcher event should announce, or null. A symlinked project is
+ * watched by its real path; which files announce is the rule every host shares.
+ */
+export function projectFileChange(
+  dataDir: string,
+  filePath: string,
+): { projectId: string; relativePath: string } | null {
+  const announce = (projectId: string, relativePath: string) =>
+    shouldWatchProjectFile(relativePath) ? { projectId, relativePath } : null;
+  if (isPathWithin(dataDir, filePath)) {
+    const [projectId = "", ...rest] = relative(dataDir, filePath).split(sep);
+    return announce(projectId, rest.join(sep));
+  }
   let entries: string[];
   try {
     entries = readdirSync(dataDir);
@@ -53,7 +65,8 @@ export function projectIdForWatchedFile(dataDir: string, filePath: string): stri
   }
   for (const id of entries) {
     try {
-      if (isPathWithin(realpathSync(join(dataDir, id)), filePath)) return id;
+      const root = realpathSync(join(dataDir, id));
+      if (isPathWithin(root, filePath)) return announce(id, relative(root, filePath));
     } catch {
       // A broken symlink owns no files.
     }

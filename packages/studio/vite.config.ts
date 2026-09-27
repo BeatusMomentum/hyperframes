@@ -15,7 +15,7 @@ import { watch } from "chokidar";
 import {
   createProjectSignatureCache,
   createViteAdapter,
-  projectIdForWatchedFile,
+  projectFileChange,
 } from "./vite.adapter";
 import { previewConfigPayload } from "./vite.preview-config";
 import { loadStudioServerDevModule } from "./vite.studio-server-module";
@@ -149,7 +149,7 @@ function devProjectApi(): Plugin {
           path: string,
           expectedVersion: string,
         ) => { path: string; version: string; writeToken: string } | null;
-        fileContentVersion: (content: string) => string;
+        fileContentVersion: (content: string | Uint8Array) => string;
         DELETED_VERSION: string;
         openProjectHistory: typeof openProjectHistory;
       } | null = null;
@@ -250,17 +250,11 @@ function devProjectApi(): Plugin {
         }
       });
 
-      projectWatcher.on("change", (filePath: string) => {
-        if (
-          !filePath.endsWith(".html") &&
-          !filePath.endsWith(".css") &&
-          !filePath.endsWith(".js") &&
-          !filePath.endsWith(".json")
-        )
-          return;
+      // Same files and the same add/change/delete events the CLI host announces.
+      const announceProjectFileChange = (filePath: string) => {
         // The project id lets a stale tab ignore another project's saves, as on the CLI host.
-        const projectId = projectIdForWatchedFile(dataDir, filePath);
-        if (!projectId) return;
+        const file = projectFileChange(dataDir, filePath);
+        if (!file) return;
         console.log(`[Studio] File changed: ${filePath}`);
         // The receipt is matched on the file's current bytes, not just its path,
         // so a write is only recognised as ours when the version agrees. Calling
@@ -269,7 +263,7 @@ function devProjectApi(): Plugin {
         const studioServer = _studioServerModule;
         let version: string | null = null;
         try {
-          version = studioServer?.fileContentVersion(readFileSync(filePath, "utf-8")) ?? null;
+          version = studioServer?.fileContentVersion(readFileSync(filePath)) ?? null;
         } catch {
           // A deletion has no current bytes to match a write receipt against.
         }
@@ -279,9 +273,12 @@ function devProjectApi(): Plugin {
         server.ws.send({
           type: "custom",
           event: "hf:file-change",
-          data: { path: filePath, version, projectId, ...receipt },
+          data: { path: filePath, version, projectId: file.projectId, ...receipt },
         });
-      });
+      };
+      for (const event of ["add", "change", "unlink"] as const) {
+        projectWatcher.on(event, announceProjectFileChange);
+      }
       server.httpServer?.on("close", () => void projectWatcher.close());
     },
   };

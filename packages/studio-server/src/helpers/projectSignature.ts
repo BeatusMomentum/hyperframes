@@ -47,10 +47,9 @@ const STUDIO_SIGNATURE_MANIFEST_PATHS = [
  * preview, so an unfiltered watcher discards the memo on roughly every request of
  * the one workload the memo exists for.
  *
- * Note this is not `WATCHER_EXCLUDED_DIRS`, which is character-identical but
- * excludes all of `.hyperframes/` — the signature deliberately reads two manifest
- * files from inside it, so filtering with that set would stop motion-state saves
- * from ever invalidating.
+ * Note this is not `shouldWatchProjectFile`, which excludes all of `.hyperframes/`:
+ * the signature deliberately reads two manifest files from inside it, so filtering
+ * with that rule would stop motion-state saves from ever invalidating.
  *
  * Every segment is tested, not just the parents, so a directory event on an
  * excluded dir itself (`unlinkDir .thumbnails`) is filtered too. The cost is that
@@ -65,6 +64,12 @@ export function affectsProjectSignature(projectDir: string, changedPath: string)
   const segments = relativePath.split(sep);
   if (STUDIO_SIGNATURE_MANIFEST_PATHS.includes(segments.join("/") as never)) return true;
   return !segments.some((segment) => SIGNATURE_EXCLUDED_DIRS.has(segment));
+}
+
+/** Whether a change at a project-relative path reaches the browser; every Studio host uses this rule. */
+export function shouldWatchProjectFile(relativePath: string): boolean {
+  if (!relativePath) return false;
+  return !relativePath.split(/[\\/]+/).some((part) => SIGNATURE_EXCLUDED_DIRS.has(part));
 }
 
 interface ProjectSignatureFile {

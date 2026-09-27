@@ -1,5 +1,9 @@
 export { createStudioApi } from "./createStudioApi.js";
-export { createProjectSignature, affectsProjectSignature } from "./helpers/projectSignature.js";
+export {
+  createProjectSignature,
+  affectsProjectSignature,
+  shouldWatchProjectFile,
+} from "./helpers/projectSignature.js";
 export { compositionsAffectedBy } from "./helpers/compositionInputs.js";
 export {
   DEFAULT_HISTORY_ROOT,

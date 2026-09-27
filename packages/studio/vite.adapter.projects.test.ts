@@ -18,7 +18,7 @@ import type { ViteDevServer } from "vite";
 import {
   createProjectSignatureCache,
   createViteAdapter,
-  projectIdForWatchedFile,
+  projectFileChange,
 } from "./vite.adapter";
 
 const roots: string[] = [];
@@ -180,7 +180,7 @@ describe("Vite project resolution boundary", () => {
   });
 });
 
-describe("Vite dev watcher project id", () => {
+describe("Vite dev watcher file changes", () => {
   it("names a symlinked project from the real path the watcher reports", () => {
     const { root, data } = fixture();
     mkdirSync(join(root, "elsewhere", "assets"), { recursive: true });
@@ -188,9 +188,24 @@ describe("Vite dev watcher project id", () => {
     symlinkSync(real, join(data, "promo"), "junction");
     mkdirSync(join(data, "..plain"));
 
-    expect(projectIdForWatchedFile(data, join(real, "index.html"))).toBe("promo");
-    expect(projectIdForWatchedFile(data, join(real, "assets", "a.css"))).toBe("promo");
-    expect(projectIdForWatchedFile(data, join(data, "..plain", "index.html"))).toBe("..plain");
-    expect(projectIdForWatchedFile(data, join(root, "sessions", "x.json"))).toBeNull();
+    expect(projectFileChange(data, join(real, "index.html"))?.projectId).toBe("promo");
+    expect(projectFileChange(data, join(real, "assets", "a.css"))).toEqual({
+      projectId: "promo",
+      relativePath: join("assets", "a.css"),
+    });
+    expect(projectFileChange(data, join(data, "..plain", "index.html"))?.projectId).toBe("..plain");
+    expect(projectFileChange(data, join(root, "sessions", "x.json"))).toBeNull();
+  });
+
+  it("announces regenerated media like the CLI host, and not the caches Studio writes", () => {
+    const { data } = fixture();
+    mkdirSync(join(data, "promo"));
+
+    expect(projectFileChange(data, join(data, "promo", "assets", "clip.mp4"))?.projectId).toBe(
+      "promo",
+    );
+    expect(projectFileChange(data, join(data, "promo", "voice.wav"))?.projectId).toBe("promo");
+    expect(projectFileChange(data, join(data, "promo", ".waveform-cache", "peaks.json"))).toBeNull();
+    expect(projectFileChange(data, join(data, "promo", ".thumbnails", "t.jpg"))).toBeNull();
   });
 });

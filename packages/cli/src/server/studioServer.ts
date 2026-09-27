@@ -12,11 +12,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { resolve, join, basename } from "node:path";
 import { readBundleFile } from "./readBundleFile.js";
-import {
-  createProjectWatcher,
-  shouldWatchProjectFile,
-  type ProjectWatcher,
-} from "./fileWatcher.js";
+import { createProjectWatcher, type ProjectWatcher } from "./fileWatcher.js";
 import {
   hashSignatureParts,
   loadRuntimeSource,
@@ -44,6 +40,7 @@ import {
   fileContentVersion,
   getMimeType,
   affectsProjectSignature,
+  shouldWatchProjectFile,
   compositionsAffectedBy,
   type PreviewApiAdapter,
   PREVIEW_BUNDLE_OPTIONS,
