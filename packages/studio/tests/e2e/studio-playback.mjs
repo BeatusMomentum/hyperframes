@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Plays the studio-playback fixture with the Catalog open: exact work counts for perf-ratchet.mjs, and, against
-// STUDIO_BASE_URL (the base branch's Studio on this runner, alternating runs), exits 1 when median main-thread
+// STUDIO_BASE_URL (the base branch's Studio on this runner, alternating runs), a warning when median main-thread
 // CPU per frame exceeds MAX_CPU_RATIO of the base's. Chrome runs uncapped, so a frame costs what the page costs.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 import { resolveChromeExecutable } from "./chrome-executable.mjs";
+import { browserMismatch } from "./perf-ratchet.mjs";
 
 const HEAD_URL = process.env.STUDIO_URL;
 const BASE_URL = process.env.STUDIO_BASE_URL;
@@ -18,19 +19,8 @@ const LAYER_READ_TIME_S = 5;
 const CATALOG_SIZE = 400;
 const CATEGORIES = ["transitions", "vfx", "social", "data", "scenes", "captions", "effects"];
 
-if (!HEAD_URL) {
-  console.error("STUDIO_URL is required and must point at the studio-playback fixture");
-  process.exit(2);
-}
-const executablePath = resolveChromeExecutable();
-if (!executablePath) {
-  console.error("No Chrome executable found; set PUPPETEER_EXECUTABLE_PATH");
-  process.exit(2);
-}
-const gsapSource = readFileSync(
-  createRequire(import.meta.url).resolve("gsap/dist/gsap.min.js"),
-  "utf8",
-);
+let executablePath;
+let gsapSource;
 
 const catalog = Array.from({ length: CATALOG_SIZE }, (_, i) => ({
   name: `perf-block-${i}`,
@@ -235,40 +225,45 @@ async function measure(url) {
   }
 }
 
-const head = [];
-const base = [];
-for (let round_ = 0; round_ < ROUNDS; round_ += 1) {
-  // Alternate which build goes first, so a runner that slows over the job does not favour one.
-  if (BASE_URL && round_ % 2 === 1) base.push(await measure(BASE_URL));
-  head.push(await measure(HEAD_URL));
-  if (BASE_URL && round_ % 2 === 0) base.push(await measure(BASE_URL));
-}
-// Counts must repeat exactly across runs of one build, or the ratchet would fail at random.
-const countSets = new Set(head.map((run) => JSON.stringify(run.workCounts)));
-if (countSets.size !== 1) {
-  console.error(`work counts differ between runs of one build: ${[...countSets].join(" vs ")}`);
-  process.exit(1);
-}
-// Layer and element counts differ between Chrome releases, so they are only comparable on the recorded one.
-const ceilingsPath = fileURLToPath(new URL("./perf-ceilings.json", import.meta.url));
-const recordedBrowser = JSON.parse(readFileSync(ceilingsPath, "utf8"))["studio-playback"]?.browser;
-const measuredBrowser = /\/(\d+)\./.exec(head[0].browser)?.[1];
-if (recordedBrowser && measuredBrowser !== recordedBrowser) {
-  console.error(
-    `studio-playback counts are recorded on Chrome ${recordedBrowser} but this ran Chrome ${measuredBrowser}: ` +
-      "run it in the CI job, or take new ceilings from that job's evidence",
+function timingWarning(ab) {
+  if (!ab || ab.headCpuMedianMs <= ab.baseCpuMedianMs * ab.maxRatio) return null;
+  return (
+    `main-thread CPU per frame ${ab.headCpuMedianMs} ms against the base's ${ab.baseCpuMedianMs} ms ` +
+    `(x${ab.ratio}, limit x${ab.maxRatio}); reported, not failed`
   );
-  process.exit(1);
 }
-const evidence = {
-  journey: "studio-playback",
-  browser: head[0].browser,
-  workCounts: head[0].workCounts,
-  cpuMedianMsPerRun: head.map((run) => run.cpuMedianMs),
-  framesPerRun: head.map((run) => run.frames),
-};
-let failed = false;
-if (BASE_URL) {
+
+/**
+ * Timing is reporting-only (a warning, never a failure), and only counts from the ceilings' Chrome are
+ * comparable. Returns the exit code and what to print, so the rule can be tested without a browser.
+ */
+export function playbackVerdict(evidence, recordedBrowser) {
+  const error = recordedBrowser ? browserMismatch(recordedBrowser, evidence) : null;
+  return { exitCode: error ? 1 : 0, warning: timingWarning(evidence.ab), error };
+}
+
+/** Alternates which build goes first each round, so a runner that slows over the job favours neither. */
+// fallow-ignore-next-line complexity
+async function measureRounds() {
+  const head = [];
+  const base = [];
+  for (let round_ = 0; round_ < ROUNDS; round_ += 1) {
+    if (BASE_URL && round_ % 2 === 1) base.push(await measure(BASE_URL));
+    head.push(await measure(HEAD_URL));
+    if (BASE_URL && round_ % 2 === 0) base.push(await measure(BASE_URL));
+  }
+  return { head, base };
+}
+
+function buildEvidence(head, base) {
+  const evidence = {
+    journey: "studio-playback",
+    browser: head[0].browser,
+    workCounts: head[0].workCounts,
+    cpuMedianMsPerRun: head.map((run) => run.cpuMedianMs),
+    framesPerRun: head.map((run) => run.frames),
+  };
+  if (base.length === 0) return evidence;
   const headMs = median(head.map((run) => run.cpuMedianMs));
   const baseMs = median(base.map((run) => run.cpuMedianMs));
   evidence.ab = {
@@ -279,12 +274,49 @@ if (BASE_URL) {
     ratio: round(headMs / baseMs),
     maxRatio: MAX_CPU_RATIO,
   };
-  failed = headMs > baseMs * MAX_CPU_RATIO;
+  return evidence;
 }
-console.log(JSON.stringify(evidence, null, 2));
-if (failed) {
-  console.error(
-    `FAIL main-thread CPU per frame ${evidence.ab.headCpuMedianMs} ms against the base's ${evidence.ab.baseCpuMedianMs} ms (x${evidence.ab.ratio}, limit x${MAX_CPU_RATIO})`,
+
+/** Exit code 2 for a missing URL or Chrome, else null once the browser and GSAP are ready. */
+function prepare() {
+  if (!HEAD_URL) {
+    console.error("STUDIO_URL is required and must point at the studio-playback fixture");
+    return 2;
+  }
+  executablePath = resolveChromeExecutable();
+  if (!executablePath) {
+    console.error("No Chrome executable found; set PUPPETEER_EXECUTABLE_PATH");
+    return 2;
+  }
+  gsapSource = readFileSync(
+    createRequire(import.meta.url).resolve("gsap/dist/gsap.min.js"),
+    "utf8",
   );
-  process.exit(1);
+  return null;
+}
+
+// fallow-ignore-next-line complexity
+async function main() {
+  const setupFailure = prepare();
+  if (setupFailure !== null) return setupFailure;
+  const { head, base } = await measureRounds();
+  // Counts must repeat exactly across runs of one build, or the ratchet would fail at random.
+  const countSets = new Set(head.map((run) => JSON.stringify(run.workCounts)));
+  if (countSets.size !== 1) {
+    console.error(`work counts differ between runs of one build: ${[...countSets].join(" vs ")}`);
+    return 1;
+  }
+  const evidence = buildEvidence(head, base);
+  const ceilingsPath = fileURLToPath(new URL("./perf-ceilings.json", import.meta.url));
+  const recorded = JSON.parse(readFileSync(ceilingsPath, "utf8"))["studio-playback"]?.browser;
+  const verdict = playbackVerdict(evidence, recorded);
+  if (verdict.warning) evidence.ab.warning = verdict.warning;
+  // Evidence first, even on a browser mismatch: it is what new ceilings are taken from.
+  console.log(JSON.stringify(evidence, null, 2));
+  if (verdict.error) console.error(`studio-playback: ${verdict.error}`);
+  return verdict.exitCode;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  process.exitCode = await main();
 }

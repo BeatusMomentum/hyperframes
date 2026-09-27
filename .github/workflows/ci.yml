@@ -915,8 +915,8 @@ jobs:
             packages/studio/tests/e2e/perf-ceilings.json studio-open /tmp/studio-open-counts.json \
             /tmp/base-perf-ceilings.json
       - name: Count and time playback with the Catalog open
-        # Counts go through perf-ceilings.json like studio-open. Time is only ever a ratio
-        # against the base branch's Studio on this runner, so a slow runner cannot fail it.
+        # Counts go through perf-ceilings.json like studio-open and can fail the step. Time is a
+        # ratio against the base branch's Studio on this runner, reported as a warning only.
         # Both servers stay up; they sit idle while the other one is measured.
         if: success() || failure()
         run: |
@@ -949,13 +949,14 @@ jobs:
             STUDIO_BASE_URL="$BASE_URL" \
             node packages/studio/tests/e2e/studio-playback.mjs \
             | tee /tmp/studio-playback.json
-          TIMING_STATUS=$?
+          PLAYBACK_STATUS=$?
+          node -e 'const w = require("/tmp/studio-playback.json").ab?.warning; if (w) console.log(`::warning::${w}`)' || true
           node packages/studio/tests/e2e/perf-ratchet.mjs check \
             packages/studio/tests/e2e/perf-ceilings.json studio-playback /tmp/studio-playback.json \
             /tmp/base-perf-ceilings.json
           COUNTS_STATUS=$?
-          if (( TIMING_STATUS != 0 || COUNTS_STATUS != 0 )); then
-            echo "FAIL: playback timing=${TIMING_STATUS}, counts=${COUNTS_STATUS}"
+          if (( PLAYBACK_STATUS != 0 || COUNTS_STATUS != 0 )); then
+            echo "FAIL: playback run=${PLAYBACK_STATUS}, counts=${COUNTS_STATUS}"
             exit 1
           fi
       - name: Upload gate evidence

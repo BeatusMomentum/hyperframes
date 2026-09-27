@@ -139,6 +139,16 @@ export function browserMajor(evidence) {
   return match ? match[1] : null;
 }
 
+/** Why counts in `evidence` cannot be compared with ceilings recorded on Chrome `recorded`, or null. */
+export function browserMismatch(recorded, evidence) {
+  const measuredOn = browserMajor(evidence);
+  if (measuredOn === recorded) return null;
+  return (
+    `evidence is from Chrome ${measuredOn} but the ceilings were recorded on Chrome ${recorded}: ` +
+    "take the evidence from the CI job, which runs that browser"
+  );
+}
+
 /** The whole ceilings file, the journey named in it, and that journey's evidence. */
 function journeyInputs([ceilingsPath, journey, evidencePath]) {
   const all = readJson(ceilingsPath);
@@ -188,12 +198,8 @@ function loadBase(path, all, journey) {
 }
 
 function printNotes(recorded, evidence, rows) {
-  const measuredOn = browserMajor(evidence);
-  if (measuredOn !== recorded.browser) {
-    console.log(
-      `[perf-ratchet]   note: measured on Chrome ${measuredOn}, ceilings recorded on Chrome ${recorded.browser}`,
-    );
-  }
+  const mismatch = browserMismatch(recorded.browser, evidence);
+  if (mismatch) console.log(`[perf-ratchet]   note: ${mismatch}`);
   if (rows.some((row) => row.status === "rose")) {
     console.log(
       "[perf-ratchet]   If this change should not add that work, confirm the counter still repeats " +
@@ -230,13 +236,8 @@ function runCheck(args) {
 
 function runLower(args) {
   const { all, ceilingsPath, journey, evidence, counts } = journeyInputs(args);
-  const measuredOn = browserMajor(evidence);
-  if (measuredOn !== all[journey].browser) {
-    throw new Error(
-      `evidence is from Chrome ${measuredOn} but ${journey}'s ceilings were recorded on Chrome ` +
-        `${all[journey].browser}: take the evidence from the CI job, which runs that browser`,
-    );
-  }
+  const mismatch = browserMismatch(all[journey].browser, evidence);
+  if (mismatch) throw new Error(`${journey}: ${mismatch}`);
   all[journey].counts = lowerCeilings(all[journey].counts, counts);
   writeFileSync(ceilingsPath, `${JSON.stringify(all, null, 2)}\n`);
   return 0;
