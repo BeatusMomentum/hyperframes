@@ -42,8 +42,10 @@ import {
 } from "../utils/compositionServer.js";
 import {
   resolveProxy,
+  proxyIfReady,
   ProxyCapacityError,
   ProxyTranscodeError,
+  PROXY_PENDING_HEADERS,
 } from "@hyperframes/studio-server/proxy-transcoder";
 import {
   decideMediaProxyEligibility,
@@ -265,8 +267,11 @@ export async function registerCompositionRoute(
         if (!proxyVariant) {
           return ctx.text("Media proxy variant does not match asset", 422);
         }
+        const proxyPath = await proxyIfReady(resolveProxy(project.dir, filePath, proxyVariant));
+        if (proxyPath === null) {
+          return ctx.text("Proxy copy is being made", 202, PROXY_PENDING_HEADERS);
+        }
         recordProxyRequest();
-        const proxyPath = await resolveProxy(project.dir, filePath, proxyVariant);
         return buildRangeResponse(
           proxyPath,
           PROXY_VARIANT_CONFIG[proxyVariant].contentType,

@@ -29,11 +29,10 @@ import { isVariablesPayload, VARIABLES_PAYLOAD_ERROR } from "../helpers/variable
 import { injectPreviewVariables } from "../helpers/previewVariables.js";
 import {
   resolveProxy,
-  waitForProxy,
+  proxyIfReady,
   ProxyCapacityError,
   ProxyTranscodeError,
-  ProxyWaitTimeoutError,
-  PROXY_PENDING_RETRY_AFTER_SECONDS,
+  PROXY_PENDING_HEADERS,
 } from "../helpers/proxyTranscoder.js";
 import {
   decideMediaProxyEligibility,
@@ -599,16 +598,10 @@ export function registerPreviewRoutes(api: Hono, adapter: PreviewApiAdapter): vo
     let servedContentType = contentType;
     if (proxyVariant !== undefined) {
       try {
-        // A cached copy settles before any timer; a transcode never holds one of
-        // the browser's few connections to this host. 202 until the copy lands.
-        servedPath = await waitForProxy(resolveProxy(project.dir, file, proxyVariant), 0);
+        const ready = await proxyIfReady(resolveProxy(project.dir, file, proxyVariant));
+        if (ready === null) return c.text("media proxy is being made", 202, PROXY_PENDING_HEADERS);
+        servedPath = ready;
       } catch (err) {
-        if (err instanceof ProxyWaitTimeoutError) {
-          return c.text("media proxy is being made", 202, {
-            "Retry-After": String(PROXY_PENDING_RETRY_AFTER_SECONDS),
-            "Cache-Control": "no-store",
-          });
-        }
         if (err instanceof ProxyCapacityError) {
           return c.text(err.message, 503, { "Retry-After": "5" });
         }

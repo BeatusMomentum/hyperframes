@@ -76,11 +76,19 @@ const mediaMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@hyperframes/studio-server/proxy-transcoder", () => ({
-  resolveProxy: mocks.resolveProxy,
-  ProxyTranscodeError: mocks.ProxyTranscodeError,
-  ProxyCapacityError: mocks.ProxyCapacityError,
-}));
+// The real helper, so a transcode that has not settled answers 202 as it does in production.
+vi.mock("@hyperframes/studio-server/proxy-transcoder", async () => {
+  const actual = await vi.importActual<
+    typeof import("@hyperframes/studio-server/proxy-transcoder")
+  >("@hyperframes/studio-server/proxy-transcoder");
+  return {
+    proxyIfReady: actual.proxyIfReady,
+    PROXY_PENDING_HEADERS: actual.PROXY_PENDING_HEADERS,
+    resolveProxy: mocks.resolveProxy,
+    ProxyTranscodeError: mocks.ProxyTranscodeError,
+    ProxyCapacityError: mocks.ProxyCapacityError,
+  };
+});
 vi.mock("@hyperframes/studio-server/media-codec-map", () => mediaMocks);
 
 // The shared injection helper ships as a self-contained dist bundle (its copy
@@ -227,6 +235,30 @@ describe("registerCompositionRoute", () => {
     expect(res.headers.get("accept-ranges")).toBe("bytes");
     expect(res.headers.get("content-range")).toBe("bytes 2-5/10");
     expect(await res.text()).toBe("2345");
+  });
+
+  it("answers 202 at once while the copy is made, then serves the copy once it lands", async () => {
+    const project = tmpProject();
+    writeFileSync(join(project.dir, "clip.mp4"), "original-hevc-bytes");
+    mocks.resolveProxy.mockImplementationOnce(() => new Promise<string>(() => {}));
+    const app = await buildApp(project, true);
+    const url = "/composition/clip.mp4?hf-proxy=h264";
+
+    const cold = await Promise.race([
+      app.request(url),
+      new Promise<"held">((resolveHeld) => setTimeout(resolveHeld, 1000, "held")),
+    ]);
+    expect(cold, "a cold copy must not hold the request for the transcode").not.toBe("held");
+    expect((cold as Response).status).toBe(202);
+    expect((cold as Response).headers.get("Retry-After")).toBe("2");
+    expect((cold as Response).headers.get("Cache-Control")).toBe("no-store");
+
+    const proxyPath = join(project.dir, "proxy.mp4");
+    writeFileSync(proxyPath, "transcoded-h264-bytes");
+    mocks.resolveProxy.mockResolvedValue(proxyPath);
+    const ready = await app.request(url);
+    expect(ready.status).toBe(200);
+    expect(await ready.text()).toBe("transcoded-h264-bytes");
   });
 
   it("serves the resolved proxy's bytes for ?hf-proxy=h264 on a hostile asset", async () => {

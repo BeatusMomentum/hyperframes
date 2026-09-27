@@ -6,8 +6,10 @@ import { resolveAutoProxy } from "./projectConfig.js";
 import { injectMediaCodecMap } from "./compositionServer.js";
 import {
   resolveProxy,
+  proxyIfReady,
   ProxyCapacityError,
   ProxyTranscodeError,
+  PROXY_PENDING_HEADERS,
 } from "@hyperframes/studio-server/proxy-transcoder";
 import {
   decideMediaProxyEligibility,
@@ -142,10 +144,14 @@ async function serveProxyRequest(
       res.end("media proxy variant does not match asset");
       return;
     }
-    recordProxyRequest();
-    const proxyPath = await resolveProxy(projectDir, filePath, variant);
-    // The await above can span a whole transcode; the client may be gone.
+    const proxyPath = await proxyIfReady(resolveProxy(projectDir, filePath, variant));
     if (res.writableEnded || res.destroyed) return;
+    if (proxyPath === null) {
+      res.writeHead(202, { "Content-Type": "text/plain", ...PROXY_PENDING_HEADERS });
+      res.end("media proxy is being made");
+      return;
+    }
+    recordProxyRequest();
     serveFileWithRange(proxyPath, rangeHeader, res, PROXY_VARIANT_CONFIG[variant].contentType);
   } catch (err) {
     writeProxyError(err, res);

@@ -60,11 +60,19 @@ const mocks = vi.hoisted(() => {
 });
 const FakeProxyTranscodeError = mocks.ProxyTranscodeError;
 
-vi.mock("@hyperframes/studio-server/proxy-transcoder", () => ({
-  resolveProxy: mocks.resolveProxy,
-  ProxyTranscodeError: mocks.ProxyTranscodeError,
-  ProxyCapacityError: mocks.ProxyCapacityError,
-}));
+// The real helper, so a transcode that has not settled answers 202 as it does in production.
+vi.mock("@hyperframes/studio-server/proxy-transcoder", async () => {
+  const actual = await vi.importActual<
+    typeof import("@hyperframes/studio-server/proxy-transcoder")
+  >("@hyperframes/studio-server/proxy-transcoder");
+  return {
+    proxyIfReady: actual.proxyIfReady,
+    PROXY_PENDING_HEADERS: actual.PROXY_PENDING_HEADERS,
+    resolveProxy: mocks.resolveProxy,
+    ProxyTranscodeError: mocks.ProxyTranscodeError,
+    ProxyCapacityError: mocks.ProxyCapacityError,
+  };
+});
 
 vi.mock("@hyperframes/studio-server/media-codec-map", () => ({
   probeAssetCodec: mocks.probeAssetCodec,
@@ -274,6 +282,30 @@ describe("serveStaticProjectHtml transparent media proxies", () => {
     const html = await (await fetch(server.url)).text();
     expect(html).not.toContain("__HF_MEDIA_CODEC_MAP__");
     expect(mocks.scanProjectMediaCodecMap).not.toHaveBeenCalled();
+  });
+
+  it("answers 202 at once while the copy is made, then serves the copy once it lands", async () => {
+    const projectDir = mk();
+    writeFileSync(join(projectDir, "clip.mp4"), "original-hevc-bytes");
+    mocks.resolveProxy.mockImplementationOnce(() => new Promise<string>(() => {}));
+    server = await serveStaticProjectHtml(projectDir, "<html></html>");
+    const url = `${server.url}clip.mp4?hf-proxy=h264`;
+
+    const cold = await Promise.race([
+      fetch(url),
+      new Promise<"held">((resolveHeld) => setTimeout(resolveHeld, 1000, "held")),
+    ]);
+    expect(cold, "a cold copy must not hold the request for the transcode").not.toBe("held");
+    expect((cold as Response).status).toBe(202);
+    expect((cold as Response).headers.get("Retry-After")).toBe("2");
+    expect((cold as Response).headers.get("Cache-Control")).toBe("no-store");
+
+    const proxyPath = join(projectDir, "proxy.mp4");
+    writeFileSync(proxyPath, "transcoded-h264-bytes");
+    mocks.resolveProxy.mockResolvedValue(proxyPath);
+    const ready = await fetch(url);
+    expect(ready.status).toBe(200);
+    expect(await ready.text()).toBe("transcoded-h264-bytes");
   });
 
   it("serves the resolved proxy's bytes for ?hf-proxy=h264 on a hostile video asset", async () => {
