@@ -144,7 +144,8 @@ function runWhisper() {
     let words;
     try {
       const t = JSON.parse(readFileSync(outPath, "utf8"));
-      words = Array.isArray(t?.words) ? t.words.length : undefined;
+      // The CLI writes a flat word array, not { words }.
+      words = Array.isArray(t) ? t.length : undefined;
     } catch {
       /* leave undefined */
     }
