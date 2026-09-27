@@ -298,16 +298,22 @@ function tempWavPath(): string {
   return join(tmpdir(), `hyperframes-audio-${process.pid}-${randomUUID()}.wav`);
 }
 
-function runFfmpeg(
-  ffmpegPath: string,
-  args: string[],
-  options: { stdio: "ignore"; timeout: number },
-) {
+function runFfmpeg(ffmpegPath: string, args: string[], output: string, timeout: number): void {
   try {
-    execFileSync(ffmpegPath, args, options);
+    execFileSync(ffmpegPath, ["-nostats", "-hide_banner", ...args, "-y", output], {
+      stdio: ["ignore", "ignore", "pipe"],
+      maxBuffer: 64 * 1024 * 1024,
+      timeout,
+    });
   } catch (err) {
-    rmSync(args.at(-1)!, { force: true });
-    throw err;
+    rmSync(output, { force: true });
+    const { code, signal, stderr } = err as { code?: string; signal?: string; stderr?: Buffer };
+    // A code means Node stopped it; ffmpeg traps Ctrl-C and says so (exit 255 is EPERM too on 7+).
+    if (code) throw err;
+    const said = String(stderr ?? "").trim();
+    const cancelled = /received signal/.test(said) || signal === "SIGINT" || signal === "SIGTERM";
+    const reason = said.split("\n").at(-1) || (err as Error).message;
+    throw Object.assign(new Error(`ffmpeg failed: ${reason}`, { cause: err }), { cancelled });
   }
 }
 
@@ -324,11 +330,9 @@ function extractAudio(videoPath: string): string {
   const wavPath = tempWavPath();
   runFfmpeg(
     ffmpegPath,
-    ["-i", videoPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
-    {
-      stdio: "ignore",
-      timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(videoPath)),
-    },
+    ["-i", videoPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav"],
+    wavPath,
+    resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(videoPath)),
   );
   return wavPath;
 }
@@ -380,10 +384,12 @@ function prepareAudio(audioPath: string): string {
     throw new Error(`ffmpeg is required to prepare audio. Install: ${getFFmpegInstallHint()}`);
   }
   const wavPath = tempWavPath();
-  runFfmpeg(ffmpegPath, ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath], {
-    stdio: "ignore",
-    timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
-  });
+  runFfmpeg(
+    ffmpegPath,
+    ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav"],
+    wavPath,
+    resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
+  );
   return wavPath;
 }
 

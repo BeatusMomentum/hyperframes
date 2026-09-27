@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WhisperUnavailableError } from "../whisper/manager.js";
@@ -81,6 +81,7 @@ describe("transcribe command", () => {
     consumeCommandResult();
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("explicit run exits non-zero and is NOT reported as a command failure", async () => {
@@ -231,22 +232,41 @@ describe("transcribe command", () => {
       expect(out.error).toMatch(/^Parakeet failed: .*install parakeet.*whisper-cpp not found/);
     });
 
-    it.each([
-      ["during the decode", () => crashChild("SIGINT")],
-      [
-        "while ffmpeg prepares the audio",
-        () =>
-          prepareWavMock.mockImplementation(() => {
-            throw Object.assign(new Error("Command failed: ffmpeg"), { status: 255, signal: null });
-          }),
-      ],
-    ])("stops with exit 130 on Ctrl-C %s instead of falling back", async (_when, interrupt) => {
-      interrupt();
+    it("stops with exit 130 on Ctrl-C instead of falling back", async () => {
+      crashChild("SIGINT");
       Object.assign(runners, { sherpa: true, mlx: false });
       const { exitCode, out } = await transcribeFails("auto");
       expect(exitCode).toBe(130);
       expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
       expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    describe.skipIf(process.platform === "win32")("when ffmpeg exits 255 while preparing", () => {
+      it.each([
+        ["Exiting normally, received signal 2.", 130, "Transcription cancelled"],
+        [
+          "Error opening input files: Operation not permitted",
+          1,
+          "ffmpeg failed: Error opening input files: Operation not permitted",
+        ],
+      ])("after saying %j, the run exits %i", async (said, code, error) => {
+        const actual = await vi.importActual<typeof import("../whisper/transcribe.js")>(
+          "../whisper/transcribe.js",
+        );
+        prepareWavMock.mockImplementation((input: string) => actual.prepareWav(input));
+        const dir = mkdtempSync(join(tmpdir(), "hf-transcribe-ffmpeg-"));
+        dirs.push(dir);
+        const ffmpeg = join(dir, "ffmpeg");
+        const script = `process.stderr.write(${JSON.stringify(`${said}\n`)}); process.exit(255);`;
+        writeFileSync(ffmpeg, `#!${process.execPath}\n${script}\n`);
+        chmodSync(ffmpeg, 0o755);
+        vi.stubEnv("HYPERFRAMES_FFMPEG_PATH", ffmpeg);
+        Object.assign(runners, { sherpa: true, mlx: false });
+        const { exitCode, out } = await transcribeFails("auto");
+        expect(exitCode).toBe(code);
+        expect(out).toEqual({ ok: false, error });
+        expect(transcribeMock).not.toHaveBeenCalled();
+      });
     });
 
     it("fails an unreadable input as an input error, with no Parakeet repair and no fallback", async () => {

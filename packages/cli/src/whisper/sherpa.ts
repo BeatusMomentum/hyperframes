@@ -267,7 +267,7 @@ function decode(wavPath: string, signal: AbortSignal): Promise<SherpaWindow[]> {
   });
 }
 
-/** Prepares the audio for Parakeet and its fallback alike. ffmpeg traps Ctrl-C and exits 255: a cancel. */
+/** Prepares the audio for Parakeet and its fallback alike; ffmpeg stopped by Ctrl-C is a cancel. */
 export function prepareSherpaWav(
   inputPath: string,
   onProgress?: (message: string) => void,
@@ -275,9 +275,7 @@ export function prepareSherpaWav(
   try {
     return prepareWav(inputPath, onProgress);
   } catch (err) {
-    const { signal, status, code } = err as { signal?: string; status?: number; code?: string };
-    const stopped = status === 255 || signal === "SIGINT" || signal === "SIGTERM";
-    if (stopped && code !== "ETIMEDOUT") {
+    if ((err as { cancelled?: boolean }).cancelled) {
       throw new DecodeCancelled("Transcription cancelled");
     }
     throw err;
