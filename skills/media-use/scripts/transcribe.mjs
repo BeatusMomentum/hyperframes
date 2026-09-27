@@ -49,7 +49,8 @@ Usage:
 
 Parakeet (default) beats whisper.cpp on accuracy + speed for English/European
 languages; whisper.cpp (99 languages) is the fallback. Install Parakeet once:
-  uv venv ~/.venvs/parakeet && VIRTUAL_ENV=~/.venvs/parakeet uv pip install parakeet-mlx`);
+  npx hyperframes models install parakeet   (macOS, Windows, Linux with glibc 2.32+)
+  uv venv ~/.venvs/parakeet && VIRTUAL_ENV=~/.venvs/parakeet uv pip install parakeet-mlx   (Apple Silicon)`);
   process.exit(0);
 }
 
@@ -122,24 +123,24 @@ function runParakeet(runner) {
   }
 }
 
-// whisper.cpp via the hyperframes CLI (fetched/built on first use — see
+// The hyperframes CLI (its Parakeet, else whisper.cpp built on first use — see
 // SKILL.md): writes transcript.json into --dir; relocate to --out.
-function runWhisper() {
+function runCli(cliEngine) {
   const workDir = mkdtempSync(join(tmpdir(), "media-use-whisper-"));
   try {
     // On Windows a bare "npx" is npx.cmd, which execFileSync cannot exec
     // (spawnSync npx ENOENT) — resolveNpxInvocation reroutes it through
     // node + npx-cli.js (and throws actionably when it can't), same
     // mechanism as the audio engine's TTS spawns.
-    // Under auto the CLI may run its own Parakeet; --json says which engine ran.
-    const cliEngine = args.engine === "whisper" ? "whisper" : "auto";
+    // Under auto or parakeet the CLI may run its own Parakeet; --json says which engine ran.
     const resolved = resolveNpxInvocation(
       ["hyperframes", "transcribe", inputPath, "--dir", workDir, "--engine", cliEngine, "--json"],
       { stdio: ["ignore", "pipe", "pipe"], timeout: 1_800_000 },
     );
     const stdout = String(execFileSync(resolved.cmd, resolved.args, resolved.opts));
     const produced = join(workDir, "transcript.json");
-    if (!existsSync(produced)) throw new Error("whisper produced no transcript.json");
+    if (!existsSync(produced))
+      throw new Error("hyperframes transcribe produced no transcript.json");
     const tmp = `${outPath}.tmp-${process.pid}`;
     copyFileSync(produced, tmp);
     renameSync(tmp, outPath); // atomic publish
@@ -158,6 +159,7 @@ function runWhisper() {
       /* no JSON line: keep whisper */
     }
     report(ran, words);
+    return ran;
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
@@ -165,22 +167,11 @@ function runWhisper() {
 
 try {
   const parakeetBin = resolveParakeet();
-  const engine =
-    args.engine === "parakeet" || args.engine === "whisper"
-      ? args.engine
-      : parakeetBin
-        ? "parakeet"
-        : "whisper";
-  if (engine === "parakeet") {
-    if (!parakeetBin) {
-      throw new Error(
-        "parakeet-mlx not found (checked $HYPERFRAMES_PARAKEET, ~/.venvs/parakeet, and PATH). Install: uv venv ~/.venvs/parakeet && VIRTUAL_ENV=~/.venvs/parakeet uv pip install parakeet-mlx (or use --engine whisper)",
-      );
-    }
-    runParakeet(parakeetBin);
-  } else {
-    runWhisper();
-  }
+  const asked = args.engine === "parakeet" || args.engine === "whisper" ? args.engine : "auto";
+  // Without parakeet-mlx, the CLI's own Parakeet (any OS, `hyperframes models install parakeet`).
+  let engine = "parakeet";
+  if (asked !== "whisper" && parakeetBin) runParakeet(parakeetBin);
+  else engine = runCli(asked);
   await track("media_use_transcribe", { engine });
 } catch (err) {
   if (args.json) console.log(JSON.stringify({ ok: false, error: err.message }));

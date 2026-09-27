@@ -59,3 +59,13 @@ test(
     assert.equal(result.engine, "parakeet");
   },
 );
+
+test(
+  "--engine parakeet without parakeet-mlx asks the CLI for its Parakeet",
+  { skip: process.platform === "win32" },
+  () => {
+    const { result, args } = runScript("parakeet", "parakeet");
+    assert.match(args, /--engine parakeet --json/);
+    assert.equal(result.engine, "parakeet");
+  },
+);
