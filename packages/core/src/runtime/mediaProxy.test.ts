@@ -610,19 +610,19 @@ describe("waiting for the proxy copy", () => {
     expect(isProxied(el)).toBe(true);
   });
 
-  it("diagnoses a copy that cannot be made once, and the element keeps its original", async () => {
+  it("diagnoses a copy that cannot be made once, after a few asks, and the element keeps its original", async () => {
+    vi.useFakeTimers();
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const route = stubProxyRoute(502);
     const el = createVideo("/video.mp4");
     swapToProxy(el, HEVC_ENTRY, "proactive");
     postRuntimeMessageMock.mockClear();
-    await settle();
     Object.defineProperty(el, "videoWidth", { value: 0 });
     handleMetadataForProxy(el);
-    await settle();
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(isProxied(el)).toBe(false);
-    expect(route).toHaveBeenCalledTimes(1);
+    expect(route).toHaveBeenCalledTimes(4);
     expect(postRuntimeMessageMock).toHaveBeenCalledTimes(1);
     expect(postRuntimeMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -630,6 +630,32 @@ describe("waiting for the proxy copy", () => {
         details: expect.objectContaining({ reason: "proxy_playback_failed" }),
       }),
     );
+  });
+
+  it("asks again after a dropped request", async () => {
+    vi.useFakeTimers();
+    const route = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue(new Response("x", { status: 206 }));
+    vi.stubGlobal("fetch", route);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(route).toHaveBeenCalledTimes(2);
+    expect(isProxied(el)).toBe(true);
+  });
+
+  it("asks again after a transient error answer", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(500, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(route).toHaveBeenCalledTimes(2);
+    expect(isProxied(el)).toBe(true);
   });
 
   it("stops waiting when the element leaves the document", async () => {
