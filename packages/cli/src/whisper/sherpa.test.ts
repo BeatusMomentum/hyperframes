@@ -7,7 +7,9 @@ import type { DownloadOptions } from "../cloud/download.js";
 import {
   ensureParakeetModel,
   installSherpaRuntime,
+  SHERPA_RUNTIME_DIR,
   sherpaPlatformPackage,
+  sherpaRuntimeInstalled,
   sherpaUnsupportedReason,
   type ModelFile,
 } from "./sherpa.js";
@@ -51,6 +53,39 @@ describe("installSherpaRuntime", () => {
     const args = run.mock.calls[0]?.[0] as string[] | undefined;
     expect(args).toContain("sherpa-onnx-node@1.13.8");
     expect(args).toContain(sherpaPlatformPackage());
+  });
+
+  it("repairs a runtime whose native binary is missing instead of calling it installed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    const native = sherpaPlatformPackage().replace(/@[^@]+$/, "");
+    const manifest = (root: string, name: string) => {
+      mkdirSync(join(root, "node_modules", name), { recursive: true });
+      writeFileSync(join(root, "node_modules", name, "package.json"), `{"name":"${name}"}`);
+    };
+    try {
+      manifest(dir, "sherpa-onnx-node");
+      manifest(dir, native);
+      expect(sherpaRuntimeInstalled(dir)).toBe(false);
+      const run = vi.fn(async (args: string[]) => {
+        const staging = args[args.indexOf("--prefix") + 1]!;
+        manifest(staging, "sherpa-onnx-node");
+        manifest(staging, native);
+        writeFileSync(join(staging, "node_modules", native, "sherpa-onnx.node"), "binary");
+      });
+
+      await installSherpaRuntime({ run, dir });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(dir, "node_modules", native, "sherpa-onnx.node"))).toBe(true);
+      expect(sherpaRuntimeInstalled(dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps each platform and arch in its own runtime dir", () => {
+    expect(SHERPA_RUNTIME_DIR).toMatch(
+      new RegExp(`sherpa-onnx-node@1\\.13\\.8-${process.platform}-${process.arch}$`),
+    );
   });
 });
 

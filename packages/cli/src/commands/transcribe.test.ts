@@ -136,11 +136,11 @@ describe("transcribe command", () => {
       } as never);
     });
 
-    async function transcribeWith(engine: string, installed: typeof runners) {
+    async function transcribeWith(engine: string, installed: typeof runners, language?: string) {
       Object.assign(runners, installed);
       const { dir, input } = dummyAudio();
       dirs.push(dir);
-      await transcribeCmd.run!({ args: { input, json: true, engine } } as never);
+      await transcribeCmd.run!({ args: { input, json: true, engine, language } } as never);
       const out = lastJson();
       const words = JSON.parse(readFileSync(String(out.transcriptPath), "utf-8"));
       return { engine: out.engine, model: out.model, word: words[0]?.text, start: words[0]?.start };
@@ -167,6 +167,51 @@ describe("transcribe command", () => {
         engine: "whisper",
         word: "whisper",
       });
+    });
+
+    it("auto uses Parakeet only for a language it transcribes", async () => {
+      const both = { sherpa: true, mlx: true };
+      expect(await transcribeWith("auto", both, "ja")).toMatchObject({ engine: "whisper" });
+      expect(await transcribeWith("auto", both, "pt-BR")).toMatchObject({ engine: "parakeet" });
+      expect(await transcribeWith("auto", both, "UK")).toMatchObject({ engine: "parakeet" });
+      expect(transcribeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("--engine parakeet with a language it does not transcribe fails without falling back", async () => {
+      Object.assign(runners, { sherpa: true, mlx: true });
+      const { exitCode, out } = await transcribeFails("parakeet", { language: "ja" });
+      expect(exitCode).toBe(1);
+      expect(out.error).toMatch(
+        /^Parakeet does not transcribe --language ja; it covers en, es, .*uk\. Use --engine whisper\.$/,
+      );
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("listens for Ctrl-C from before audio prep until the run ends", async () => {
+      const before = process.listenerCount("SIGINT");
+      let duringPrep = 0;
+      prepareWavMock.mockImplementation((input: string) => {
+        duringPrep = process.listenerCount("SIGINT");
+        return input;
+      });
+      expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
+        engine: "parakeet",
+      });
+      expect(duringPrep).toBe(before + 1);
+      expect(process.listenerCount("SIGINT")).toBe(before);
+    });
+
+    it("exits 130 when Ctrl-C stops the whisper fallback too", async () => {
+      crashChild("SIGABRT");
+      transcribeMock.mockImplementation(async () => {
+        process.emit("SIGINT");
+        throw new Error("whisper-cli was killed by SIGINT");
+      });
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { exitCode, out } = await transcribeFails("auto");
+      expect(exitCode).toBe(130);
+      expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
     });
 
     it("--engine parakeet with nothing installed names the install command", async () => {
@@ -333,7 +378,7 @@ describe("transcribe command", () => {
     });
 
     it.runIf(process.platform === "linux" && process.arch === "x64")(
-      "falls back without spawning when glibc is too old for sherpa-onnx",
+      "skips Parakeet when glibc is too old for sherpa-onnx, never naming the install command",
       async () => {
         vi.mocked(process.report.getReport).mockReturnValue({
           header: { glibcVersionRuntime: "2.31" },
@@ -342,7 +387,12 @@ describe("transcribe command", () => {
           engine: "whisper",
         });
         expect(execFileMock).not.toHaveBeenCalled();
-        expect(String(vi.mocked(console.error).mock.calls[0]?.[0])).toMatch(/glibc 2\.32.*2\.31/);
+        expect(console.error).not.toHaveBeenCalled();
+        const { exitCode, out } = await transcribeFails("parakeet");
+        expect(exitCode).toBe(1);
+        expect(out.error).toMatch(
+          /^Parakeet needs glibc 2\.32 or newer; this system has glibc 2\.31\.$/,
+        );
       },
     );
   });

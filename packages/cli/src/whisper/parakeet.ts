@@ -26,6 +26,16 @@ export const PARAKEET_MODEL_LABEL = "parakeet-tdt-0.6b-v3";
 export const SHERPA_RESULT_PREFIX = "HYPERFRAMES_PARAKEET_RESULT:";
 export const SHERPA_ERROR_PREFIX = "HYPERFRAMES_PARAKEET_ERROR:";
 
+/** Parakeet TDT 0.6B v3's languages, as listed on its model card. */
+export const PARAKEET_LANGUAGES =
+  "en es fr de bg hr cs da nl et fi el hu it lv lt mt pl pt ro sk sl sv ru uk";
+
+/** True when no language was asked for, or Parakeet transcribes it ("pt-BR" counts as pt). */
+export function parakeetSpeaks(language?: string): boolean {
+  const base = language?.trim().toLowerCase().split(/[-_]/, 1)[0];
+  return !base || PARAKEET_LANGUAGES.split(" ").includes(base);
+}
+
 const DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3";
 const PARAKEET_INSTALL =
   "uv venv ~/.venvs/parakeet && VIRTUAL_ENV=~/.venvs/parakeet uv pip install parakeet-mlx";
@@ -117,14 +127,14 @@ export interface SherpaWindow {
   durations?: number[];
 }
 
-const toMs = (seconds: number) => Math.round(seconds * 1000) / 1000;
+const roundToMs = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
 export function mergeWindowsToWords(windows: SherpaWindow[]): Word[] {
   return mergeTokensToWords({
     sentences: windows.map((w) => ({
       tokens: w.tokens.map((text, i) => {
         const start = w.offset + (w.timestamps[i] ?? 0);
-        return { text, start: toMs(start), end: toMs(start + (w.durations?.[i] ?? 0)) };
+        return { text, start: roundToMs(start), end: roundToMs(start + (w.durations?.[i] ?? 0)) };
       }),
     })),
   });
