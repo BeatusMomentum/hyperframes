@@ -77,6 +77,7 @@ test(
       const { error } = JSON.parse(res.stdout.trim());
       assert.match(error, /hyperframes models install parakeet/);
       assert.ok(error.length < 1000, `error is ${error.length} chars`);
+      assert.ok(!error.includes("\u001b"), `terminal codes left in: ${JSON.stringify(error)}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
