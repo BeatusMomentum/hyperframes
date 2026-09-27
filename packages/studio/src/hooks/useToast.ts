@@ -55,7 +55,7 @@ export function useToast(projectId?: string | null) {
   );
 
   const showToast = useCallback(
-    (message: string, tone: AppToast["tone"] = "error", action?: ToastAction) => {
+    (message: string, tone: AppToast["tone"] = "error", action?: ToastAction): number => {
       const id = nextToastId++;
       setToasts((prev) => {
         const withoutRepeat = prev.filter((toast) => !(toast.action && toast.message === message));
@@ -71,6 +71,7 @@ export function useToast(projectId?: string | null) {
         const timer = setTimeout(() => dismissToast(id), AUTO_DISMISS_MS);
         timersRef.current.set(id, timer);
       }
+      return id;
     },
     [clearTimer, dismissToast],
   );
