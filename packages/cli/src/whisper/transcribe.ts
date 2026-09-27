@@ -395,6 +395,23 @@ export function initialModelForLanguage(model: string, language?: string): strin
   return model;
 }
 
+export function prepareWav(inputPath: string, onProgress?: (message: string) => void): string {
+  if (isAudioFile(inputPath)) {
+    onProgress?.("Preparing audio...");
+    return prepareAudio(inputPath);
+  }
+  if (isVideoFile(inputPath)) {
+    if (!hasFFmpeg()) {
+      throw new Error(
+        `ffmpeg is required to extract audio from video. Install: ${getFFmpegInstallHint()}`,
+      );
+    }
+    onProgress?.("Extracting audio from video...");
+    return extractAudio(inputPath);
+  }
+  throw new Error(`Unsupported file type: ${extname(inputPath).toLowerCase()}`);
+}
+
 /**
  * Transcribe an audio or video file and save transcript.json to the output directory.
  */
@@ -417,23 +434,7 @@ export async function transcribe(
   });
 
   // 3. Prepare audio
-  let wavPath: string;
-  const ext = extname(inputPath).toLowerCase();
-
-  if (isAudioFile(inputPath)) {
-    options?.onProgress?.("Preparing audio...");
-    wavPath = prepareAudio(inputPath);
-  } else if (isVideoFile(inputPath)) {
-    if (!hasFFmpeg()) {
-      throw new Error(
-        `ffmpeg is required to extract audio from video. Install: ${getFFmpegInstallHint()}`,
-      );
-    }
-    options?.onProgress?.("Extracting audio from video...");
-    wavPath = extractAudio(inputPath);
-  } else {
-    throw new Error(`Unsupported file type: ${ext}`);
-  }
+  const wavPath = prepareWav(inputPath, options?.onProgress);
 
   // 4. Detect language and ensure correct model
   let effectiveModel = model;

@@ -29,7 +29,7 @@ export const OPTIONAL_PACKAGES = {
   "@google/genai": "1.52.0",
 } as const satisfies Record<OptionalPackage, string>;
 
-const CACHE_DIR = join(homedir(), ".cache", "hyperframes", "optional");
+export const CACHE_DIR = join(homedir(), ".cache", "hyperframes", "optional");
 
 export interface OptionalPackageDeps {
   cacheDir: string;
@@ -108,11 +108,11 @@ function manifestPath(dir: string, name: string): string {
   return join(dir, "node_modules", name, "package.json");
 }
 
-function isInstalled(dir: string, name: string): boolean {
+export function isInstalled(dir: string, name: string): boolean {
   return existsSync(manifestPath(dir, name));
 }
 
-function loadInstalled(dir: string, name: string): unknown | null {
+export function loadInstalled(dir: string, name: string): unknown | null {
   if (!isInstalled(dir, name)) return null;
   return createRequire(join(dir, "package.json"))(name);
 }

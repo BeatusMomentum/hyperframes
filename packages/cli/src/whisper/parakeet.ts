@@ -14,11 +14,17 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Word } from "./normalize.js";
 import type { TranscribeResult } from "./transcribe.js";
+
+/** The model name `transcribe --json` reports for every Parakeet runner. */
+export const PARAKEET_MODEL_LABEL = "parakeet-tdt-0.6b-v3";
+/** Stdout/stderr line prefixes of the sherpa-onnx decode worker. */
+export const SHERPA_RESULT_PREFIX = "HYPERFRAMES_PARAKEET_RESULT:";
+export const SHERPA_ERROR_PREFIX = "HYPERFRAMES_PARAKEET_ERROR:";
 
 const DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3";
 const PARAKEET_INSTALL =
@@ -103,6 +109,63 @@ export function mergeTokensToWords(parakeet: ParakeetJson): Word[] {
   return words.filter((w) => w.text.length > 0);
 }
 
+/** One decoded window from sherpa-onnx: token times are relative to the window's `offset` (s). */
+export interface SherpaWindow {
+  offset: number;
+  tokens: string[];
+  timestamps: number[];
+  durations?: number[];
+}
+
+const toMs = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+export function mergeWindowsToWords(windows: SherpaWindow[]): Word[] {
+  return mergeTokensToWords({
+    sentences: windows.map((w) => ({
+      tokens: w.tokens.map((text, i) => {
+        const start = w.offset + (w.timestamps[i] ?? 0);
+        return { text, start: toMs(start), end: toMs(start + (w.durations?.[i] ?? 0)) };
+      }),
+    })),
+  });
+}
+
+function quietestBlockCenter(samples: Float32Array, lo: number, hi: number, block: number): number {
+  let best = hi;
+  let bestEnergy = Infinity;
+  for (let s = lo; s + block <= hi; s += block) {
+    let energy = 0;
+    for (let i = s; i < s + block; i++) energy += samples[i]! * samples[i]!;
+    if (energy < bestEnergy) {
+      bestEnergy = energy;
+      best = s + block / 2;
+    }
+  }
+  return best;
+}
+
+/**
+ * Window boundaries (sample indices, first 0, last samples.length) about every `windowSeconds`,
+ * each moved to the quietest 100 ms within ±5 s. The encoder aborts past 400 s, and fixed cuts
+ * split words: measured 6.6% WER at fixed 60 s cuts, 1.5% snapped.
+ */
+export function silenceCuts(
+  samples: Float32Array,
+  sampleRate: number,
+  windowSeconds = 60,
+): number[] {
+  const window = windowSeconds * sampleRate;
+  const slack = 5 * sampleRate;
+  const cuts = [0];
+  while (cuts.at(-1)! + window < samples.length) {
+    const target = cuts.at(-1)! + window;
+    const hi = Math.min(target + slack, samples.length);
+    cuts.push(quietestBlockCenter(samples, target - slack, hi, sampleRate / 10));
+  }
+  cuts.push(samples.length);
+  return cuts;
+}
+
 interface ParakeetOptions {
   language?: string;
   model?: string;
@@ -139,13 +202,19 @@ export function transcribeWithParakeet(
 
     const produced = join(workDir, `${basename(inputPath, extname(inputPath))}.json`);
     if (!existsSync(produced)) throw new Error("Parakeet did not produce output.");
-    const words = mergeTokensToWords(JSON.parse(readFileSync(produced, "utf-8")) as ParakeetJson);
-
-    const transcriptPath = join(dir, "transcript.json");
-    writeFileSync(transcriptPath, JSON.stringify(words, null, 2));
-    const durationSeconds = words.length > 0 ? words[words.length - 1]!.end : 0;
-    return { transcriptPath, wordCount: words.length, durationSeconds, speechOnsetSeconds: null };
+    return writeParakeetTranscript(
+      dir,
+      mergeTokensToWords(JSON.parse(readFileSync(produced, "utf-8")) as ParakeetJson),
+    );
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
+}
+
+export function writeParakeetTranscript(dir: string, words: Word[]): TranscribeResult {
+  mkdirSync(dir, { recursive: true });
+  const transcriptPath = join(dir, "transcript.json");
+  writeFileSync(transcriptPath, JSON.stringify(words, null, 2));
+  const durationSeconds = words.length > 0 ? words[words.length - 1]!.end : 0;
+  return { transcriptPath, wordCount: words.length, durationSeconds, speechOnsetSeconds: null };
 }

@@ -3,7 +3,7 @@ import { failCommand, setCommandExitCode } from "../utils/commandResult.js";
 import { defineCommand } from "citty";
 import type { Example } from "./_examples.js";
 import { existsSync, writeFileSync } from "node:fs";
-import { findParakeet, transcribeWithParakeet } from "../whisper/parakeet.js";
+import { findParakeet, PARAKEET_MODEL_LABEL, transcribeWithParakeet } from "../whisper/parakeet.js";
 
 type CaptionExportFormat = "srt" | "vtt";
 
@@ -55,7 +55,7 @@ export default defineCommand({
     engine: {
       type: "string",
       description:
-        "ASR engine: auto (Parakeet if installed, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; enable with `uv pip install parakeet-mlx`.",
+        "ASR engine: auto (Parakeet if installed, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; install it with `hyperframes models install parakeet`.",
       alias: "e",
     },
     model: {
@@ -267,6 +267,15 @@ async function exportTranscript(
 // Transcribe audio/video with whisper
 // ---------------------------------------------------------------------------
 
+type Runner = "sherpa" | "parakeet-mlx" | "whisper";
+
+/** auto and parakeet prefer sherpa-onnx, then an installed parakeet-mlx runner, then whisper. */
+function pickRunner(engine: string, sherpaInstalled: () => boolean): Runner {
+  if (engine === "whisper") return "whisper";
+  if (sherpaInstalled()) return "sherpa";
+  return findParakeet() ? "parakeet-mlx" : "whisper";
+}
+
 // fallow-ignore-next-line complexity
 async function transcribeAudio(
   inputPath: string,
@@ -284,36 +293,56 @@ async function transcribeAudio(
   const { loadTranscript, patchCaptionHtml, stripBeforeOnset } =
     await import("../whisper/normalize.js");
 
-  // Engine: auto (Parakeet if installed, else whisper), or forced parakeet/whisper.
+  const { sherpaParakeetInstalled, transcribeWithSherpa } = await import("../whisper/sherpa.js");
+
   const engine = (opts.engine ?? "auto").toLowerCase();
   if (engine !== "auto" && engine !== "parakeet" && engine !== "whisper") {
     failWith(`Unknown --engine: ${opts.engine}. Use auto, parakeet, or whisper.`, !!opts.json);
   }
-  const useParakeet = engine === "parakeet" || (engine === "auto" && !!findParakeet());
+  let runner = pickRunner(engine, sherpaParakeetInstalled);
+  if (engine === "parakeet" && runner === "whisper") {
+    failWith(
+      "Parakeet is not installed. Install it with: hyperframes models install parakeet (or use --engine whisper)",
+      !!opts.json,
+    );
+  }
 
   const model = opts.model ?? DEFAULT_MODEL;
   // --model selects the whisper model only; Parakeet uses its own fixed model.
-  if (useParakeet && opts.model && !opts.json) {
+  if (runner !== "whisper" && opts.model && !opts.json) {
     console.error(
       c.dim(`  Note: --model applies to the whisper engine only; ignored under Parakeet.`),
     );
   }
-  const label = useParakeet ? "Parakeet" : model;
+  const label = runner === "whisper" ? model : "Parakeet";
   const spin = opts.json ? null : clack.spinner();
   spin?.start(`Transcribing with ${c.accent(label)}...`);
+  const onProgress = spin ? (msg: string) => spin.message(msg) : undefined;
+  const run = (r: Runner) =>
+    r === "sherpa"
+      ? transcribeWithSherpa(inputPath, dir, { onProgress })
+      : r === "parakeet-mlx"
+        ? transcribeWithParakeet(inputPath, dir, { language: opts.language, onProgress })
+        : transcribe(inputPath, dir, {
+            model,
+            language: opts.language,
+            onProgress,
+            timeoutMs: opts.timeoutMs,
+          });
 
   try {
-    const result = useParakeet
-      ? transcribeWithParakeet(inputPath, dir, {
-          language: opts.language,
-          onProgress: spin ? (msg) => spin.message(msg) : undefined,
-        })
-      : await transcribe(inputPath, dir, {
-          model,
-          language: opts.language,
-          onProgress: spin ? (msg) => spin.message(msg) : undefined,
-          timeoutMs: opts.timeoutMs,
-        });
+    let result: Awaited<ReturnType<typeof run>>;
+    try {
+      result = await run(runner);
+    } catch (err) {
+      if (runner !== "sherpa") throw err;
+      runner = pickRunner(engine, () => false);
+      const reason = err instanceof Error ? err.message : String(err);
+      spin?.clear();
+      console.error(c.warn(`Parakeet (sherpa-onnx) failed, using ${runner} instead. ${reason}`));
+      spin?.start(`Transcribing with ${c.accent(runner)}...`);
+      result = await run(runner);
+    }
 
     let { words } = loadTranscript(result.transcriptPath);
 
@@ -335,8 +364,8 @@ async function transcribeAudio(
       console.log(
         JSON.stringify({
           ok: true,
-          engine: useParakeet ? "parakeet" : "whisper",
-          model: useParakeet ? "parakeet-tdt-0.6b-v3" : model,
+          engine: runner === "whisper" ? "whisper" : "parakeet",
+          model: runner === "whisper" ? model : PARAKEET_MODEL_LABEL,
           wordCount: words.length,
           durationSeconds: result.durationSeconds,
           speechOnsetSeconds: result.speechOnsetSeconds,

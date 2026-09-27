@@ -7,7 +7,28 @@ import { CliRuntimeError, consumeCommandResult } from "../utils/commandResult.js
 
 // Make the whisper core report "unavailable" so we exercise the soft-skip path.
 const transcribeMock = vi.fn();
-vi.mock("../whisper/transcribe.js", () => ({ transcribe: transcribeMock }));
+vi.mock("../whisper/transcribe.js", () => ({
+  transcribe: transcribeMock,
+  prepareWav: (input: string) => input,
+}));
+
+// Engine selection: which runners look installed, and the sherpa decode child it spawns.
+const runners = { sherpa: false, mlx: false };
+vi.mock("../whisper/sherpa.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../whisper/sherpa.js")>()),
+  sherpaParakeetInstalled: () => runners.sherpa,
+}));
+const mlxMock = vi.fn();
+vi.mock("../whisper/parakeet.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../whisper/parakeet.js")>()),
+  findParakeet: () => (runners.mlx ? "/bin/parakeet-mlx" : undefined),
+  transcribeWithParakeet: (...a: unknown[]) => mlxMock(...a),
+}));
+const execFileMock = vi.fn();
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  execFile: (...a: unknown[]) => execFileMock(...a),
+}));
 
 const trackTranscribeUnavailable = vi.fn();
 const trackCommandFailure = vi.fn();
@@ -17,6 +38,17 @@ vi.mock("../telemetry/events.js", () => ({
 }));
 
 import transcribeCmd from "./transcribe.js";
+
+/** Makes each runner write a one-word transcript naming itself. */
+function fakeTranscript(dir: string, text: string) {
+  const transcriptPath = join(dir, "transcript.json");
+  writeFileSync(transcriptPath, JSON.stringify([{ text, start: 0, end: 1 }]));
+  return { transcriptPath, wordCount: 1, durationSeconds: 1, speechOnsetSeconds: null };
+}
+
+function lastJson(): Record<string, unknown> {
+  return JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0]));
+}
 
 function dummyAudio(): { dir: string; input: string } {
   const dir = mkdtempSync(join(tmpdir(), "hf-transcribe-test-"));
@@ -33,6 +65,8 @@ describe("transcribe command", () => {
     transcribeMock.mockReset();
     trackTranscribeUnavailable.mockReset();
     trackCommandFailure.mockReset();
+    mlxMock.mockReset();
+    Object.assign(runners, { sherpa: false, mlx: false });
     transcribeMock.mockRejectedValue(
       new WhisperUnavailableError("whisper-cpp not found. Install: brew install whisper-cpp"),
     );
@@ -77,6 +111,93 @@ describe("transcribe command", () => {
     expect(consumeCommandResult().exitCode).toBe(0);
     expect(trackTranscribeUnavailable).toHaveBeenCalledWith({ optional: true });
     expect(trackCommandFailure).not.toHaveBeenCalled();
+  });
+
+  describe("engine selection", () => {
+    beforeEach(() => {
+      transcribeMock.mockImplementation(async (_in: string, dir: string) =>
+        fakeTranscript(dir, "whisper"),
+      );
+      mlxMock.mockImplementation((_in: string, dir: string) => fakeTranscript(dir, "mlx"));
+      execFileMock.mockReset();
+      execFileMock.mockImplementation((_cmd, _args, _opts, done) => {
+        const windows = [{ offset: 60, tokens: [" sherpa"], timestamps: [0.5], durations: [0.25] }];
+        done(null, `HYPERFRAMES_PARAKEET_RESULT:${JSON.stringify(windows)}\n`, "");
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(process.report, "getReport").mockReturnValue({
+        header: { glibcVersionRuntime: "2.36" },
+      } as never);
+    });
+
+    async function transcribeWith(engine: string, installed: typeof runners) {
+      Object.assign(runners, installed);
+      const { dir, input } = dummyAudio();
+      dirs.push(dir);
+      await transcribeCmd.run!({ args: { input, json: true, engine } } as never);
+      const out = lastJson();
+      const words = JSON.parse(readFileSync(String(out.transcriptPath), "utf-8"));
+      return { engine: out.engine, model: out.model, word: words[0]?.text, start: words[0]?.start };
+    }
+
+    it("auto and parakeet prefer sherpa-onnx, then parakeet-mlx, then whisper", async () => {
+      const sherpa = {
+        engine: "parakeet",
+        model: "parakeet-tdt-0.6b-v3",
+        word: "sherpa",
+        start: 60.5,
+      };
+      expect(await transcribeWith("auto", { sherpa: true, mlx: true })).toEqual(sherpa);
+      expect(await transcribeWith("parakeet", { sherpa: true, mlx: true })).toEqual(sherpa);
+      expect(await transcribeWith("auto", { sherpa: false, mlx: true })).toMatchObject({
+        engine: "parakeet",
+        word: "mlx",
+      });
+      expect(await transcribeWith("auto", { sherpa: false, mlx: false })).toMatchObject({
+        engine: "whisper",
+        word: "whisper",
+      });
+      expect(await transcribeWith("whisper", { sherpa: true, mlx: true })).toMatchObject({
+        engine: "whisper",
+        word: "whisper",
+      });
+    });
+
+    it("--engine parakeet with nothing installed names the install command", async () => {
+      Object.assign(runners, { sherpa: false, mlx: false });
+      const { dir, input } = dummyAudio();
+      dirs.push(dir);
+      await expect(
+        transcribeCmd.run!({ args: { input, json: true, engine: "parakeet" } } as never),
+      ).rejects.toThrow(CliRuntimeError);
+      expect(lastJson().error).toContain("hyperframes models install parakeet");
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("falls back to whisper with one stderr line when the decode child crashes", async () => {
+      execFileMock.mockImplementation((_cmd, _args, _opts, done) => {
+        const crash = Object.assign(new Error("Command failed"), { code: null, signal: "SIGABRT" });
+        done(crash, "", "terminate called after throwing an instance of 'Ort::Exception'\n");
+      });
+      expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
+        engine: "whisper",
+        word: "whisper",
+      });
+      const warnings = vi.mocked(console.error).mock.calls.map(([line]) => String(line));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/sherpa-onnx.*whisper.*SIGABRT.*Ort::Exception/);
+    });
+
+    it("falls back without spawning when glibc is too old for sherpa-onnx", async () => {
+      vi.mocked(process.report.getReport).mockReturnValue({
+        header: { glibcVersionRuntime: "2.31" },
+      } as never);
+      expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
+        engine: "whisper",
+      });
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(String(vi.mocked(console.error).mock.calls[0]?.[0])).toMatch(/glibc 2\.32.*2\.31/);
+    });
   });
 
   it("imports an SRT and exports an SRT sidecar from transcript.json", async () => {
