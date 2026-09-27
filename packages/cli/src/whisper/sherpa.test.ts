@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DownloadOptions } from "../cloud/download.js";
-import { ensureParakeetModel, sherpaUnsupportedReason, type ModelFile } from "./sherpa.js";
+import {
+  ensureParakeetModel,
+  installSherpaRuntime,
+  sherpaPlatformPackage,
+  sherpaUnsupportedReason,
+  type ModelFile,
+} from "./sherpa.js";
 
 const file = (name: string, content: string): ModelFile => ({
   name,
@@ -21,6 +27,26 @@ function fakeDownload(served: Record<string, string>) {
     return { path: dest, bytes: Buffer.byteLength(content) };
   });
 }
+
+describe("installSherpaRuntime", () => {
+  it.each([
+    ["darwin", "arm64", "sherpa-onnx-darwin-arm64@1.13.8"],
+    ["linux", "x64", "sherpa-onnx-linux-x64@1.13.8"],
+    ["win32", "ia32", "sherpa-onnx-win-ia32@1.13.8"],
+  ])("pins the %s-%s native package", (platform, arch, spec) => {
+    expect(sherpaPlatformPackage(platform as NodeJS.Platform, arch)).toBe(spec);
+  });
+
+  it("asks npm for the runtime and its native package at the same exact version", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("stop before touching the cache");
+    });
+    await installSherpaRuntime(run).catch(() => undefined);
+    const args = run.mock.calls[0]?.[0] as string[] | undefined;
+    expect(args).toContain("sherpa-onnx-node@1.13.8");
+    expect(args).toContain(sherpaPlatformPackage());
+  });
+});
 
 describe("ensureParakeetModel", () => {
   let dir: string;

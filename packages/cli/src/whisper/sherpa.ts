@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadToFile } from "../cloud/download.js";
-import { CACHE_DIR, install, isInstalled } from "../utils/optionalPackages.js";
+import { CACHE_DIR, install, isInstalled, runNpm } from "../utils/optionalPackages.js";
 import {
   mergeWindowsToWords,
   SHERPA_ERROR_PREFIX,
@@ -78,8 +78,14 @@ export function sherpaRuntimeInstalled(): boolean {
   return isInstalled(SHERPA_RUNTIME_DIR, RUNTIME);
 }
 
-export function installSherpaRuntime(): Promise<void> {
-  return install(SHERPA_RUNTIME_DIR, RUNTIME, RUNTIME_VERSION);
+/** The native package, pinned too: the runtime's own optionalDependencies accept any 1.13.x. */
+export function sherpaPlatformPackage(platform = process.platform, arch = process.arch): string {
+  return `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}@${RUNTIME_VERSION}`;
+}
+
+export function installSherpaRuntime(run = runNpm): Promise<void> {
+  const native = sherpaPlatformPackage();
+  return install(SHERPA_RUNTIME_DIR, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native]));
 }
 
 /** Sizes only: hashing 650 MB on every transcribe is too slow, and install already verified them. */

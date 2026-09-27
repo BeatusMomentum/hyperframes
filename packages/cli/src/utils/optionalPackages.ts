@@ -136,7 +136,7 @@ export function loadBesideCli(name: OptionalPackage, cliUrl = import.meta.url): 
   return pinnedCopyBesideCli(name, cliUrl) ? createRequire(cliUrl)(name) : null;
 }
 
-function runNpm(args: string[]): Promise<void> {
+export function runNpm(args: string[]): Promise<void> {
   const npm = buildNpmCommand(args);
   const child = spawn(npm.command, npm.args, { stdio: ["ignore", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
