@@ -775,7 +775,16 @@ export function parseImageElements(html: string): ImageElement[] {
   return images;
 }
 
-/** Chrome plays untagged VP9 and AV1 as BT.601, H.264 and VP8 as BT.709 from 720 lines (assumed for the rest). */
+/** zscale reads per-frame tags that ffprobe may not see; untagged HDR footage is BT.2020. */
+function hdrFrameColourTags(metadata: VideoMetadata): string {
+  const known = (value: string | undefined) =>
+    value && value !== "unknown" && value !== "reserved" ? value : undefined;
+  const matrix = known(metadata.colorSpace?.colorSpace) ?? "bt2020nc";
+  const primaries = known(metadata.colorSpace?.colorPrimaries) ?? "bt2020";
+  return `setparams=colorspace=${matrix}:color_primaries=${primaries}`;
+}
+
+/** Chrome plays untagged VP9 and AV1 as BT.601, H.264 and VP8 as BT.709 from 720 coded lines (assumed for the rest). */
 const CHROME_BT601_UNTAGGED_CODECS = new Set(["vp9", "av1"]);
 
 function chromeGuessForUntaggedMatrix(metadata: VideoMetadata): string[] {
@@ -944,7 +953,7 @@ export async function extractVideoFramesRange(
     vfFilters.push(SDR_TO_HDR_COLORSPACE_FILTER);
   }
   if (toneMappedToSdr) {
-    vfFilters.push(HDR_TO_SDR_TONEMAP_FILTER);
+    vfFilters.push(hdrFrameColourTags(metadata), HDR_TO_SDR_TONEMAP_FILTER);
   }
   if (toneMappedToSdr || (!isHdr && !options.sdrToHdrTransfer)) {
     vfFilters.push(

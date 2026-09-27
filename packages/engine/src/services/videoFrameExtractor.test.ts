@@ -3062,7 +3062,11 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
     rmSync(fixtureDir, { recursive: true, force: true });
   });
 
-  async function synthesizeHlgClip(path: string): Promise<void> {
+  async function synthesizeHlgClip(
+    path: string,
+    vui = "colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9",
+    transfer = "arib-std-b67",
+  ): Promise<void> {
     const synthesized = await runFfmpeg([
       "-y",
       "-hide_banner",
@@ -3073,7 +3077,7 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "-i",
       "color=c=0xe0b080:s=64x64:r=1:d=1",
       "-vf",
-      "zscale=pin=bt709:tin=bt709:min=bt709:p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv,format=yuv420p",
+      `zscale=pin=bt709:tin=bt709:min=bt709:p=bt2020:t=${transfer}:m=bt2020nc:r=tv,format=yuv420p`,
       "-c:v",
       "libx264",
       "-preset",
@@ -3081,17 +3085,68 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "-color_primaries",
       "bt2020",
       "-color_trc",
-      "arib-std-b67",
+      transfer,
       "-colorspace",
       "bt2020nc",
       "-bsf:v",
-      "h264_metadata=colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9",
+      `h264_metadata=${vui}`,
       path,
     ]);
     if (!synthesized.success) {
       throw new Error(`HLG fixture synthesis failed: ${synthesized.stderr.slice(-400)}`);
     }
   }
+
+  it.each([
+    [
+      "HLG",
+      "matrix",
+      "arib-std-b67",
+      "colour_primaries=9:transfer_characteristics=18:matrix_coefficients=2",
+    ],
+    [
+      "HLG",
+      "primaries",
+      "arib-std-b67",
+      "colour_primaries=2:transfer_characteristics=18:matrix_coefficients=9",
+    ],
+    [
+      "HLG",
+      "matrix and primaries",
+      "arib-std-b67",
+      "colour_primaries=2:transfer_characteristics=18:matrix_coefficients=2",
+    ],
+    [
+      "PQ",
+      "matrix and primaries",
+      "smpte2084",
+      "colour_primaries=2:transfer_characteristics=16:matrix_coefficients=2",
+    ],
+  ])(
+    "tone-maps %s footage whose video stream has no %s tag as the BT.2020 it is",
+    async (name, missing, transfer, vui) => {
+      const slug = `${name}-no-${missing}`.replace(/\W+/g, "-");
+      const tagged = join(fixtureDir, `${name}-fully-tagged.mp4`);
+      const untagged = join(fixtureDir, `${slug}.mp4`);
+      await synthesizeHlgClip(tagged, vui.replace(/=2(?=:|$)/g, "=9"), transfer);
+      await synthesizeHlgClip(untagged, vui, transfer);
+      const extract = (source: string, id: string) =>
+        extractVideoFramesRange(source, id, 0, 1, {
+          fps: 1,
+          outputDir: join(fixtureDir, `out-${id}`),
+          format: "png",
+          toneMapHdrToSdr: true,
+        });
+
+      const reference = await extract(tagged, `ref-${slug}`);
+      const result = await extract(untagged, slug);
+
+      expect(readFileSync(result.framePaths.get(0)!)).toEqual(
+        readFileSync(reference.framePaths.get(0)!),
+      );
+    },
+    60_000,
+  );
 
   it("matches Studio's HLG tone map and isolates transformed cache entries", async () => {
     const source = join(fixtureDir, "hlg-warm.mp4");
