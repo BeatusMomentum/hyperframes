@@ -215,10 +215,9 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
   );
 
   const undoEntry = useCallback(
-    (entryId: string, callbacks: ApplyCallbacks, knownPaths: readonly string[] = []) => {
-      // Studio's copy of the log can miss an entry that landed since it last refreshed.
+    (entryId: string, callbacks: ApplyCallbacks, pathsIfUnseen: readonly string[] = []) => {
       const entry = view.entries.find((candidate) => candidate.id === entryId);
-      const paths = entry?.files.map((file) => file.path) ?? [...knownPaths];
+      const paths = entry?.files.map((file) => file.path) ?? [...pathsIfUnseen];
       return apply("/undo", { entryId }, paths, callbacks);
     },
     [view, apply],
