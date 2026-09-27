@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hdrToSdrToneMapFilter } from "@hyperframes/core";
 import { findFfBinary } from "@hyperframes/parsers/ff-binaries";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,10 +24,22 @@ const realFfmpegFilters = realFfmpeg
 const canToneMapForReal =
   Boolean(findFfBinary("ffprobe")) && /\szscale\s/.test(realFfmpegFilters ?? "");
 
-function meanLuma(path: string): number {
+function meanLuma(path: string, filters = ""): number {
   const stats = execFileSync(
     realFfmpeg!,
-    ["-v", "error", "-i", path, "-frames:v", "1", "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-"],
+    [
+      "-v",
+      "error",
+      "-i",
+      path,
+      "-frames:v",
+      "1",
+      "-vf",
+      `${filters}signalstats,metadata=print:file=-`,
+      "-f",
+      "null",
+      "-",
+    ],
     { encoding: "utf8" },
   );
   return Number(/YAVG=([\d.]+)/.exec(stats)?.[1]);
@@ -254,6 +267,7 @@ describe("resolveProxy", () => {
     const filter = calls[1]!.args[filterIndex + 1];
     expect(filter).toContain("tonemap=");
     expect(filter).toContain("bt709");
+    expect(filter).toContain("out_color_matrix=bt709");
 
     succeed(calls[1]!);
     await result;
@@ -307,6 +321,7 @@ describe("resolveProxy", () => {
     await flush();
 
     expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toContain("-vf");
     expect(calls[0]!.args[calls[0]!.args.indexOf("-vf") + 1]).not.toContain("tonemap=");
     succeed(calls[0]!);
     await result;
@@ -340,8 +355,13 @@ describe("resolveProxy", () => {
       ]);
 
       const proxyPath = await resolveProxy(projectDir, sourcePath);
-      // The hable tone map darkens this clip (mean luma about 60 to 40); a plain copy keeps it.
-      expect(meanLuma(proxyPath)).toBeLessThan(meanLuma(sourcePath) - 10);
+      // Reference: the render tone map's RGB, converted with BT.709. Mean luma is ~53 there;
+      // skipping the tone map gives ~60, a BT.601 conversion ~56.
+      const reference = meanLuma(
+        sourcePath,
+        `${hdrToSdrToneMapFilter({ colorTransfer: "arib-std-b67" })},format=gbrp,scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,`,
+      );
+      expect(Math.abs(meanLuma(proxyPath) - reference)).toBeLessThan(1);
     },
     60_000,
   );

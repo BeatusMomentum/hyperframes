@@ -335,8 +335,13 @@ async function runFfmpeg(
   if (toneMap) await ensureHdrFilters(ffmpegPath);
   const evenScale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
   const pixelFormat = variant === "vp8" ? "yuva420p" : "yuv420p";
+  // The tone map ends in RGB; older ffmpeg (seen on 5.1) converts it with BT.601 unless the matrix is named.
   const videoFilter = toneMap
-    ? [hdrToSdrToneMapFilter(metadata.color), evenScale, `format=${pixelFormat}`].join(",")
+    ? [
+        hdrToSdrToneMapFilter(metadata.color),
+        `${evenScale}:out_color_matrix=bt709:out_range=tv`,
+        `format=${pixelFormat}`,
+      ].join(",")
     : [evenScale, `format=${pixelFormat}`].join(",");
 
   return new Promise((resolvePromise, reject) => {
