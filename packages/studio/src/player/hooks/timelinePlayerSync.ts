@@ -14,7 +14,8 @@ export function timelineElementsChanged(
       element.start !== prior.start ||
       element.duration !== prior.duration ||
       element.track !== prior.track ||
-      element.sourceDuration !== prior.sourceDuration
+      element.sourceDuration !== prior.sourceDuration ||
+      element.src !== prior.src
     );
   });
 }
