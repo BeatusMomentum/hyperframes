@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 import {
   createProjectSignature,
   fileContentVersion,
@@ -83,6 +84,18 @@ vi.mock("@hyperframes/studio-server", async (importOriginal) => {
       historyState.open ? historyState.open(...args) : original.openProjectHistory(...args),
   };
 });
+
+const backgroundRender = vi.hoisted(() => ({
+  impl: async (_opts: { outputPath: string }) => ({
+    provider: "stub",
+    framesProcessed: 0,
+    durationSeconds: 0,
+    avgMsPerFrame: 0,
+  }),
+}));
+vi.mock("../background-removal/pipeline.js", () => ({
+  render: (opts: { outputPath: string }) => backgroundRender.impl(opts),
+}));
 
 // Only `fs.watch` is replaced, so the SSE describe below can fire a file-change
 // on demand; every other server test keeps reading and writing real files.
@@ -690,6 +703,42 @@ describe("Studio file-change SSE", () => {
       expect(payload).not.toContain("report.json");
       expect(payload).not.toContain(".tmp");
     }
+  });
+
+  it("delivers nothing while background removal writes its output, then the finished file", async () => {
+    const projectDir = tmpProject();
+    mkdirSync(join(projectDir, "assets"));
+    writeFileSync(join(projectDir, "assets", "clip.mp4"), "source video");
+    server = createStudioServer({ projectDir });
+    const [stream] = await subscribe(1);
+    let finish = () => {};
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    backgroundRender.impl = async ({ outputPath }) => {
+      for (const chunk of ["frames-1", "frames-2", "frames-3"]) {
+        appendFileSync(outputPath, chunk);
+        mockWatcher.emit("change", "change", relative(projectDir, outputPath));
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      setTimeout(finish, 0);
+      return { provider: "stub", framesProcessed: 3, durationSeconds: 1, avgMsPerFrame: 1 };
+    };
+
+    const start = await server.app.request(
+      `/api/projects/${encodeURIComponent(basename(projectDir))}/media/remove-background`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inputPath: "assets/clip.mp4" }),
+      },
+    );
+    const { outputPath } = (await start.json()) as { outputPath: string };
+    await finished;
+    expect(readFileSync(join(projectDir, outputPath), "utf8")).toBe("frames-1frames-2frames-3");
+    mockWatcher.emit("change", "rename", outputPath);
+
+    const first = await nextEvent(stream!);
+    expect(first).toContain(`"path":"${outputPath}"`);
+    expect(first).toContain(encodedVersion("frames-1frames-2frames-3"));
   });
 
   it("labels a Studio write for every open subscriber, not just the first", async () => {

@@ -1,3 +1,5 @@
+import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { MediaProcessingJobState, StudioApiAdapter } from "../types.js";
 
 export type BackgroundRemovalJobOptions = Parameters<
@@ -42,15 +44,25 @@ export function createBackgroundRemovalJob(
   };
 
   void (async () => {
+    // The render writes for minutes; under `.hyperframes/` no watcher announces its files until they land.
+    let stagingDir: string | undefined;
     try {
+      mkdirSync(join(opts.project.dir, ".hyperframes"), { recursive: true });
+      const dir = mkdtempSync(join(opts.project.dir, ".hyperframes", "bg-removal-"));
+      stagingDir = dir;
+      const staged = (path: string) => join(dir, basename(path));
       const result = await render({
         inputPath: opts.inputPath,
-        outputPath: opts.outputPath,
-        backgroundOutputPath: opts.backgroundOutputPath,
+        outputPath: staged(opts.outputPath),
+        backgroundOutputPath: opts.backgroundOutputPath && staged(opts.backgroundOutputPath),
         device: opts.device,
         quality: opts.quality,
         onProgress: (event) => updateBackgroundRemovalProgress(state, event),
       });
+      moveIntoPlace(staged(opts.outputPath), opts.outputPath);
+      if (opts.backgroundOutputPath) {
+        moveIntoPlace(staged(opts.backgroundOutputPath), opts.backgroundOutputPath);
+      }
       state.status = "complete";
       state.progress = 100;
       state.stage = "Complete";
@@ -62,10 +74,22 @@ export function createBackgroundRemovalJob(
       state.status = "failed";
       state.error = err instanceof Error ? err.message : String(err);
       state.stage = "Failed";
+    } finally {
+      if (stagingDir) rmSync(stagingDir, { recursive: true, force: true });
     }
   })();
 
   return state;
+}
+
+function moveIntoPlace(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    copyFileSync(from, to);
+    unlinkSync(from);
+  }
 }
 
 function updateBackgroundRemovalProgress(
