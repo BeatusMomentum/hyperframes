@@ -8,6 +8,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -159,7 +160,9 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** Removes staging dirs whose owning pid is dead (crash or kill mid-install); never a live one. */
+const STAGING_PID_TRUSTED_FOR_MS = 6 * 60 * 60 * 1000;
+
+/** Removes staging dirs whose pid is dead (killed install), or too old to trust a live pid (reuse). */
 export function sweepStaleStaging(dir: string): void {
   const prefix = `${basename(dir)}.tmp-`;
   const parent = dirname(dir);
@@ -167,8 +170,10 @@ export function sweepStaleStaging(dir: string): void {
   for (const entry of readdirSync(parent)) {
     if (!entry.startsWith(prefix)) continue;
     const pid = /^(\d+)(?:-|$)/.exec(entry.slice(prefix.length))?.[1];
-    if (pid === undefined || isProcessAlive(Number(pid))) continue;
+    if (pid === undefined) continue;
     const stale = join(parent, entry);
+    const age = Date.now() - (statSync(stale, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+    if (isProcessAlive(Number(pid)) && age < STAGING_PID_TRUSTED_FOR_MS) continue;
     try {
       rmSync(stale, { recursive: true, force: true });
     } catch (err) {

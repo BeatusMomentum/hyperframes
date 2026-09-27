@@ -23,6 +23,7 @@ interface SherpaOnnx {
 }
 
 const { wavPath, runtimeDir, config } = JSON.parse(process.env.HYPERFRAMES_PARAKEET_INPUT ?? "{}");
+const parentPid = process.ppid;
 
 /** Leading silence moves the frame grid; 0.5 s recovered the dropped clause at every length tried. */
 const RETRY_PAD_SECONDS = 0.5;
@@ -52,6 +53,8 @@ try {
   const cuts = silenceCuts(wave.samples, wave.sampleRate);
   const windows: SherpaWindow[] = [];
   for (let k = 0; k + 1 < cuts.length; k++) {
+    // A SIGKILLed CLI cannot stop us, and nobody would read the result.
+    if (process.ppid !== parentPid) throw new Error("the CLI exited, so the decode stopped");
     const slice = {
       sampleRate: wave.sampleRate,
       samples: wave.samples.subarray(cuts[k], cuts[k + 1]),
@@ -79,7 +82,8 @@ try {
   }
   process.stdout.write(`${SHERPA_RESULT_PREFIX}${JSON.stringify(windows)}\n`);
 } catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
+  // One line: the reader takes the prefixed line, and the loader's error spans several.
+  const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
   // Rethrow after the flush: a pipe write is asynchronous on macOS and a crash would drop it.
   process.stderr.write(`${SHERPA_ERROR_PREFIX}${message}\n`, () => {
     throw err;

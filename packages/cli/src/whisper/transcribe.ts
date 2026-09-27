@@ -312,9 +312,12 @@ function runFfmpeg(ffmpegPath: string, args: string[], output: string, timeout: 
     // A code means Node stopped it; ffmpeg traps Ctrl-C and says so (exit 255 is EPERM too on 7+).
     if (code) throw err;
     const said = String(stderr ?? "").trim();
-    const cancelled = /received signal/.test(said) || signal === "SIGINT" || signal === "SIGTERM";
+    const cancelled =
+      /Exiting normally, received signal/.test(said) || signal === "SIGINT" || signal === "SIGTERM";
     const reason = said.split("\n").at(-1) || (err as Error).message;
-    throw Object.assign(new Error(`ffmpeg failed: ${reason}`, { cause: err }), { cancelled });
+    // stderr: the command shows its last lines, where ffmpeg names the cause above its summary line.
+    const failure = new Error(`ffmpeg failed: ${reason}`, { cause: err });
+    throw Object.assign(failure, { cancelled, stderr: said });
   }
 }
 

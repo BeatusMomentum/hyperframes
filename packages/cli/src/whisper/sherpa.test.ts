@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +15,9 @@ import type { DownloadOptions } from "../cloud/download.js";
 import {
   ensureParakeetModel,
   installSherpaRuntime,
+  SHERPA_RUNTIME_DIR,
   sherpaPlatformPackage,
+  sherpaRuntimeInstalled,
   sherpaUnsupportedReason,
   type ModelFile,
 } from "./sherpa.js";
@@ -52,6 +62,68 @@ describe("installSherpaRuntime", () => {
     expect(args).toContain("sherpa-onnx-node@1.13.8");
     expect(args).toContain(sherpaPlatformPackage());
   });
+
+  it("repairs a runtime whose native binary is missing instead of calling it installed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    const native = sherpaPlatformPackage().replace(/@[^@]+$/, "");
+    const manifest = (root: string, name: string) => {
+      mkdirSync(join(root, "node_modules", name), { recursive: true });
+      writeFileSync(join(root, "node_modules", name, "package.json"), `{"name":"${name}"}`);
+    };
+    try {
+      manifest(dir, "sherpa-onnx-node");
+      manifest(dir, native);
+      expect(sherpaRuntimeInstalled(dir)).toBe(false);
+      const run = vi.fn(async (args: string[]) => {
+        const staging = args[args.indexOf("--prefix") + 1]!;
+        manifest(staging, "sherpa-onnx-node");
+        manifest(staging, native);
+        writeFileSync(join(staging, "node_modules", native, "sherpa-onnx.node"), "binary");
+      });
+
+      await installSherpaRuntime({ run, dir });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(dir, "node_modules", native, "sherpa-onnx.node"))).toBe(true);
+      expect(sherpaRuntimeInstalled(dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps each platform and arch in its own runtime dir", () => {
+    expect(SHERPA_RUNTIME_DIR).toMatch(
+      new RegExp(`sherpa-onnx-node@1\\.13\\.8-${process.platform}-${process.arch}$`),
+    );
+  });
+});
+
+describe("sherpaParakeetInstalled", () => {
+  it("counts a runtime missing its native binary, so transcribe reports it instead of skipping it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hf-sherpa-home-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const sherpa = await import("./sherpa.js");
+      const manifest = join(sherpa.SHERPA_RUNTIME_DIR, "node_modules", "sherpa-onnx-node");
+      mkdirSync(manifest, { recursive: true });
+      writeFileSync(join(manifest, "package.json"), "{}");
+      mkdirSync(sherpa.PARAKEET_MODEL_DIR, { recursive: true });
+      for (const [name, bytes] of [
+        ["encoder.int8.onnx", 652_184_281],
+        ["decoder.int8.onnx", 11_845_275],
+        ["joiner.int8.onnx", 6_355_277],
+        ["tokens.txt", 93_939],
+      ] as const) {
+        writeFileSync(join(sherpa.PARAKEET_MODEL_DIR, name), "");
+        truncateSync(join(sherpa.PARAKEET_MODEL_DIR, name), bytes);
+      }
+      expect(sherpa.sherpaRuntimeInstalled()).toBe(false);
+      expect(sherpa.sherpaParakeetInstalled()).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ensureParakeetModel", () => {
@@ -68,6 +140,19 @@ describe("ensureParakeetModel", () => {
 
     await expect(ensureParakeetModel({ dir, files, download })).rejects.toThrow(/sha256/);
     expect(readdirSync(dir)).toEqual([]);
+    expect(stagingLeft()).toEqual([]);
+  });
+
+  it("names the file, the host and a retry when a download fails", async () => {
+    tempDir();
+    const download = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      ensureParakeetModel({ dir, files: [file("encoder.onnx", "enc")], download }),
+    ).rejects.toThrow(
+      "Could not download encoder.onnx from huggingface.co (fetch failed). Check your network and re-run.",
+    );
     expect(stagingLeft()).toEqual([]);
   });
 

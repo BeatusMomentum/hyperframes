@@ -4,7 +4,13 @@ import { normalizeErrorMessage } from "../utils/errorMessage.js";
 import { defineCommand } from "citty";
 import type { Example } from "./_examples.js";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { findParakeet, PARAKEET_MODEL_LABEL, transcribeWithParakeet } from "../whisper/parakeet.js";
+import {
+  findParakeet,
+  PARAKEET_LANGUAGES,
+  PARAKEET_MODEL_LABEL,
+  parakeetSpeaks,
+  transcribeWithParakeet,
+} from "../whisper/parakeet.js";
 
 type CaptionExportFormat = "srt" | "vtt";
 
@@ -56,7 +62,7 @@ export default defineCommand({
     engine: {
       type: "string",
       description:
-        "ASR engine: auto (Parakeet if installed, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; install it with `hyperframes models install parakeet`.",
+        "ASR engine: auto (Parakeet if installed and it covers --language, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; install it with `hyperframes models install parakeet`.",
       alias: "e",
     },
     model: {
@@ -270,10 +276,10 @@ async function exportTranscript(
 
 type Runner = "sherpa" | "parakeet-mlx" | "whisper";
 
-/** auto and parakeet prefer sherpa-onnx, then an installed parakeet-mlx runner, then whisper. */
-function pickRunner(engine: string, sherpaInstalled: () => boolean): Runner {
-  if (engine === "whisper") return "whisper";
-  if (sherpaInstalled()) return "sherpa";
+/** auto and parakeet prefer sherpa-onnx, then parakeet-mlx, then whisper, in Parakeet's languages. */
+function pickRunner(engine: string, sherpaUsable: () => boolean, language?: string): Runner {
+  if (engine === "whisper" || !parakeetSpeaks(language)) return "whisper";
+  if (sherpaUsable()) return "sherpa";
   return findParakeet() ? "parakeet-mlx" : "whisper";
 }
 
@@ -297,17 +303,28 @@ async function transcribeAudio(
   const { loadTranscript, patchCaptionHtml, stripBeforeOnset } =
     await import("../whisper/normalize.js");
 
-  const { DecodeCancelled, prepareSherpaWav, sherpaParakeetInstalled, transcribeWithSherpa } =
-    await import("../whisper/sherpa.js");
+  const {
+    DecodeCancelled,
+    prepareSherpaWav,
+    sherpaParakeetInstalled,
+    sherpaUnsupportedReason,
+    transcribeWithSherpa,
+  } = await import("../whisper/sherpa.js");
+  const { createRenderCancellationScope } = await import("../utils/renderCancellation.js");
 
   const engine = (opts.engine ?? "auto").toLowerCase();
   if (engine !== "auto" && engine !== "parakeet" && engine !== "whisper") {
     failWith(`Unknown --engine: ${opts.engine}. Use auto, parakeet, or whisper.`, !!opts.json);
   }
-  let runner = pickRunner(engine, sherpaParakeetInstalled);
+  const unsupported = sherpaUnsupportedReason();
+  const sherpaUsable = () => !unsupported && sherpaParakeetInstalled();
+  let runner = pickRunner(engine, sherpaUsable, opts.language);
   if (engine === "parakeet" && runner === "whisper") {
     failWith(
-      "Parakeet is not installed. Install it with: hyperframes models install parakeet (or use --engine whisper)",
+      !parakeetSpeaks(opts.language)
+        ? `Parakeet does not transcribe --language ${opts.language}; it covers ${PARAKEET_LANGUAGES.split(" ").join(", ")}. Use --engine whisper.`
+        : (unsupported ??
+            "Parakeet is not installed. Install it with: hyperframes models install parakeet (or use --engine whisper)"),
       !!opts.json,
     );
   }
@@ -324,9 +341,11 @@ async function transcribeAudio(
   spin?.start(`Transcribing with ${label(runner)}...`);
   const onProgress = spin ? (msg: string) => spin.message(msg) : undefined;
   let wavPath = inputPath;
+  // Before audio prep: under --json no spinner listens for SIGINT, so Ctrl-C would kill Node.
+  const cancellation = runner === "sherpa" ? createRenderCancellationScope() : null;
   const run = (r: Runner) =>
     r === "sherpa"
-      ? transcribeWithSherpa(wavPath, dir, { onProgress })
+      ? transcribeWithSherpa(wavPath, dir, { onProgress, signal: cancellation!.signal })
       : r === "parakeet-mlx"
         ? transcribeWithParakeet(wavPath, dir, { language: opts.language, onProgress })
         : transcribe(wavPath, dir, {
@@ -348,7 +367,7 @@ async function transcribeAudio(
       const reason = normalizeErrorMessage(err).replace(/\.+$/, "");
       const parakeetError = `Parakeet failed: ${reason}. To repair it, run: hyperframes models install parakeet`;
       if (!parakeetFallsBack(engine)) throw new Error(parakeetError);
-      runner = pickRunner(engine, () => false);
+      runner = pickRunner(engine, () => false, opts.language);
       spin?.clear();
       console.error(c.warn(`${parakeetError}. Using ${runner} for this run.`));
       spin?.start(`Transcribing with ${label(runner)}...`);
@@ -400,19 +419,25 @@ async function transcribeAudio(
       );
     }
   } catch (err) {
-    if (err instanceof DecodeCancelled) {
-      if (opts.json) console.log(JSON.stringify({ ok: false, error: err.message }));
-      else spin?.stop(c.warn(err.message));
+    if (err instanceof DecodeCancelled || cancellation?.signal.aborted) {
+      const message = "Transcription cancelled";
+      if (opts.json) console.log(JSON.stringify({ ok: false, error: message }));
+      else spin?.stop(c.warn(message));
       failCommand(130);
     }
     // Surface the last few lines of the ASR subprocess's stderr, which
     // execFileSync captures but otherwise drops on the floor — that's where
     // parakeet-mlx / whisper report the actual failure cause.
+    const base = err instanceof Error ? err.message : String(err);
     const stderr =
       err && typeof err === "object" && "stderr" in err && err.stderr
-        ? String(err.stderr).trim().split("\n").slice(-3).join("\n")
+        ? String(err.stderr)
+            .trim()
+            .split("\n")
+            .slice(-3)
+            .filter((line) => !base.includes(line))
+            .join("\n")
         : "";
-    const base = err instanceof Error ? err.message : String(err);
     const message = stderr ? `${base}\n${stderr}` : base;
 
     // whisper-cpp is an optional prerequisite, not part of the CLI. When it is
@@ -448,6 +473,7 @@ async function transcribeAudio(
     }
     failCommand();
   } finally {
+    cancellation?.dispose();
     if (wavPath !== inputPath) rmSync(wavPath, { force: true });
   }
 }

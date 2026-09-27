@@ -131,15 +131,18 @@ function runWhisper() {
     // (spawnSync npx ENOENT) — resolveNpxInvocation reroutes it through
     // node + npx-cli.js (and throws actionably when it can't), same
     // mechanism as the audio engine's TTS spawns.
+    // Under auto the CLI may run its own Parakeet; --json says which engine ran.
+    const cliEngine = args.engine === "whisper" ? "whisper" : "auto";
     const resolved = resolveNpxInvocation(
-      ["hyperframes", "transcribe", inputPath, "--dir", workDir],
+      ["hyperframes", "transcribe", inputPath, "--dir", workDir, "--engine", cliEngine, "--json"],
       { stdio: ["ignore", "pipe", "pipe"], timeout: 1_800_000 },
     );
+    let stdout;
     try {
-      execFileSync(resolved.cmd, resolved.args, resolved.opts);
+      stdout = String(execFileSync(resolved.cmd, resolved.args, resolved.opts));
     } catch (e) {
-      // stderr holds spinner redraws; the last lines carry the reason.
-      const tail = stripVTControlCharacters(String(e.stderr ?? ""))
+      // stderr holds spinner redraws and --json prints the reason on stdout, so keep the last lines.
+      const tail = stripVTControlCharacters(`${e.stderr ?? ""}\n${e.stdout ?? ""}`)
         .split(/[\r\n]+/)
         .map((l) => l.trim())
         .filter((l) => l && l !== "│")
@@ -162,7 +165,13 @@ function runWhisper() {
     } catch {
       /* leave undefined */
     }
-    report("whisper", words);
+    let ran = "whisper";
+    try {
+      ran = JSON.parse(stdout.trim().split("\n").at(-1)).engine === "parakeet" ? "parakeet" : ran;
+    } catch {
+      /* no JSON line: keep whisper */
+    }
+    report(ran, words);
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }

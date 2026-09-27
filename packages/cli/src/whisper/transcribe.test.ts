@@ -316,4 +316,43 @@ describe.skipIf(process.platform === "win32")("prepareWav", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  function failWith(script: string): unknown {
+    const dir = mkdtempSync(join(tmpdir(), "hf-prepare-wav-"));
+    const ffmpeg = join(dir, "ffmpeg");
+    writeFileSync(ffmpeg, `#!${process.execPath}\n${script}\n`);
+    chmodSync(ffmpeg, 0o755);
+    const saved = process.env.HYPERFRAMES_FFMPEG_PATH;
+    process.env.HYPERFRAMES_FFMPEG_PATH = ffmpeg;
+    try {
+      prepareWav(join(dir, "talk.mp3"));
+    } catch (err) {
+      return err;
+    } finally {
+      if (saved === undefined) delete process.env.HYPERFRAMES_FFMPEG_PATH;
+      else process.env.HYPERFRAMES_FFMPEG_PATH = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    throw new Error("prepareWav did not fail");
+  }
+
+  it("keeps ffmpeg's stderr on the error, so the cause above its summary line is shown", () => {
+    const said =
+      "Output file does not contain any stream\nError opening output files: Invalid argument";
+    const err = failWith(`process.stderr.write(${JSON.stringify(said)}); process.exit(234);`);
+    expect(err).toMatchObject({ cancelled: false, stderr: said });
+  });
+
+  it("reads a cancel only from ffmpeg's own signal line, not a path that mentions one", () => {
+    const said = "/in/received signal.mp3: Invalid data found when processing input";
+    const err = failWith(`process.stderr.write(${JSON.stringify(said)}); process.exit(255);`);
+    expect(err).toMatchObject({ cancelled: false });
+  });
+
+  it("rethrows Node's own failure (output overflow) as is, never as a cancel", () => {
+    const flood = `require("fs").writeSync(2, "Exiting normally, received signal 2.\\n" + "x".repeat(65 << 20));`;
+    const err = failWith(`${flood} process.exit(255);`) as { code?: string; cancelled?: boolean };
+    expect(err.code).toBe("ENOBUFS");
+    expect(err.cancelled).toBeUndefined();
+  });
 });

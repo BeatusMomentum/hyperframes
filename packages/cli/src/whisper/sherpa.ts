@@ -1,6 +1,6 @@
 import { execFile, type ExecFileException } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,6 @@ import {
   runNpm,
   sweepStaleStaging,
 } from "../utils/optionalPackages.js";
-import { createRenderCancellationScope } from "../utils/renderCancellation.js";
 import {
   mergeWindowsToWords,
   SHERPA_ERROR_PREFIX,
@@ -24,7 +23,11 @@ import { getPreparedWavDurationSeconds, prepareWav, type TranscribeResult } from
 
 const RUNTIME = "sherpa-onnx-node";
 const RUNTIME_VERSION = "1.13.8";
-export const SHERPA_RUNTIME_DIR = join(CACHE_DIR, `${RUNTIME}@${RUNTIME_VERSION}`);
+/** Per platform and arch, like the native package inside, so Rosetta never shadows arm64. */
+export const SHERPA_RUNTIME_DIR = join(
+  CACHE_DIR,
+  `${RUNTIME}@${RUNTIME_VERSION}-${process.platform}-${process.arch}`,
+);
 
 const MODEL_REPO = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 const MODEL_REVISION = "2bda32ec70b097a55adaa07d9a7173915b43cc78";
@@ -107,29 +110,38 @@ export function sherpaUnsupportedReason(host: Host = currentHost()): string | nu
   return `Parakeet needs glibc 2.32 or newer; this system has glibc ${host.glibc}.`;
 }
 
-export function sherpaRuntimeInstalled(): boolean {
-  return isInstalled(SHERPA_RUNTIME_DIR, RUNTIME);
+const nativePackageName = (platform: string, arch: string) =>
+  `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
+
+/** The runtime and the native binary its loader requires; either can be missing on its own. */
+export function sherpaRuntimeInstalled(dir = SHERPA_RUNTIME_DIR): boolean {
+  const binary = join(dir, "node_modules", nativePackageName(process.platform, process.arch));
+  return isInstalled(dir, RUNTIME) && existsSync(join(binary, "sherpa-onnx.node"));
 }
 
 /** The native package, pinned too: the runtime's own optionalDependencies accept any 1.13.x. */
 export function sherpaPlatformPackage(platform = process.platform, arch = process.arch): string {
-  return `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}@${RUNTIME_VERSION}`;
+  return `${nativePackageName(platform, arch)}@${RUNTIME_VERSION}`;
 }
 
 export function installSherpaRuntime({
   run = runNpm,
   signal,
-}: { run?: typeof runNpm; signal?: AbortSignal } = {}): Promise<void> {
+  dir = SHERPA_RUNTIME_DIR,
+}: { run?: typeof runNpm; signal?: AbortSignal; dir?: string } = {}): Promise<void> {
+  // install() keeps any dir holding the runtime manifest, so a half-installed one goes first.
+  if (!sherpaRuntimeInstalled(dir)) rmSync(dir, { recursive: true, force: true });
   const native = sherpaPlatformPackage();
-  return install(SHERPA_RUNTIME_DIR, RUNTIME, RUNTIME_VERSION, (args) =>
-    run([...args, native], signal),
-  );
+  return install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
 }
 
-/** Sizes only: hashing 650 MB on every transcribe is too slow, and install already verified them. */
+/**
+ * Model sizes only (install verified the hashes). The runtime counts once its manifest is there, even
+ * if broken: transcribe must then fail with the repair, not quietly pick whisper.
+ */
 export function sherpaParakeetInstalled(): boolean {
   return (
-    sherpaRuntimeInstalled() &&
+    isInstalled(SHERPA_RUNTIME_DIR, RUNTIME) &&
     PARAKEET_MODEL_FILES.every(
       (f) =>
         statSync(join(PARAKEET_MODEL_DIR, f.name), { throwIfNoEntry: false })?.size === f.bytes,
@@ -180,7 +192,17 @@ export async function ensureParakeetModel({
       const temp = join(staging, file.name);
       rmSync(dest, { force: true });
       const url = `https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}/${file.name}`;
-      await download(url, temp, { signal, onProgress: (bytes) => onBytes?.(done + bytes, total) });
+      await download(url, temp, {
+        signal,
+        onProgress: (bytes) => onBytes?.(done + bytes, total),
+      }).catch((err: unknown) => {
+        if (signal?.aborted) throw err;
+        const why = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Could not download ${file.name} from huggingface.co (${why}). Check your network and re-run.`,
+          { cause: err },
+        );
+      });
       if (!(await verifies(temp, file))) {
         throw new Error(
           `${file.name} did not match its pinned size and sha256, so it was discarded. Re-run to retry.`,
@@ -217,6 +239,8 @@ function recognizerConfig(): object {
 /** Ctrl-C or a SIGTERM stopped the decode: the user's cancel, never a reason to fall back. */
 export class DecodeCancelled extends Error {}
 
+const MAX_REASON_CHARS = 600;
+
 function failureReason(err: ExecFileException | null, stderr: string): string {
   const how = !err
     ? "exited without a result"
@@ -232,7 +256,8 @@ function failureReason(err: ExecFileException | null, stderr: string): string {
   const why =
     lines.find((line) => line.startsWith(SHERPA_ERROR_PREFIX))?.slice(SHERPA_ERROR_PREFIX.length) ??
     lines.at(-1);
-  return why ? `${how}: ${why}` : how;
+  if (!why) return how;
+  return `${how}: ${why.length > MAX_REASON_CHARS ? `${why.slice(0, MAX_REASON_CHARS)}…` : why}`;
 }
 
 /** Decodes in a child process: onnxruntime aborts the whole process on some inputs, uncatchably. */
@@ -281,20 +306,13 @@ export function prepareSherpaWav(
   }
 }
 
+/** The caller owns the cancellation scope: it must already cover audio preparation. */
 export async function transcribeWithSherpa(
   wavPath: string,
   dir: string,
-  options?: { onProgress?: (message: string) => void },
+  options: { signal: AbortSignal; onProgress?: (message: string) => void },
 ): Promise<TranscribeResult> {
-  const unsupported = sherpaUnsupportedReason();
-  if (unsupported) throw new Error(unsupported);
-  // Aborts on SIGINT/SIGTERM/SIGHUP, which also kills the child if only this process was signalled.
-  const cancellation = createRenderCancellationScope();
-  try {
-    options?.onProgress?.("Transcribing with Parakeet...");
-    const windows = await decode(wavPath, cancellation.signal);
-    return writeParakeetTranscript(dir, mergeWindowsToWords(windows));
-  } finally {
-    cancellation.dispose();
-  }
+  options.onProgress?.("Transcribing with Parakeet...");
+  const windows = await decode(wavPath, options.signal);
+  return writeParakeetTranscript(dir, mergeWindowsToWords(windows));
 }
