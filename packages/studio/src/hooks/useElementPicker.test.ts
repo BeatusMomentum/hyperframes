@@ -20,14 +20,15 @@ afterEach(() => {
 });
 
 // The preview page: the saved markup plus what the runtime adds to it.
-function mountPreview(mounted = ""): HTMLIFrameElement {
+function mountPreview(mounted = "", page = SAVED): HTMLIFrameElement {
   const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument as Document;
   doc.open();
-  doc.write(SAVED);
+  doc.write(page);
   doc.close();
-  (doc.querySelector("h1") as HTMLElement).style.cssText = "visibility: hidden; display: none";
+  const title = doc.querySelector("h1");
+  if (title) title.style.cssText = "visibility: hidden; display: none";
   doc.body.append(Object.assign(doc.createElement("script"), { textContent: "/* runtime */" }));
   doc.body.insertAdjacentHTML("beforeend", mounted);
   return iframe;
@@ -38,8 +39,9 @@ function mountPicker(
   selector = "h1",
   mounted = "",
   hostAppliesWrites = true,
+  preview?: { page: string; id: string },
 ) {
-  const iframe = mountPreview(mounted);
+  const iframe = mountPreview(mounted, preview?.page);
   const synced: Record<string, string>[] = [];
   let api: ReturnType<typeof useElementPicker> | null = null;
   let setHostFiles: (next: Record<string, string>) => void = () => {};
@@ -68,7 +70,7 @@ function mountPicker(
         data: {
           source: "hf-preview",
           type: "element-picked",
-          elementInfo: { selector, tagName: "h1" },
+          elementInfo: { selector, tagName: "h1", id: preview?.id },
           ...runtimeProtocolMetadata(30),
         },
       }),
@@ -168,5 +170,24 @@ describe("an edit to a picked element without an id", () => {
     const { picker, synced } = mountPicker({ "index.html": "<div>other</div>" });
     act(() => picker().setStyle("color", "red"));
     expect(synced).toEqual([]);
+  });
+});
+
+describe("an edit to a picked element whose id another scene shares", () => {
+  it("writes the scene it was picked in, not the first file with that id", () => {
+    const first =
+      '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-first">a</span></div>';
+    const second = '<span id="dupe" data-hf-id="hf-second">b</span>';
+    const page = `<!doctype html><html><body>${first}<div data-composition-id="second" data-composition-src="compositions/second.html">${second}</div></body></html>`;
+    const { picker, synced } = mountPicker(
+      { "index.html": first, "compositions/second.html": second },
+      '[data-composition-id="second"] > #dupe',
+      "",
+      true,
+      { page, id: "dupe" },
+    );
+    act(() => picker().setStyle("color", "red"));
+    expect(Object.keys(synced[0] ?? {})).toEqual(["compositions/second.html"]);
+    expect(synced[0]?.["compositions/second.html"]).toContain('style="color: red"');
   });
 });

@@ -140,15 +140,12 @@ export function useElementPicker(
     (picked: PickedElement, live: HTMLElement, iframe: HTMLIFrameElement, op: PatchOperation) => {
       const opts = optionsRef.current;
       if (!opts?.workspaceFiles || !opts.onSyncFiles) return;
-      // No id: the preview's hf-id names the element, in the file it was served from.
+      // The preview's hf-id names the element in the file it was served from; an id can be shared across scenes.
       const hfId = live.getAttribute("data-hf-id");
       const pending = pendingWritesRef.current;
       const files = withPendingWrites(opts.workspaceFiles, pending);
-      const patch = picked.id
-        ? patchById(files, picked.id, picked.selector, op)
-        : hfId
-          ? patchByHfId(files, hfId, ownSourceFile(live, iframe), op)
-          : null;
+      const byHfId = hfId ? patchByHfId(files, hfId, ownSourceFile(live, iframe), op) : null;
+      const patch = byHfId ?? (picked.id ? patchById(files, picked.id, picked.selector, op) : null);
       if (!patch || patch.after === patch.before) return;
       recordPendingWrite(pending, patch.path, opts.workspaceFiles[patch.path], patch.after);
       opts.onSyncFiles({ [patch.path]: patch.after });
