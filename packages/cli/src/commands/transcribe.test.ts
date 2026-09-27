@@ -267,6 +267,18 @@ describe("transcribe command", () => {
       expect(transcribeMock).not.toHaveBeenCalled();
     });
 
+    it("keeps a long decoder error whole up to a bound", async () => {
+      crashChild(
+        "SIGABRT",
+        `HYPERFRAMES_PARAKEET_ERROR:${"a".repeat(590)} tail ${"b".repeat(2000)}\n`,
+      );
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { out } = await transcribeFails("parakeet");
+      expect(out.error).toContain(`${"a".repeat(590)} tail`);
+      expect(out.error).toContain("b…. To repair it");
+      expect(String(out.error).length).toBeLessThan(800);
+    });
+
     it("reports the Parakeet error, not whisper_unavailable, when the fallback is missing too", async () => {
       crashChild("SIGABRT");
       transcribeMock.mockRejectedValue(new WhisperUnavailableError("whisper-cpp not found"));
