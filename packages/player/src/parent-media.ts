@@ -401,6 +401,20 @@ export class ParentMediaManager {
     }
   }
 
+  // The runtime re-points a clip (its preview copy, a new bound file); its proxy follows.
+  private _followIframeMediaSrc(iframeEl: HTMLMediaElement): void {
+    const entry = this._entries.find((m) => m.source === iframeEl);
+    if (!entry) return this._adoptIframeMedia(iframeEl);
+    const src = this._resolveIframeMediaSrc(iframeEl);
+    if (!src || entry.el.src === src) return;
+    entry.el.src = src;
+    entry.el.load();
+    if (this._audioOwner === "parent") {
+      this.mirrorTime(this._getCurrentTime(), { force: true });
+      if (!this._isPaused()) this._playEntryIfActive(entry);
+    }
+  }
+
   private _detachIframeMedia(iframeEl: HTMLMediaElement): void {
     const src = this._resolveIframeMediaSrc(iframeEl);
     if (!src) return;
@@ -419,6 +433,16 @@ export class ParentMediaManager {
     // fallow-ignore-next-line complexity
     const obs = new MutationObserver((mutations) => {
       for (const m of mutations) {
+        if (m.type === "attributes" && m.attributeName === "src") {
+          const target = m.target;
+          if (
+            isRealmHtmlMediaElement(target) &&
+            target.matches("audio[data-start], video[data-start]")
+          ) {
+            this._followIframeMediaSrc(target);
+          }
+          continue;
+        }
         if (m.type === "attributes" && m.attributeName === "preload") {
           const target = m.target;
           if (
@@ -469,7 +493,7 @@ export class ParentMediaManager {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["preload"],
+      attributeFilter: ["preload", "src"],
     };
 
     const targets = selectMediaObserverTargets(doc);

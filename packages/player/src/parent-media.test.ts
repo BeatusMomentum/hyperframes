@@ -204,6 +204,46 @@ describe("ParentMediaManager across documents", () => {
   });
 });
 
+describe("ParentMediaManager following its clips", () => {
+  afterEach(() => document.body.replaceChildren());
+  const flushObserver = () => new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
+
+  function adoptedClip(mgr: ParentMediaManager, src: string): HTMLVideoElement {
+    const clip = document.createElement("video");
+    clip.setAttribute("src", src);
+    clip.setAttribute("data-start", "0");
+    clip.preload = "auto";
+    document.body.appendChild(clip);
+    mgr.setupFromIframe(document);
+    return clip;
+  }
+
+  it("follows a clip the runtime re-points to its preview copy, instead of the URL it first copied", async () => {
+    const mgr = makeManager();
+    const clip = adoptedClip(mgr, "https://example.test/clip.mov");
+    expect(mgr.entries.map((m) => m.el.src)).toEqual(["https://example.test/clip.mov"]);
+
+    clip.setAttribute("src", "https://example.test/clip.mov?hf-proxy=h264");
+    await flushObserver();
+
+    expect(mgr.entries.map((m) => m.el.src)).toEqual([
+      "https://example.test/clip.mov?hf-proxy=h264",
+    ]);
+  });
+
+  it("drops the proxy of a re-pointed clip when the clip leaves", async () => {
+    const mgr = makeManager();
+    const clip = adoptedClip(mgr, "https://example.test/clip.mov");
+    clip.setAttribute("src", "https://example.test/clip.mov?hf-proxy=h264");
+    await flushObserver();
+
+    clip.remove();
+    await flushObserver();
+
+    expect(mgr.entries).toHaveLength(0);
+  });
+});
+
 describe("ParentMediaManager clip window", () => {
   it("plays a proxy inside its clip window and pauses it at the clip end instant", () => {
     const mgr = makeManager({ isPaused: false, owner: "parent" });

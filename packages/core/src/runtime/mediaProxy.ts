@@ -48,9 +48,9 @@ type ProxyTrigger = "proactive" | "reactive" | "tertiary";
 // still gets its own single diagnostic.
 const unavailableDiagnosedElements = new WeakSet<HTMLMediaElement>();
 
-// Elements whose swap has started. Until the copy is served they keep their original src,
-// so nothing that reads it (timeline, player mirror) loads a copy still being made.
-const proxyRequested = new WeakSet<HTMLMediaElement>();
+// Elements whose swap has started, with the src it started for. Until the copy is served they
+// keep that src, so nothing that reads it (timeline, player mirror) loads a copy still being made.
+const proxyRequested = new WeakMap<HTMLMediaElement, string | null>();
 
 function currentSrcValue(el: HTMLMediaElement): string {
   return el.currentSrc || el.src;
@@ -219,7 +219,8 @@ export function swapToProxy(
   entry: MediaCodecMapEntry | null = null,
   trigger: ProxyTrigger = "reactive",
 ): void {
-  if (swappedElements.has(el) || proxyRequested.has(el)) return;
+  if (swappedElements.has(el)) return;
+  if (proxyRequested.has(el) && proxyRequested.get(el) === el.getAttribute("src")) return;
   const originalSrc = currentSrcValue(el);
   let proxiedSrc: string;
   try {
@@ -229,12 +230,12 @@ export function swapToProxy(
     emitUnavailableDiagnostic(el, "invalid_source_url", originalSrc);
     return;
   }
-  proxyRequested.add(el);
   const originalAttr = el.getAttribute("src");
+  proxyRequested.set(el, originalAttr);
   const live = () => el.isConnected && el.getAttribute("src") === originalAttr;
   void waitForServedProxy(proxiedSrc, live).then((served) => {
     if (!live()) {
-      proxyRequested.delete(el);
+      if (proxyRequested.get(el) === originalAttr) proxyRequested.delete(el);
       return;
     }
     if (!served) {

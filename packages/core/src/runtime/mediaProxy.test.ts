@@ -647,6 +647,28 @@ describe("waiting for the proxy copy", () => {
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
+  it("keeps one wait for a new file even after the dropped wait for the old one wakes", async () => {
+    vi.useFakeTimers();
+    const asks: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (href: string) => {
+        asks.push(new URL(href).pathname);
+        return new Response(null, { status: 202, headers: { "Retry-After": "2" } });
+      }),
+    );
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    await vi.advanceTimersByTimeAsync(0);
+    el.setAttribute("src", "/other.mp4");
+    swapToProxy(el, HEVC_ENTRY, "reactive");
+    await vi.advanceTimersByTimeAsync(2_100);
+    swapToProxy(el, HEVC_ENTRY, "reactive");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(asks.filter((path) => path === "/other.mp4")).toHaveLength(2);
+  });
+
   it("drops a wait whose element was pointed at another file, and can proxy the new one", async () => {
     vi.useFakeTimers();
     const route = stubProxyRoute(202);
@@ -654,13 +676,13 @@ describe("waiting for the proxy copy", () => {
     swapToProxy(el, HEVC_ENTRY, "proactive");
     await vi.advanceTimersByTimeAsync(0);
     el.setAttribute("src", "/other.mp4");
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(route).toHaveBeenCalledTimes(1);
-    expect(el.getAttribute("src")).toBe("/other.mp4");
-
-    stubProxyRoute(206);
+    const newFile = stubProxyRoute(206);
     swapToProxy(el, HEVC_ENTRY, "reactive");
     await vi.advanceTimersByTimeAsync(0);
+    expect(newFile).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(newFile, "the dropped wait asks no more").toHaveBeenCalledTimes(1);
     expect(new URL(el.src).pathname).toBe("/other.mp4");
     expect(isProxied(el)).toBe(true);
   });
