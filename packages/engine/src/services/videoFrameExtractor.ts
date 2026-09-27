@@ -34,6 +34,7 @@ import { isKnownInactiveTimelineWindow } from "./mediaTimelineWindow.js";
 import {
   extractFinalVideoFrameTimestamp,
   extractMediaMetadata,
+  type VideoColorSpace,
   type VideoMetadata,
 } from "../utils/ffprobe.js";
 import {
@@ -775,14 +776,37 @@ export function parseImageElements(html: string): ImageElement[] {
   return images;
 }
 
-/** zscale reads per-frame tags that ffprobe may not see; untagged HDR footage is BT.2020. */
-function hdrFrameColourTags(metadata: VideoMetadata): string {
+/** zscale reads each frame's own tags; set only those the first frame lacks, from ffprobe or BT.2020. */
+function hdrFrameColourTags(metadata: VideoMetadata, frame: Partial<VideoColorSpace>): string[] {
   const known = (value: string | undefined) =>
     value && value !== "unknown" && value !== "reserved" ? value : undefined;
-  const matrix = known(metadata.colorSpace?.colorSpace) ?? "bt2020nc";
-  const primaries = known(metadata.colorSpace?.colorPrimaries) ?? "bt2020";
-  const transfer = metadata.colorSpace?.colorTransfer;
-  return `setparams=colorspace=${matrix}:color_primaries=${primaries}:color_trc=${transfer}`;
+  const probed = metadata.colorSpace;
+  const fill = (key: keyof VideoColorSpace, fallback?: string) =>
+    known(frame[key]) ? undefined : (known(probed?.[key]) ?? fallback);
+  const tags = [
+    ["colorspace", fill("colorSpace", "bt2020nc")],
+    ["color_primaries", fill("colorPrimaries", "bt2020")],
+    ["color_trc", fill("colorTransfer")],
+  ].filter(([, value]) => value);
+  return tags.length
+    ? [`setparams=${tags.map(([key, value]) => `${key}=${value}`).join(":")}`]
+    : [];
+}
+
+/** The first shown frame's tags, read by ffmpeg, which decodes past the edit-list pre-roll ffprobe counts. */
+async function readFirstFrameColour(
+  videoPath: string,
+  signal?: AbortSignal,
+): Promise<Partial<VideoColorSpace>> {
+  const result = await runFfmpeg(
+    [
+      ...["-hide_banner", "-nostats", "-i", videoPath, "-map", "0:v:0", "-frames:v", "1"],
+      ...["-vf", "showinfo", "-f", "null", "-"],
+    ],
+    { signal },
+  );
+  const tags = / color_space:(\S+) color_primaries:(\S+) color_trc:(\S+)/.exec(result.stderr);
+  return tags ? { colorSpace: tags[1], colorPrimaries: tags[2], colorTransfer: tags[3] } : {};
 }
 
 /** Chrome plays untagged VP9 and AV1 as BT.601, H.264 and VP8 as BT.709 from 720 coded lines (assumed for the rest). */
@@ -954,7 +978,8 @@ export async function extractVideoFramesRange(
     vfFilters.push(SDR_TO_HDR_COLORSPACE_FILTER);
   }
   if (toneMappedToSdr) {
-    vfFilters.push(hdrFrameColourTags(metadata), HDR_TO_SDR_TONEMAP_FILTER);
+    const frameColour = await readFirstFrameColour(videoPath, signal);
+    vfFilters.push(...hdrFrameColourTags(metadata, frameColour), HDR_TO_SDR_TONEMAP_FILTER);
   }
   if (toneMappedToSdr || (!isHdr && !options.sdrToHdrTransfer)) {
     vfFilters.push(

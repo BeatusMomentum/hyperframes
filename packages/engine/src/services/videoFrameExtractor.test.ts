@@ -3177,6 +3177,108 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
     60_000,
   );
 
+  // One stream with HLG frames, then PQ frames: each is tone-mapped with its own transfer.
+  it("tone-maps each frame of a mixed HLG and PQ stream with its own transfer", async () => {
+    const segment = async (name: string, transfer: number) => {
+      const path = join(fixtureDir, `mixed-${name}.h264`);
+      const result = await runFfmpeg([
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=160x90:r=25:d=0.2",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-bsf:v",
+        `h264_metadata=colour_primaries=9:transfer_characteristics=${transfer}:matrix_coefficients=9`,
+        "-f",
+        "h264",
+        path,
+      ]);
+      if (!result.success)
+        throw new Error(`segment synthesis failed: ${result.stderr.slice(-400)}`);
+      return readFileSync(path);
+    };
+    const mux = async (name: string, stream: Buffer) => {
+      const raw = join(fixtureDir, `${name}.h264`);
+      const path = join(fixtureDir, `${name}.mp4`);
+      writeFileSync(raw, stream);
+      const result = await runFfmpeg([
+        ...["-y", "-v", "error", "-fflags", "+genpts", "-r", "25", "-f", "h264", "-i", raw],
+        ...["-c", "copy", path],
+      ]);
+      if (!result.success) throw new Error(`mux failed: ${result.stderr.slice(-400)}`);
+      return path;
+    };
+    const hlg = await segment("hlg", 18);
+    const pq = await segment("pq", 16);
+    const mixed = await mux("mixed-hlg-pq", Buffer.concat([hlg, pq]));
+    const pqOnly = await mux("mixed-pq-only", pq);
+    const extract = (source: string, id: string, duration: number) =>
+      extractVideoFramesRange(source, id, 0, duration, {
+        fps: 25,
+        outputDir: join(fixtureDir, `out-${id}`),
+        format: "png",
+        toneMapHdrToSdr: true,
+      });
+
+    const mixedFrames = await extract(mixed, "mixed-hlg-pq", 0.4);
+    const pqFrames = await extract(pqOnly, "mixed-pq-only", 0.2);
+
+    expect(readFileSync(mixedFrames.framePaths.get(5)!)).toEqual(
+      readFileSync(pqFrames.framePaths.get(0)!),
+    );
+  }, 60_000);
+
+  // A stream-copy trim opens on edit-list pre-roll, which ffprobe counts as packets without frames.
+  it("keeps per-frame tags in a mixed HLG and PQ file trimmed with a stream copy", async () => {
+    const run = async (args: string[]) => {
+      const result = await runFfmpeg(["-y", "-v", "error", ...args]);
+      if (!result.success) throw new Error(`fixture failed: ${result.stderr.slice(-400)}`);
+    };
+    const segment = async (name: string, transfer: number) => {
+      const path = join(fixtureDir, `trim-${name}.h264`);
+      await run([
+        ...["-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-c:v", "libx264", "-g", "50"],
+        ...["-pix_fmt", "yuv420p", "-bsf:v"],
+        `h264_metadata=colour_primaries=9:transfer_characteristics=${transfer}:matrix_coefficients=9`,
+        ...["-f", "h264", path],
+      ]);
+      return readFileSync(path);
+    };
+    const mux = async (name: string, stream: Buffer) => {
+      const raw = join(fixtureDir, `${name}.h264`);
+      const path = join(fixtureDir, `${name}.mp4`);
+      writeFileSync(raw, stream);
+      await run(["-fflags", "+genpts", "-r", "25", "-f", "h264", "-i", raw, "-c", "copy", path]);
+      return path;
+    };
+    const pq = await segment("pq", 16);
+    const mixed = await mux("trim-hlg-then-pq", Buffer.concat([await segment("hlg", 18), pq]));
+    const pqOnly = await mux("trim-pq-only", pq);
+    const trimmed = join(fixtureDir, "trim-from-hlg.mp4");
+    await run(["-ss", "1", "-i", mixed, "-c", "copy", trimmed]);
+    const extract = (source: string, id: string, start: number) =>
+      extractVideoFramesRange(source, id, start, 0.04, {
+        fps: 25,
+        outputDir: join(fixtureDir, `out-${id}`),
+        format: "png",
+        toneMapHdrToSdr: true,
+      });
+
+    // Trimmed 1.6 s is the mixed file's 2.6 s: the PQ segment's 0.6 s.
+    const fromTrim = await extract(trimmed, "trim-from-hlg", 1.6);
+    const fromPq = await extract(pqOnly, "trim-pq-only", 0.6);
+
+    const shown = readFirstFramePixel(fromTrim.framePaths.get(0)!, 40, 40);
+    const expected = readFirstFramePixel(fromPq.framePaths.get(0)!, 40, 40);
+    expect(Math.max(...shown.map((v, i) => Math.abs(v - expected[i]!)))).toBeLessThanOrEqual(2);
+  }, 60_000);
+
   it("matches Studio's HLG tone map and isolates transformed cache entries", async () => {
     const source = join(fixtureDir, "hlg-warm.mp4");
     await synthesizeHlgClip(source);
