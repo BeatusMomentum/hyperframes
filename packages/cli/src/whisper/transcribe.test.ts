@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import {
   dtwPresetForModel,
   initialModelForLanguage,
+  isPcm16kMono,
   isWhisperTimeoutError,
   resolveAudioPreparationTimeoutMs,
   resolveWhisperTimeoutMs,
@@ -262,5 +263,15 @@ describe("initialModelForLanguage", () => {
 
   test("keeps an already multilingual model unchanged", () => {
     expect(initialModelForLanguage("large-v3", "de")).toBe("large-v3");
+  });
+});
+
+describe("isPcm16kMono", () => {
+  it("passes only 16-bit PCM through; 24-bit and float WAV go through ffmpeg", () => {
+    const wav = (codec_name: string) => ({ codec_name, sample_rate: "16000", channels: 1 });
+    expect(isPcm16kMono(wav("pcm_s16le"))).toBe(true);
+    expect(isPcm16kMono(wav("pcm_s24le"))).toBe(false);
+    expect(isPcm16kMono(wav("pcm_f32le"))).toBe(false);
+    expect(isPcm16kMono({ ...wav("pcm_s16le"), sample_rate: "24000" })).toBe(false);
   });
 });

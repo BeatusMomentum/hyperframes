@@ -183,7 +183,7 @@ function getMediaDurationSeconds(filePath: string): number | null {
   }
 }
 
-function getPreparedWavDurationSeconds(wavPath: string): number | null {
+export function getPreparedWavDurationSeconds(wavPath: string): number | null {
   try {
     const dataChunk = findWavDataChunk(readFileSync(wavPath));
     if (!dataChunk) return null;
@@ -321,6 +321,20 @@ function extractAudio(videoPath: string): string {
   return wavPath;
 }
 
+interface AudioStream {
+  codec_type?: string;
+  codec_name?: string;
+  sample_rate?: string;
+  channels?: number;
+}
+
+/** 16-bit PCM only: sherpa-onnx cannot read 24-bit WAV, so anything else goes through ffmpeg. */
+export function isPcm16kMono(stream: AudioStream | undefined): boolean {
+  return (
+    stream?.codec_name === "pcm_s16le" && stream.sample_rate === "16000" && stream.channels === 1
+  );
+}
+
 /**
  * Check if a WAV file is already 16kHz mono via ffprobe.
  */
@@ -333,15 +347,8 @@ function isWav16kMono(filePath: string): boolean {
       ["-v", "quiet", "-print_format", "json", "-show_streams", "--", filePath],
       { encoding: "utf-8", timeout: 10_000 },
     );
-    const parsed: {
-      streams?: {
-        codec_type?: string;
-        sample_rate?: string;
-        channels?: number;
-      }[];
-    } = JSON.parse(raw);
-    const audio = parsed.streams?.find((s) => s.codec_type === "audio");
-    return audio?.sample_rate === "16000" && audio?.channels === 1;
+    const parsed: { streams?: AudioStream[] } = JSON.parse(raw);
+    return isPcm16kMono(parsed.streams?.find((s) => s.codec_type === "audio"));
   } catch {
     return false;
   }

@@ -136,9 +136,9 @@ export function loadBesideCli(name: OptionalPackage, cliUrl = import.meta.url): 
   return pinnedCopyBesideCli(name, cliUrl) ? createRequire(cliUrl)(name) : null;
 }
 
-export function runNpm(args: string[]): Promise<void> {
+export function runNpm(args: string[], signal?: AbortSignal): Promise<void> {
   const npm = buildNpmCommand(args);
-  const child = spawn(npm.command, npm.args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(npm.command, npm.args, { stdio: ["ignore", "pipe", "pipe"], signal });
   return new Promise((resolve, reject) => {
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
@@ -160,7 +160,7 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /** Removes staging dirs whose owning pid is dead (crash or kill mid-install); never a live one. */
-function sweepStaleStaging(dir: string): void {
+export function sweepStaleStaging(dir: string): void {
   const prefix = `${basename(dir)}.tmp-`;
   const parent = dirname(dir);
   if (!existsSync(parent)) return;

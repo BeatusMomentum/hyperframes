@@ -1,11 +1,18 @@
 import { execFile, type ExecFileException } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createReadStream, renameSync, rmSync, statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadToFile } from "../cloud/download.js";
-import { CACHE_DIR, install, isInstalled, runNpm } from "../utils/optionalPackages.js";
+import {
+  CACHE_DIR,
+  install,
+  isInstalled,
+  runNpm,
+  sweepStaleStaging,
+} from "../utils/optionalPackages.js";
+import { createRenderCancellationScope } from "../utils/renderCancellation.js";
 import {
   mergeWindowsToWords,
   SHERPA_ERROR_PREFIX,
@@ -13,7 +20,7 @@ import {
   writeParakeetTranscript,
   type SherpaWindow,
 } from "./parakeet.js";
-import { prepareWav, type TranscribeResult } from "./transcribe.js";
+import { getPreparedWavDurationSeconds, prepareWav, type TranscribeResult } from "./transcribe.js";
 
 const RUNTIME = "sherpa-onnx-node";
 const RUNTIME_VERSION = "1.13.8";
@@ -59,19 +66,45 @@ const PARAKEET_MODEL_FILES: readonly ModelFile[] = [
   },
 ];
 
-const DECODE_TIMEOUT_MS = 1_800_000;
+/** At least 30 minutes, and twice the audio length for slow CPUs. */
+const decodeTimeoutMs = (audioSeconds: number) => Math.max(1_800_000, audioSeconds * 2000);
 
-type ProcessReport = { header?: { glibcVersionRuntime?: string } };
+/** The platforms sherpa-onnx-node publishes a native package for. */
+const SUPPORTED_TARGETS = [
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-x64",
+  "linux-arm64",
+  "win32-x64",
+  "win32-ia32",
+];
 
-/** Why sherpa-onnx cannot run here, or null. Its Linux prebuilt needs glibc 2.32. */
-export function sherpaUnsupportedReason(
-  report = process.report.getReport() as ProcessReport,
-): string | null {
-  const glibc = report.header?.glibcVersionRuntime;
-  if (!glibc) return null;
-  const [major = 0, minor = 0] = glibc.split(".").map(Number);
+interface Host {
+  platform: string;
+  arch: string;
+  glibc?: string;
+}
+
+function currentHost(): Host {
+  const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    glibc: report.header?.glibcVersionRuntime,
+  };
+}
+
+/** Why sherpa-onnx cannot run here, or null. Its Linux prebuilt needs glibc 2.32 (so no musl). */
+export function sherpaUnsupportedReason(host: Host = currentHost()): string | null {
+  const target = `${host.platform}-${host.arch}`;
+  if (!SUPPORTED_TARGETS.includes(target)) {
+    return `Parakeet runs on ${SUPPORTED_TARGETS.join(", ")}; this system is ${target}.`;
+  }
+  if (host.platform !== "linux") return null;
+  if (!host.glibc) return "Parakeet needs glibc 2.32 or newer; this Linux has no glibc (musl?).";
+  const [major = 0, minor = 0] = host.glibc.split(".").map(Number);
   if (major > 2 || (major === 2 && minor >= 32)) return null;
-  return `Parakeet needs glibc 2.32 or newer; this system has glibc ${glibc}.`;
+  return `Parakeet needs glibc 2.32 or newer; this system has glibc ${host.glibc}.`;
 }
 
 export function sherpaRuntimeInstalled(): boolean {
@@ -83,9 +116,14 @@ export function sherpaPlatformPackage(platform = process.platform, arch = proces
   return `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}@${RUNTIME_VERSION}`;
 }
 
-export function installSherpaRuntime(run = runNpm): Promise<void> {
+export function installSherpaRuntime({
+  run = runNpm,
+  signal,
+}: { run?: typeof runNpm; signal?: AbortSignal } = {}): Promise<void> {
   const native = sherpaPlatformPackage();
-  return install(SHERPA_RUNTIME_DIR, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native]));
+  return install(SHERPA_RUNTIME_DIR, RUNTIME, RUNTIME_VERSION, (args) =>
+    run([...args, native], signal),
+  );
 }
 
 /** Sizes only: hashing 650 MB on every transcribe is too slow, and install already verified them. */
@@ -115,39 +153,46 @@ interface EnsureModelOptions {
   files?: readonly ModelFile[];
   download?: typeof downloadToFile;
   onBytes?: (done: number, total: number) => void;
+  signal?: AbortSignal;
 }
 
 /**
- * Fetches every file that does not verify under a temp name, checks size and sha256, then renames
- * it into place, so a file under its real name is always complete. False when all already verified.
+ * Fetches every file that does not verify into a sibling staging dir, checks size and sha256, then
+ * renames it into place, so a file under its real name is always complete. The staging dir carries
+ * the pid, so a killed install is swept by the next one. False when all already verified.
  */
 export async function ensureParakeetModel({
   dir = PARAKEET_MODEL_DIR,
   files = PARAKEET_MODEL_FILES,
   download = downloadToFile,
   onBytes,
+  signal,
 }: EnsureModelOptions = {}): Promise<boolean> {
+  sweepStaleStaging(dir);
   const missing: ModelFile[] = [];
   for (const file of files) if (!(await verifies(join(dir, file.name), file))) missing.push(file);
   const total = missing.reduce((sum, f) => sum + f.bytes, 0);
+  const staging = `${dir}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`;
   let done = 0;
-  for (const file of missing) {
-    const dest = join(dir, file.name);
-    const temp = `${dest}.${process.pid}.download`;
-    rmSync(dest, { force: true });
-    try {
+  try {
+    for (const file of missing) {
+      signal?.throwIfAborted();
+      const dest = join(dir, file.name);
+      const temp = join(staging, file.name);
+      rmSync(dest, { force: true });
       const url = `https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}/${file.name}`;
-      await download(url, temp, { onProgress: (bytes) => onBytes?.(done + bytes, total) });
+      await download(url, temp, { signal, onProgress: (bytes) => onBytes?.(done + bytes, total) });
       if (!(await verifies(temp, file))) {
         throw new Error(
           `${file.name} did not match its pinned size and sha256, so it was discarded. Re-run to retry.`,
         );
       }
+      mkdirSync(dir, { recursive: true });
       renameSync(temp, dest);
-    } finally {
-      rmSync(temp, { force: true });
+      done += file.bytes;
     }
-    done += file.bytes;
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
   }
   return missing.length > 0;
 }
@@ -170,11 +215,14 @@ function recognizerConfig(): object {
   };
 }
 
+/** Ctrl-C or a SIGTERM stopped the decode: the user's cancel, never a reason to fall back. */
+export class DecodeCancelled extends Error {}
+
 function failureReason(err: ExecFileException | null, stderr: string): string {
   const how = !err
     ? "exited without a result"
     : err.killed
-      ? "timed out"
+      ? "was stopped (timeout or output limit)"
       : err.signal
         ? `crashed (${err.signal})`
         : `exited with code ${err.code}`;
@@ -189,7 +237,7 @@ function failureReason(err: ExecFileException | null, stderr: string): string {
 }
 
 /** Decodes in a child process: onnxruntime aborts the whole process on some inputs, uncatchably. */
-function decode(wavPath: string): Promise<SherpaWindow[]> {
+function decode(wavPath: string, signal: AbortSignal): Promise<SherpaWindow[]> {
   const sourceMode = import.meta.url.endsWith(".ts");
   const worker = new URL(sourceMode ? "./sherpaWorker.ts" : "./sherpaWorker.js", import.meta.url);
   const args = [...(sourceMode ? ["--import", "tsx"] : []), fileURLToPath(worker)];
@@ -201,9 +249,16 @@ function decode(wavPath: string): Promise<SherpaWindow[]> {
       {
         env: { ...process.env, HYPERFRAMES_PARAKEET_INPUT: JSON.stringify(input) },
         maxBuffer: 256 * 1024 * 1024,
-        timeout: DECODE_TIMEOUT_MS,
+        timeout: decodeTimeoutMs(getPreparedWavDurationSeconds(wavPath) ?? 0),
+        signal,
       },
       (err, stdout, stderr) => {
+        const interrupted =
+          err && !err.killed && (err.signal === "SIGINT" || err.signal === "SIGTERM");
+        if (signal.aborted || interrupted) {
+          reject(new DecodeCancelled("Transcription cancelled"));
+          return;
+        }
         const line = stdout.split("\n").find((l) => l.startsWith(SHERPA_RESULT_PREFIX));
         if (!err && line) resolve(JSON.parse(line.slice(SHERPA_RESULT_PREFIX.length)));
         else reject(new Error(`Parakeet decoder ${failureReason(err, stderr)}`));
@@ -220,10 +275,14 @@ export async function transcribeWithSherpa(
   const unsupported = sherpaUnsupportedReason();
   if (unsupported) throw new Error(unsupported);
   const wavPath = prepareWav(inputPath, options?.onProgress);
+  // Aborts on SIGINT/SIGTERM/SIGHUP, which also kills the child if only this process was signalled.
+  const cancellation = createRenderCancellationScope();
   try {
     options?.onProgress?.("Transcribing with Parakeet...");
-    return writeParakeetTranscript(dir, mergeWindowsToWords(await decode(wavPath)));
+    const windows = await decode(wavPath, cancellation.signal);
+    return writeParakeetTranscript(dir, mergeWindowsToWords(windows));
   } finally {
+    cancellation.dispose();
     if (wavPath !== inputPath) rmSync(wavPath, { force: true });
   }
 }

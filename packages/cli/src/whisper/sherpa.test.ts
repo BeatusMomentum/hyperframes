@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DownloadOptions } from "../cloud/download.js";
 import {
@@ -22,7 +22,9 @@ const file = (name: string, content: string): ModelFile => ({
 function fakeDownload(served: Record<string, string>) {
   return vi.fn(async (url: string, dest: string, opts?: DownloadOptions) => {
     const content = served[url.split("/").at(-1)!]!;
+    mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, content);
+    opts?.signal?.throwIfAborted();
     opts?.onProgress?.(Buffer.byteLength(content), undefined);
     return { path: dest, bytes: Buffer.byteLength(content) };
   });
@@ -43,7 +45,7 @@ describe("installSherpaRuntime", () => {
     const run = vi.fn(async (_args: string[]) => {
       throw new Error("stop before touching the cache");
     });
-    await installSherpaRuntime(run).catch(() => undefined);
+    await installSherpaRuntime({ run }).catch(() => undefined);
     const args = run.mock.calls[0]?.[0] as string[] | undefined;
     expect(args).toContain("sherpa-onnx-node@1.13.8");
     expect(args).toContain(sherpaPlatformPackage());
@@ -54,6 +56,8 @@ describe("ensureParakeetModel", () => {
   let dir: string;
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
   const tempDir = () => (dir = mkdtempSync(join(tmpdir(), "hf-parakeet-model-")));
+  const stagingLeft = () =>
+    readdirSync(dirname(dir)).filter((name) => name.startsWith(`${basename(dir)}.tmp-`));
 
   it("refuses a file whose sha256 does not match and leaves nothing under its name", async () => {
     tempDir();
@@ -62,6 +66,39 @@ describe("ensureParakeetModel", () => {
 
     await expect(ensureParakeetModel({ dir, files, download })).rejects.toThrow(/sha256/);
     expect(readdirSync(dir)).toEqual([]);
+    expect(stagingLeft()).toEqual([]);
+  });
+
+  it("stops at the next file on cancel, keeping only files that verified", async () => {
+    tempDir();
+    const files = [file("encoder.onnx", "enc"), file("tokens.txt", "tok")];
+    const cancel = new AbortController();
+    const download = fakeDownload({ "encoder.onnx": "enc", "tokens.txt": "tok" });
+    download.mockImplementationOnce(async (_url, dest) => {
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, "enc");
+      cancel.abort();
+      return { path: dest, bytes: 3 };
+    });
+
+    await expect(
+      ensureParakeetModel({ dir, files, download, signal: cancel.signal }),
+    ).rejects.toThrow(/abort/i);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(download.mock.calls[0]?.[2]?.signal).toBe(cancel.signal);
+    expect(readdirSync(dir)).toEqual(["encoder.onnx"]);
+    expect(stagingLeft()).toEqual([]);
+  });
+
+  it("sweeps the staging dir a killed install left behind", async () => {
+    tempDir();
+    const stale = `${dir}.tmp-999999999-dead`;
+    mkdirSync(stale);
+    writeFileSync(join(stale, "encoder.onnx"), "half");
+    const files = [file("tokens.txt", "tok")];
+
+    await ensureParakeetModel({ dir, files, download: fakeDownload({ "tokens.txt": "tok" }) });
+    expect(existsSync(stale)).toBe(false);
   });
 
   it("fetches only what is missing or corrupt, then is a no-op", async () => {
@@ -93,11 +130,23 @@ describe("ensureParakeetModel", () => {
 });
 
 describe("sherpaUnsupportedReason", () => {
-  it("refuses glibc older than 2.32 and accepts newer or non-glibc systems", () => {
-    const glibc = (version?: string) => ({ header: { glibcVersionRuntime: version } });
-    expect(sherpaUnsupportedReason(glibc("2.31"))).toMatch(/glibc 2\.32/);
-    expect(sherpaUnsupportedReason(glibc("2.32"))).toBeNull();
-    expect(sherpaUnsupportedReason(glibc("2.36"))).toBeNull();
-    expect(sherpaUnsupportedReason(glibc())).toBeNull();
+  const linux = (glibc?: string) => ({ platform: "linux", arch: "x64", glibc });
+
+  it("refuses Linux without glibc 2.32 and accepts newer glibc", () => {
+    expect(sherpaUnsupportedReason(linux("2.31"))).toMatch(/glibc 2\.32.*2\.31/);
+    expect(sherpaUnsupportedReason(linux())).toMatch(/musl/);
+    expect(sherpaUnsupportedReason(linux("2.32"))).toBeNull();
+    expect(sherpaUnsupportedReason(linux("2.36"))).toBeNull();
+  });
+
+  it("refuses targets with no native package, naming the ones that have one", () => {
+    expect(sherpaUnsupportedReason({ platform: "darwin", arch: "arm64" })).toBeNull();
+    expect(sherpaUnsupportedReason({ platform: "win32", arch: "x64" })).toBeNull();
+    expect(sherpaUnsupportedReason({ platform: "win32", arch: "arm64" })).toMatch(
+      /darwin-arm64.*win32-ia32; this system is win32-arm64/,
+    );
+    expect(sherpaUnsupportedReason({ platform: "linux", arch: "arm", glibc: "2.36" })).toMatch(
+      /this system is linux-arm/,
+    );
   });
 });
