@@ -53,7 +53,7 @@ export function projectIdForWatchedFile(dataDir: string, filePath: string): stri
   }
   for (const id of entries) {
     try {
-      if (isPathWithin(realpathSync.native(join(dataDir, id)), filePath)) return id;
+      if (isPathWithin(realpathSync(join(dataDir, id)), filePath)) return id;
     } catch {
       // A broken symlink owns no files.
     }
