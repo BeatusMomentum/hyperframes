@@ -33,11 +33,8 @@ export function isPsnrFilterAvailable(): Promise<boolean> {
 export async function isFfmpegFilterAvailable(name: string): Promise<boolean> {
   if (cachedFilterList === null) cachedFilterList = listFilters();
   const stdout = await cachedFilterList;
-  // ffmpeg's `-filters` output lists one filter per line, e.g.
-  //   " T.. psnr             VV->V      Calculate the PSNR between two video streams."
-  // A whole-word match keeps `multi-psnr` (hypothetical) from masquerading
-  // as the real filter, and dodges the banner text that mentions PSNR in
-  // prose on some builds.
+  // `-filters` lists one filter per line; a whole-word match ignores longer names
+  // and banner prose that mentions the filter.
   return stdout !== null && new RegExp(`(^|\\s)${name}(\\s|$)`, "m").test(stdout);
 }
 
