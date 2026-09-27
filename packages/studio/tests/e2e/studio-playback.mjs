@@ -13,6 +13,7 @@ const BASE_URL = process.env.STUDIO_BASE_URL;
 const ROUNDS = Number(process.env.STUDIO_PLAYBACK_ROUNDS || 3);
 const PLAY_MS = 4_000;
 const MAX_CPU_RATIO = 1.15;
+const LAYER_READ_TIME_S = 5;
 // A catalog the size of the real registry, served by this script so the counts never follow it.
 const CATALOG_SIZE = 400;
 const CATEGORIES = ["transitions", "vfx", "social", "data", "scenes", "captions", "effects"];
@@ -189,8 +190,21 @@ async function measure(url) {
       };
     });
     const trace = JSON.parse(Buffer.from(await page.tracing.stop()).toString("utf8"));
-    // Layers are read paused: while playing, the film's own layers come and go with its tweens.
+    // The film's own layers come and go with its tweens, so layers are read paused at one film time.
     await page.click('button[aria-label="Pause"]');
+    await page.evaluate(
+      (t) => document.querySelector("hyperframes-player").seek(t),
+      LAYER_READ_TIME_S,
+    );
+    await page.waitForFunction(
+      (t) => {
+        const player = document.querySelector("hyperframes-player");
+        const time = player.shadowRoot.querySelector("iframe").contentWindow.__player?.getTime?.();
+        return Math.abs(time - t) < 0.01;
+      },
+      { timeout: 10_000 },
+      LAYER_READ_TIME_S,
+    );
     await new Promise((resolve) => setTimeout(resolve, 500));
     const cdp = await page.createCDPSession();
     const layers = new Promise((resolve) =>
