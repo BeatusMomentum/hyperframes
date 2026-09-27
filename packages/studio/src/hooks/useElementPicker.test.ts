@@ -190,4 +190,14 @@ describe("an edit to a picked element whose id another scene shares", () => {
     expect(Object.keys(synced[0] ?? {})).toEqual(["compositions/second.html"]);
     expect(synced[0]?.["compositions/second.html"]).toContain('style="color: red"');
   });
+
+  it("still saves an element that has an id but no hf-id, by its id", () => {
+    const saved = '<div data-composition-id="main"><span id="solo">a</span></div>';
+    const { picker, synced } = mountPicker({ "index.html": saved }, "#solo", "", true, {
+      page: `<!doctype html><html><body>${saved}</body></html>`,
+      id: "solo",
+    });
+    act(() => picker().setStyle("color", "red"));
+    expect(synced[0]?.["index.html"]).toContain('style="color: red"');
+  });
 });

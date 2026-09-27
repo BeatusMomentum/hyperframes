@@ -140,7 +140,7 @@ export function useElementPicker(
     (picked: PickedElement, live: HTMLElement, iframe: HTMLIFrameElement, op: PatchOperation) => {
       const opts = optionsRef.current;
       if (!opts?.workspaceFiles || !opts.onSyncFiles) return;
-      // The preview's hf-id names the element in the file it was served from; an id can be shared across scenes.
+      // The hf-id names the element in the file it was served from; an id can repeat across scenes.
       const hfId = live.getAttribute("data-hf-id");
       const pending = pendingWritesRef.current;
       const files = withPendingWrites(opts.workspaceFiles, pending);
