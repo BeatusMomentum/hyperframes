@@ -60,43 +60,57 @@ test(
   },
 );
 
+// Runs the script against a stub CLI that redraws a spinner on stderr, then runs `tail` and exits 1.
+function failedRunError(tail) {
+  const root = mkdtempSync(join(tmpdir(), "media-use-transcribe-"));
+  try {
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "npx"),
+      `#!/bin/sh\ni=0\nwhile [ $i -lt 3000 ]; do printf '\\033[1G\\033[J◒  Checking whisper...\\n' >&2; i=$((i+1)); done\n` +
+        `${tail}\nexit 1\n`,
+    );
+    chmodSync(join(bin, "npx"), 0o755);
+    const input = join(root, "in.wav");
+    writeFileSync(input, "");
+    const script = fileURLToPath(new URL("./transcribe.mjs", import.meta.url));
+    const res = spawnSync(process.execPath, [script, "--input", input, "--engine", "whisper", "--json"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        HYPERFRAMES_MEDIA_HOME: join(root, "home"),
+        HYPERFRAMES_NO_TELEMETRY: "1",
+      },
+    });
+    return JSON.parse(res.stdout.trim()).error;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 test(
   "a failed whisper run reports the CLI's last lines, not every spinner redraw",
   { skip: process.platform === "win32" },
   () => {
-    const root = mkdtempSync(join(tmpdir(), "media-use-transcribe-"));
-    try {
-      const bin = join(root, "bin");
-      mkdirSync(bin);
-      writeFileSync(
-        join(bin, "npx"),
-        `#!/bin/sh\ni=0\nwhile [ $i -lt 3000 ]; do printf '\\033[1G\\033[J◒  Checking whisper...\\n' >&2; i=$((i+1)); done\n` +
-          `echo "◇  Captions skipped — run: hyperframes models install parakeet" >&2\nexit 1\n`,
-      );
-      chmodSync(join(bin, "npx"), 0o755);
-      const input = join(root, "in.wav");
-      writeFileSync(input, "");
-      const script = fileURLToPath(new URL("./transcribe.mjs", import.meta.url));
-      const res = spawnSync(
-        process.execPath,
-        [script, "--input", input, "--engine", "whisper", "--json"],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PATH: `${bin}:${process.env.PATH}`,
-            HYPERFRAMES_MEDIA_HOME: join(root, "home"),
-            HYPERFRAMES_NO_TELEMETRY: "1",
-          },
-        },
-      );
-      const { error } = JSON.parse(res.stdout.trim());
-      assert.match(error, /hyperframes models install parakeet/);
-      assert.ok(error.length < 1000, `error is ${error.length} chars`);
-      assert.ok(!error.includes("\u001b"), `terminal codes left in: ${JSON.stringify(error)}`);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const error = failedRunError(
+      `echo "◇  Captions skipped — run: hyperframes models install parakeet" >&2`,
+    );
+    assert.match(error, /hyperframes models install parakeet/);
+    assert.ok(error.length < 1000, `error is ${error.length} chars`);
+    assert.ok(!error.includes("\u001b"), `terminal codes left in: ${JSON.stringify(error)}`);
+  },
+);
+
+test(
+  "a failed run reports the reason the CLI's --json line gives on stdout",
+  { skip: process.platform === "win32" },
+  () => {
+    const error = failedRunError(
+      `echo '{"ok":false,"skipped":true,"reason":"whisper_unavailable","error":"whisper-cpp not found; install it by hand"}'`,
+    );
+    assert.match(error, /whisper-cpp not found; install it by hand/);
   },
 );
 
