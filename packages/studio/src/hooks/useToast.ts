@@ -18,8 +18,13 @@ let nextToastId = 1;
  * Stacked toasts (max 3). Info toasts auto-dismiss after 4s; error toasts and toasts
  * with an action persist until dismissed so failures and offers can't silently vanish.
  */
-export function useToast() {
+export function useToast(projectId?: string | null) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [offersFor, setOffersFor] = useState(projectId);
+  if (offersFor !== projectId) {
+    setOffersFor(projectId);
+    setToasts((prev) => prev.filter((toast) => !toast.action));
+  }
   const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const clearTimer = useCallback((id: number) => {
@@ -53,7 +58,8 @@ export function useToast() {
     (message: string, tone: AppToast["tone"] = "error", action?: ToastAction) => {
       const id = nextToastId++;
       setToasts((prev) => {
-        const next = [...prev, { id, message, tone, action }];
+        const withoutRepeat = prev.filter((toast) => !(toast.action && toast.message === message));
+        const next = [...withoutRepeat, { id, message, tone, action }];
         // Cap the stack; drop the oldest (and its pending timer).
         while (next.length > MAX_TOASTS) {
           const dropped = next.shift();

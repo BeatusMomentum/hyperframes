@@ -97,7 +97,7 @@ export function StudioApp({ readOnlyPreview = false, readOnlyPreviewReason }: St
     timelineDuration,
     timelineElements,
   );
-  const { toasts, showToast, dismissToast } = useToast();
+  const { toasts, showToast, dismissToast } = useToast(projectId);
   const panelLayout = usePanelLayout({
     rightCollapsed: initialUrlStateRef.current.rightCollapsed,
     rightPanelTab: initialUrlStateRef.current.rightPanelTab,

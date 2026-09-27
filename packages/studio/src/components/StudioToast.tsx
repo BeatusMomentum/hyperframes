@@ -40,6 +40,7 @@ export function StudioToast({ message, tone, leaving, action, onDismiss }: Studi
         {action && (
           <button
             type="button"
+            disabled={leaving}
             onClick={action.run}
             className="shrink-0 rounded-md px-2 py-1 font-medium text-neutral-100 transition-colors hover:bg-white/10"
           >
