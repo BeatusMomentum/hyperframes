@@ -1,12 +1,21 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   createProjectSignature,
   fileContentVersion,
   HistoryBusyError,
+  HistoryClosedError,
 } from "@hyperframes/studio-server";
 import { loadHyperframeRuntimeSource } from "@hyperframes/core";
 import { loadRuntimeSource } from "./runtimeSource.js";
@@ -156,16 +165,38 @@ describe("createStudioServer project history (D-491)", () => {
     await server.shutdown();
   });
 
-  it("tries a history another process was holding again on the next request, instead of turning it off", async () => {
-    historyState.open = async () => {
-      historyState.open = null;
-      throw new HistoryBusyError(1);
-    };
+  it.each([
+    ["another process was holding", new HistoryBusyError(1)],
+    ["whose folder changed while it opened", new HistoryClosedError("now another project")],
+  ])(
+    "tries a history %s again on the next request, instead of turning it off",
+    async (_, refusal) => {
+      historyState.open = async () => {
+        historyState.open = null;
+        throw refusal;
+      };
+      const projectDir = tmpProject();
+      server = createStudioServer({ projectDir, historyRoot: tmpProject() });
+      const historyUrl = `/api/projects/${encodeURIComponent(basename(projectDir))}/history`;
+      expect((await server.app.request(historyUrl)).status).toBe(404);
+      expect((await server.app.request(historyUrl)).status).toBe(200);
+      await server.shutdown();
+    },
+  );
+
+  it("opens a new project's own history once it takes the folder's path", async () => {
     const projectDir = tmpProject();
+    writeFileSync(join(projectDir, "index.html"), "<html>before</html>");
     server = createStudioServer({ projectDir, historyRoot: tmpProject() });
     const historyUrl = `/api/projects/${encodeURIComponent(basename(projectDir))}/history`;
-    expect((await server.app.request(historyUrl)).status).toBe(404);
     expect((await server.app.request(historyUrl)).status).toBe(200);
+    renameSync(projectDir, `${projectDir}-moved`);
+    dirs.push(`${projectDir}-moved`);
+    mkdirSync(projectDir);
+    writeFileSync(join(projectDir, "index.html"), "<html>new</html>");
+
+    expect((await server.app.request(historyUrl)).status).toBe(200);
+    expect(existsSync(join(projectDir, ".hyperframes", "history-id"))).toBe(true);
     await server.shutdown();
   });
 
@@ -639,6 +670,27 @@ describe("Studio file-change SSE", () => {
   /** The version as it appears inside the JSON-encoded SSE data line. */
   const encodedVersion = (content: string): string =>
     fileContentVersion(content).replaceAll('"', '\\"');
+
+  it("does not deliver report or temporary-file changes, but delivers the final source save", async () => {
+    const projectDir = tmpProject();
+    writeFileSync(join(projectDir, "index.html"), "<html>before</html>");
+    writeFileSync(
+      join(projectDir, "hyperframes.json"),
+      JSON.stringify({ preview: { watchIgnore: ["docs"] } }),
+    );
+    server = createStudioServer({ projectDir });
+    const streams = await subscribe(2);
+    mockWatcher.emit("change", "change", "docs/report.json");
+    mockWatcher.emit("change", "rename", "index.html.tmp.97896.1d3e1712ad2c");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    writeFileSync(join(projectDir, "index.html"), "<html>after</html>");
+    mockWatcher.emit("change", "rename", "index.html");
+    for (const payload of await Promise.all(streams.map(nextEvent))) {
+      expect(payload).toContain('"path":"index.html"');
+      expect(payload).not.toContain("report.json");
+      expect(payload).not.toContain(".tmp");
+    }
+  });
 
   it("labels a Studio write for every open subscriber, not just the first", async () => {
     const projectDir = tmpProject();

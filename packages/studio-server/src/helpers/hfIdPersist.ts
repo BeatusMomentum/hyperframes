@@ -66,13 +66,21 @@ function openNoFollow(filePath: string, flags: number): number | null {
   }
 }
 
+function isUnchanged(filePath: string, expected: string): boolean {
+  const fd = openNoFollow(filePath, constants.O_RDONLY);
+  if (fd === null) return false;
+  try {
+    return readFileSync(fd, "utf-8") === expected;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Read `filePath`, mint any missing `data-hf-id`s, write the stamped content
- * back if new ids were added, and return the stamped content — all through ONE
- * file descriptor. Unlike the check-path / read-path / write-path sequence a
- * route handler would otherwise do, the validation (fstat), read, and write
- * all target the same open inode, so the path cannot be swapped (e.g. for a
- * symlink) between validation and write (CodeQL js/file-system-race).
+ * back if new ids were added, and return the stamped content. Every open of the path is
+ * no-follow (POSIX) and the write renames a sibling temp file over it, so a symlink swapped
+ * in at the path is never read or written through (CodeQL js/file-system-race).
  *
  * Falls back to read-only stamping when the file isn't writable (read-only
  * fs, sandbox) — serving stamped content without persisting is still correct;
@@ -80,8 +88,8 @@ function openNoFollow(filePath: string, flags: number): number | null {
  *
  * Returns null when the file is missing, unreadable, or not a regular file.
  *
- * Best-effort on concurrent saves: a user save landing between the read and
- * the write below can still be overwritten — the next save simply re-persists.
+ * A write that lands while ids are minted is kept: the file is replaced only if
+ * it still holds the bytes that were stamped, else it is left for the next open or save.
  */
 export function stampFileHfIds(filePath: string): string | null {
   let fd: number | null = openNoFollow(filePath, constants.O_RDWR);
@@ -103,7 +111,7 @@ export function stampFileHfIds(filePath: string): string | null {
       const mode = fstatSync(fd).mode;
       closeSync(fd);
       fd = null;
-      replaceFileAtomically(filePath, normalized, mode);
+      if (isUnchanged(filePath, html)) replaceFileAtomically(filePath, normalized, mode);
     }
     return normalized;
   } catch (err) {

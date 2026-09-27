@@ -47,6 +47,8 @@ export type RuntimeStateMessage = {
   source: "hf-preview";
   type: "state";
   frame: number;
+  currentTime: number;
+  ended: boolean;
   isPlaying: boolean;
   muted: boolean;
   playbackRate: number;
@@ -286,7 +288,9 @@ export type RuntimeTimelineChildLike = {
   vars?: unknown;
   startTime?: () => number;
   duration?: () => number;
+  data?: unknown;
   parent?: RuntimeTimelineChildLike;
+  getChildren?: RuntimeTimelineLike["getChildren"];
 };
 
 export type RuntimeTimelineLike = {
@@ -312,8 +316,12 @@ export type RuntimeTimelineLike = {
 export type RuntimeDeterministicAdapter = {
   name: string;
   discover: () => void;
-  seek: (ctx: { time: number; suppressEvents?: boolean }) => void;
-  pause: () => void;
+  seek: (ctx: {
+    time: number;
+    suppressEvents?: boolean;
+    pageAnimations?: () => Animation[];
+  }) => void;
+  pause: (ctx?: { pageAnimations?: () => Animation[] }) => void;
   play?: () => void;
   revert?: () => void;
   /**
@@ -354,6 +362,7 @@ export type RuntimeDeterministicAdapter = {
    * (Lottie JSON fetch, etc.) resolves.
    */
   getInferredDurationSeconds?: () => number | null;
+  getAnimationCycleEndSeconds?: () => number | null;
 };
 
 export type RuntimeGsapSetTarget = string | Element | Element[] | null;

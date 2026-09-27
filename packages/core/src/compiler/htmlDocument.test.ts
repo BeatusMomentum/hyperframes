@@ -4,11 +4,29 @@ import {
   injectScriptsIntoHtml,
   injectTagsAtHeadStart,
   insertBeforeCloseTag,
+  isFullHtmlDocument,
   parseHTMLContent,
   stripEmbeddedRuntimeScripts,
 } from "./htmlDocument.js";
 
 describe("htmlDocument helpers", () => {
+  it("keeps a document's <html> attributes when a comment comes before the doctype", () => {
+    const doc = parseHTMLContent(
+      '<!-- hyperframes-registry-item: blk -->\n<!doctype html>\n<html lang="en" data-composition-variables="[]"><body></body></html>',
+    );
+    expect(doc.documentElement.getAttribute("lang")).toBe("en");
+    expect(doc.documentElement.hasAttribute("data-composition-variables")).toBe(true);
+  });
+
+  it("tells a document from a fragment past leading comments", () => {
+    expect(isFullHtmlDocument("<!-- marker -->\n<!doctype html><html></html>")).toBe(true);
+    expect(isFullHtmlDocument("<!-- a --><!-- b --><html lang='en'></html>")).toBe(true);
+    expect(isFullHtmlDocument("<!-- marker --><div data-composition-id='x'></div>")).toBe(false);
+    expect(isFullHtmlDocument("<!--><div></div><!-- --><html></html>")).toBe(false);
+    expect(isFullHtmlDocument("<html-card></html-card>")).toBe(false);
+    expect(isFullHtmlDocument("<!DOCTYPEhtml><html/ lang='en'></html>")).toBe(true);
+  });
+
   it("wraps fragments before parsing", () => {
     const doc = parseHTMLContent("<template><span>hello</span></template>");
     expect(doc.body.querySelector("template")?.innerHTML).toContain("<span>hello</span>");
@@ -200,5 +218,28 @@ describe("htmlDocument helpers", () => {
 
   it("finds no close tag in a fragment", () => {
     expect(insertBeforeCloseTag('<div><script>"</head>"</script></div>', "head", "x")).toBeNull();
+  });
+});
+
+describe("injectTagsAtHeadStart on long adversarial input", () => {
+  const M = 2_000_000;
+  it.each([
+    ["an unclosed double quote", `<html data-x="${"a".repeat(M)}`],
+    ["an unclosed single quote", `<html data-x='${"a".repeat(M)}`],
+    ["many quoted values", `<html ${'"a" '.repeat(M / 4)}`],
+    ["many <", "<".repeat(M)],
+    ["many <html>", "<html>".repeat(M / 6)],
+    ["many comments", `${"<!--x-->".repeat(M / 8)}<head>`],
+    ["an unclosed comment", `<!--${"a".repeat(M)}`],
+    ["an unclosed comment of <", `<!--${"<".repeat(M)}`],
+    ["an unclosed comment of quotes", `<!--${'"'.repeat(M)}`],
+    ["alternating quotes", `<html ${`"'`.repeat(M / 2)}`],
+    ["leading spaces", `${" ".repeat(M)}x`],
+    ["a tag that never closes", `<html ${"a ".repeat(M / 2)}`],
+    ["an unclosed tag name", `<${"a".repeat(M)}`],
+  ])("stays fast on %s", (_, html) => {
+    const started = performance.now();
+    injectTagsAtHeadStart(html, "<meta>");
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });

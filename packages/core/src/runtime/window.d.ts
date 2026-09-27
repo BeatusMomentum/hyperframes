@@ -54,6 +54,10 @@ declare global {
         seconds: number | null;
         pendingClips: number;
       };
+      /** Where each animation's FIRST cycle ends, latest wins, in seconds (root timeline, CSS and
+       *  Lottie; never script-created WAAPI, media or the declared length); repeats may run past it.
+       *  Null when unknown. Studio reads it. */
+      animationEnd?: () => number | null;
       /** Borrow an element's playback while the transport clock is paused, so the
        *  runtime's paused-side enforcement leaves it alone. Always release. */
       leasePausedMedia?: (el: HTMLMediaElement) => void;
@@ -76,6 +80,8 @@ declare global {
     __playerReady?: boolean;
     __renderReady?: boolean;
     __hfRuntimeTeardown?: (() => void) | null;
+    /** Swap edited scenes from a rebuilt preview document; refuses before changing anything when it cannot. */
+    __hfSwapScenes?: (html: string) => Promise<void>;
     __HF_EXPORT_RENDER_SEEK_CONFIG?: {
       mode?: string;
       diagnostics?: boolean;

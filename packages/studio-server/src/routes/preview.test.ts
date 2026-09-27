@@ -8,9 +8,11 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -234,6 +236,48 @@ describe("registerPreviewRoutes", () => {
     expect(response.status).toBe(200);
     expect(html).toContain("__hfStudioMotionApply");
     expect(html).toContain("compositions/scene.html");
+  });
+
+  it("serves scene parts with a manifest whose shared hash ignores the project signature", async () => {
+    const projectDir = createProjectDir();
+    mkdirSync(join(projectDir, "compositions"), { recursive: true });
+    writeFileSync(
+      join(projectDir, "index.html"),
+      `<!doctype html><html><head></head><body><div data-composition-id="main" data-width="1280" data-height="720" data-duration="2">
+<div data-composition-id="a" data-composition-src="compositions/a.html" data-start="0" data-duration="2"></div></div></body></html>`,
+    );
+    const scene = (text: string) =>
+      writeFileSync(
+        join(projectDir, "compositions/a.html"),
+        `<template><div data-composition-id="a"><p>${text}</p></div></template>`,
+      );
+    const { bundleToSingleHtml } = await import("@hyperframes/core/compiler");
+    const app = new Hono();
+    registerPreviewRoutes(
+      app,
+      createAdapter(projectDir, {
+        bundle: (dir, options) =>
+          bundleToSingleHtml(dir, { ...PREVIEW_BUNDLE_OPTIONS, ...options }),
+      }),
+    );
+    const served = async () => {
+      const html = await (await app.request("http://localhost/projects/demo/preview")).text();
+      const content = /<meta name="hf-scene-parts" content="([^"]+)">/.exec(html)?.[1] ?? "";
+      const signature = /<meta name="hyperframes-project-signature" content="([^"]+)">/.exec(
+        html,
+      )?.[1];
+      return { html, signature, parts: JSON.parse(content.replace(/&quot;/g, '"')) };
+    };
+    scene("one");
+    const before = await served();
+    scene("two, longer");
+    pastSettleWindow();
+    const after = await served();
+
+    expect(before.html).toContain('data-hf-scene="a"');
+    expect(after.signature).not.toBe(before.signature);
+    expect(after.parts.shared).toBe(before.parts.shared);
+    expect(after.parts.scenes.a).not.toBe(before.parts.scenes.a);
   });
 
   it("applies adapter preview transforms to bundled root previews", async () => {
@@ -1435,6 +1479,79 @@ describe("hf-proxy negotiation and media codec map injection (U3)", () => {
       expect(proxyRes.status).toBe(404);
       expect(resolveProxyMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("hf-proxy codec probe", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("../helpers/mediaMetadata.js");
+    vi.doUnmock("../helpers/proxyTranscoder.js");
+  });
+
+  async function appWithProbe(projectDir: string, codecOf: (path: string) => string) {
+    const proxyPath = join(projectDir, "proxy.mp4");
+    writeFileSync(proxyPath, "proxy-bytes");
+    const probeMediaMetadata = vi.fn(async (path: string) => ({
+      kind: "video" as const,
+      color: { codecName: codecOf(path), pixelFormat: "yuv420p" },
+    }));
+    vi.resetModules();
+    vi.doMock("../helpers/mediaMetadata.js", async () => ({
+      ...(await vi.importActual<typeof import("../helpers/mediaMetadata.js")>(
+        "../helpers/mediaMetadata.js",
+      )),
+      probeMediaMetadata,
+    }));
+    vi.doMock("../helpers/proxyTranscoder.js", async () => ({
+      ...(await vi.importActual<typeof import("../helpers/proxyTranscoder.js")>(
+        "../helpers/proxyTranscoder.js",
+      )),
+      resolveProxy: async () => proxyPath,
+    }));
+    const { registerPreviewRoutes: register } = await import("./preview.js");
+    const app = new Hono();
+    register(app, createAdapter(projectDir));
+    const proxy = (file: string) =>
+      app.request(`http://localhost/projects/demo/preview/${file}?hf-proxy=h264`);
+    return { proxy, probeMediaMetadata };
+  }
+
+  it("runs ffprobe once for repeated proxy requests of the same unchanged clip", async () => {
+    const projectDir = createProjectDir();
+    writeFileSync(join(projectDir, "clip.mp4"), "original-hevc-bytes");
+    const { proxy, probeMediaMetadata } = await appWithProbe(projectDir, () => "hevc");
+
+    expect((await proxy("clip.mp4")).status).toBe(200);
+    expect((await proxy("clip.mp4")).status).toBe(200);
+
+    expect(probeMediaMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it("probes again when a clip's symlink is repointed at a file with the same mtime and size", async () => {
+    const projectDir = createProjectDir();
+    const externalDir = mkdtempSync(join(tmpdir(), "hf-preview-retarget-"));
+    tempDirs.push(externalDir);
+    const hevc = join(externalDir, "hevc.mp4");
+    const h264 = join(externalDir, "h264.mp4");
+    writeFileSync(hevc, "same-size-a");
+    writeFileSync(h264, "same-size-b");
+    const sameTime = new Date("2026-01-01T00:00:00Z");
+    utimesSync(hevc, sameTime, sameTime);
+    utimesSync(h264, sameTime, sameTime);
+    const link = join(projectDir, "clip.mp4");
+    if (!tryCreateSymlink(hevc, link, "file")) return;
+    const { proxy } = await appWithProbe(projectDir, (path) =>
+      realpathSync(path) === realpathSync(hevc) ? "hevc" : "h264",
+    );
+    expect((await proxy("clip.mp4")).status).toBe(200);
+
+    rmSync(link);
+    symlinkSync(h264, link, "file");
+
+    const retargeted = await proxy("clip.mp4");
+    expect(retargeted.status).toBe(422);
+    expect(await retargeted.text()).toContain("browser_safe_codec");
   });
 });
 
