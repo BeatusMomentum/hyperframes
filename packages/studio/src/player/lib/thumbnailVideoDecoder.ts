@@ -120,7 +120,6 @@ export async function decodeVideoThumbnail(
 ): Promise<ThumbnailLoadedResult> {
   const mediabunny = await import("mediabunny");
   throwIfAborted(signal);
-  // A clip the preview swapped to its proxy reports the proxy URL, which answers 202 until the copy lands.
   const ready = await proxiedSourceReady(request.source, () => !signal.aborted);
   throwIfAborted(signal);
   if (!ready) throw new Error("Video proxy is unavailable");
