@@ -1,6 +1,6 @@
 // fallow-ignore-file complexity
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -183,11 +183,10 @@ function getMediaDurationSeconds(filePath: string): number | null {
   }
 }
 
-function getPreparedWavDurationSeconds(wavPath: string): number | null {
+/** A prepared WAV is 16 kHz mono s16, so its size gives the length (the header adds a few ms). */
+export function getPreparedWavDurationSeconds(wavPath: string): number | null {
   try {
-    const dataChunk = findWavDataChunk(readFileSync(wavPath));
-    if (!dataChunk) return null;
-    return dataChunk.size / (16_000 * 2);
+    return statSync(wavPath).size / (16_000 * 2);
   } catch {
     return null;
   }
@@ -300,6 +299,25 @@ function tempWavPath(): string {
   return join(tmpdir(), `hyperframes-audio-${process.pid}-${randomUUID()}.wav`);
 }
 
+function runFfmpeg(ffmpegPath: string, args: string[], output: string, timeout: number): void {
+  try {
+    execFileSync(ffmpegPath, ["-nostats", "-hide_banner", ...args, "-y", output], {
+      stdio: ["ignore", "ignore", "pipe"],
+      maxBuffer: 64 * 1024 * 1024,
+      timeout,
+    });
+  } catch (err) {
+    rmSync(output, { force: true });
+    const { code, signal, stderr } = err as { code?: string; signal?: string; stderr?: Buffer };
+    // A code means Node stopped it; ffmpeg traps Ctrl-C and says so (exit 255 is EPERM too on 7+).
+    if (code) throw err;
+    const said = String(stderr ?? "").trim();
+    const cancelled = /received signal/.test(said) || signal === "SIGINT" || signal === "SIGTERM";
+    const reason = said.split("\n").at(-1) || (err as Error).message;
+    throw Object.assign(new Error(`ffmpeg failed: ${reason}`, { cause: err }), { cancelled });
+  }
+}
+
 /**
  * Extract audio from a video file as 16kHz mono WAV (whisper requirement).
  */
@@ -311,15 +329,27 @@ function extractAudio(videoPath: string): string {
     );
   }
   const wavPath = tempWavPath();
-  execFileSync(
+  runFfmpeg(
     ffmpegPath,
-    ["-i", videoPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
-    {
-      stdio: "ignore",
-      timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(videoPath)),
-    },
+    ["-i", videoPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav"],
+    wavPath,
+    resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(videoPath)),
   );
   return wavPath;
+}
+
+interface AudioStream {
+  codec_type?: string;
+  codec_name?: string;
+  sample_rate?: string;
+  channels?: number;
+}
+
+/** 16-bit PCM only: sherpa-onnx cannot read 24-bit WAV, so anything else goes through ffmpeg. */
+export function isPcm16kMono(stream: AudioStream | undefined): boolean {
+  return (
+    stream?.codec_name === "pcm_s16le" && stream.sample_rate === "16000" && stream.channels === 1
+  );
 }
 
 /**
@@ -334,15 +364,8 @@ function isWav16kMono(filePath: string): boolean {
       ["-v", "quiet", "-print_format", "json", "-show_streams", "--", filePath],
       { encoding: "utf-8", timeout: 10_000 },
     );
-    const parsed: {
-      streams?: {
-        codec_type?: string;
-        sample_rate?: string;
-        channels?: number;
-      }[];
-    } = JSON.parse(raw);
-    const audio = parsed.streams?.find((s) => s.codec_type === "audio");
-    return audio?.sample_rate === "16000" && audio?.channels === 1;
+    const parsed: { streams?: AudioStream[] } = JSON.parse(raw);
+    return isPcm16kMono(parsed.streams?.find((s) => s.codec_type === "audio"));
   } catch {
     return false;
   }
@@ -362,13 +385,11 @@ function prepareAudio(audioPath: string): string {
     throw new Error(`ffmpeg is required to prepare audio. Install: ${getFFmpegInstallHint()}`);
   }
   const wavPath = tempWavPath();
-  execFileSync(
+  runFfmpeg(
     ffmpegPath,
-    ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
-    {
-      stdio: "ignore",
-      timeout: resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
-    },
+    ["-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav"],
+    wavPath,
+    resolveAudioPreparationTimeoutMs(getMediaDurationSeconds(audioPath)),
   );
   return wavPath;
 }

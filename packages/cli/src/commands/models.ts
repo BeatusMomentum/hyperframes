@@ -4,6 +4,7 @@ import type { Example } from "./_examples.js";
 import { c } from "../ui/colors.js";
 import { formatBytes } from "../ui/format.js";
 import { failCommand } from "../utils/commandResult.js";
+import { createRenderCancellationScope } from "../utils/renderCancellation.js";
 import { PARAKEET_MODEL_LABEL } from "../whisper/parakeet.js";
 
 export const examples: Example[] = [
@@ -13,10 +14,40 @@ export const examples: Example[] = [
   ],
 ];
 
-function fail(message: string, json: boolean): never {
+function fail(message: string, json: boolean, exitCode = 1): never {
   if (json) console.log(JSON.stringify({ ok: false, error: message }));
   else console.error(c.error(message));
-  failCommand();
+  failCommand(exitCode);
+}
+
+function downloadProgress(spin: Spinner) {
+  let lastPct = -1;
+  return (done: number, total: number) => {
+    const pct = Math.floor((done / total) * 100);
+    if (pct <= lastPct) return;
+    lastPct = pct;
+    spin?.message(
+      `Downloading Parakeet TDT 0.6B v3 — ${c.progress(pct + "%")} ${c.dim("(" + formatBytes(done) + " / " + formatBytes(total) + ")")}`,
+    );
+  };
+}
+
+type Sherpa = typeof import("../whisper/sherpa.js");
+type Spinner = ReturnType<typeof clack.spinner> | null;
+
+/** Installs what is missing; true when anything changed. */
+async function installMissing(sherpa: Sherpa, spin: Spinner, signal: AbortSignal) {
+  const runtimeMissing = !sherpa.sherpaRuntimeInstalled();
+  if (runtimeMissing) {
+    spin?.message("Installing the sherpa-onnx runtime from npm...");
+    await sherpa.installSherpaRuntime({ signal });
+  }
+  spin?.message("Verifying the Parakeet model...");
+  const modelFetched = await sherpa.ensureParakeetModel({
+    signal,
+    onBytes: downloadProgress(spin),
+  });
+  return runtimeMissing || modelFetched;
 }
 
 async function installParakeet(json: boolean): Promise<void> {
@@ -25,42 +56,27 @@ async function installParakeet(json: boolean): Promise<void> {
   if (unsupported) fail(unsupported, json);
 
   const spin = json ? null : clack.spinner({ output: process.stderr });
+  // Ctrl-C must stop a 650 MB download, not just print "Canceled" over it.
+  const cancellation = createRenderCancellationScope();
   spin?.start("Checking the sherpa-onnx runtime...");
   try {
-    const runtimeMissing = !sherpa.sherpaRuntimeInstalled();
-    if (runtimeMissing) {
-      spin?.message("Installing the sherpa-onnx runtime from npm...");
-      await sherpa.installSherpaRuntime();
-    }
-    spin?.message("Verifying the Parakeet model...");
-    let lastPct = -1;
-    const modelFetched = await sherpa.ensureParakeetModel({
-      onBytes: (done, total) => {
-        const pct = Math.floor((done / total) * 100);
-        if (pct <= lastPct) return;
-        lastPct = pct;
-        spin?.message(
-          `Downloading Parakeet TDT 0.6B v3 — ${c.progress(pct + "%")} ${c.dim("(" + formatBytes(done) + " / " + formatBytes(total) + ")")}`,
-        );
-      },
-    });
-    const changed = runtimeMissing || modelFetched;
+    const changed = await installMissing(sherpa, spin, cancellation.signal);
+    spin?.stop(c.success(changed ? "Parakeet installed" : "Parakeet is already installed"));
     if (json) {
+      const { SHERPA_RUNTIME_DIR: runtimeDir, PARAKEET_MODEL_DIR: modelDir } = sherpa;
       console.log(
-        JSON.stringify({
-          ok: true,
-          model: PARAKEET_MODEL_LABEL,
-          changed,
-          runtimeDir: sherpa.SHERPA_RUNTIME_DIR,
-          modelDir: sherpa.PARAKEET_MODEL_DIR,
-        }),
+        JSON.stringify({ ok: true, model: PARAKEET_MODEL_LABEL, changed, runtimeDir, modelDir }),
       );
-    } else {
-      spin?.stop(c.success(changed ? "Parakeet installed" : "Parakeet is already installed"));
     }
   } catch (err) {
-    spin?.stop(c.error("Parakeet install failed"));
+    const cancelled = cancellation.signal.aborted;
+    spin?.stop(
+      cancelled ? c.warn("Parakeet install cancelled") : c.error("Parakeet install failed"),
+    );
+    if (cancelled) fail("Parakeet install cancelled; nothing partial was kept.", json, 130);
     fail(err instanceof Error ? err.message : String(err), json);
+  } finally {
+    cancellation.dispose();
   }
 }
 

@@ -130,12 +130,107 @@ export function mergeWindowsToWords(windows: SherpaWindow[]): Word[] {
   });
 }
 
+function meanEnergy(samples: Float32Array, from: number, to: number): number {
+  let energy = 0;
+  for (let i = from; i < to; i++) energy += samples[i]! * samples[i]!;
+  return energy / Math.max(1, to - from);
+}
+
+/**
+ * Stretches (s) of at least 1 s without tokens that are about as loud as the window: the model
+ * skipped speech there. Measured: a 61.91 s window lost its first 9 words this way (ratio 0.94).
+ * A window with no tokens at all is music or noise, not a skip.
+ */
+export function droppedSpeechGaps(
+  samples: Float32Array,
+  sampleRate: number,
+  decoded: Omit<SherpaWindow, "offset">,
+): [number, number][] {
+  if (decoded.tokens.length === 0) return [];
+  const loud = 0.3 * meanEnergy(samples, 0, samples.length);
+  const { timestamps, durations } = decoded;
+  const gapStarts = [0, ...timestamps.map((t, i) => t + (durations?.[i] ?? 0))];
+  const gapEnds = [...timestamps, samples.length / sampleRate];
+  const at = (seconds: number) => Math.round(seconds * sampleRate);
+  return gapStarts
+    .map((from, i): [number, number] => [from, gapEnds[i]!])
+    .filter(([from, to]) => to - from >= 1 && meanEnergy(samples, at(from), at(to)) > loud);
+}
+
+/** Number of trailing `a` entries that equal the leading `b` entries. */
+function overlap(a: string[], b: string[]): number {
+  for (let n = Math.min(a.length, b.length); n > 0; n--) {
+    if (a.slice(-n).every((text, i) => text === b[i])) return n;
+  }
+  return 0;
+}
+
+interface Token {
+  text: string;
+  start: number;
+  duration: number;
+}
+
+/** Tokens grouped into words: a token with a leading space starts one. */
+function wordsOf(tokens: Token[]): Token[][] {
+  const words: Token[][] = [];
+  for (const t of tokens) {
+    if (t.text.startsWith(" ") || words.length === 0) words.push([t]);
+    else words.at(-1)!.push(t);
+  }
+  return words;
+}
+
+const letters = (word: Token[]) =>
+  word
+    .map((t) => t.text)
+    .join("")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/** How far from a gap edge the patch may re-hear the neighbouring word (measured: 0.26 s). */
+const EDGE_SECONDS = 0.3;
+
+/**
+ * Adds the `patch` words, decoded from `offset` s into the window, that start inside the gap, minus
+ * the gap's neighbours re-heard near its edges (compared as whole words, by letters).
+ */
+export function spliceGap(
+  decoded: Omit<SherpaWindow, "offset">,
+  patch: Omit<SherpaWindow, "offset">,
+  offset: number,
+  [from, to]: [number, number],
+): Omit<SherpaWindow, "offset"> {
+  const tokens = (w: Omit<SherpaWindow, "offset">, shift: number): Token[] =>
+    w.tokens.map((text, i) => ({
+      text,
+      start: shift + w.timestamps[i]!,
+      duration: w.durations?.[i] ?? 0,
+    }));
+  const kept = wordsOf(tokens(decoded, 0));
+  const added = wordsOf(tokens(patch, offset)).filter(
+    ([first]) => first!.start >= from && first!.start < to,
+  );
+  const before = kept.filter(([first]) => first!.start < from).map(letters);
+  const after = kept.filter(([first]) => first!.start >= to).map(letters);
+  const head = added.filter(([first]) => first!.start < from + EDGE_SECONDS).map(letters);
+  const tail = added.filter(([first]) => first!.start >= to - EDGE_SECONDS).map(letters);
+  const fresh = added
+    .slice(overlap(before, head), added.length - overlap(tail, after))
+    .map(([first, ...rest]) => [{ ...first!, text: ` ${first!.text.trimStart()}` }, ...rest]);
+  const merged = [...kept, ...fresh].sort((a, b) => a[0]!.start - b[0]!.start).flat();
+  return {
+    tokens: merged.map((t) => t.text),
+    timestamps: merged.map((t) => t.start),
+    durations: merged.map((t) => t.duration),
+  };
+}
+
 function quietestBlockCenter(samples: Float32Array, lo: number, hi: number, block: number): number {
   let best = hi;
   let bestEnergy = Infinity;
   for (let s = lo; s + block <= hi; s += block) {
-    let energy = 0;
-    for (let i = s; i < s + block; i++) energy += samples[i]! * samples[i]!;
+    const energy = meanEnergy(samples, s, s + block);
     if (energy < bestEnergy) {
       bestEnergy = energy;
       best = s + block / 2;
@@ -162,7 +257,7 @@ export function silenceCuts(
     const hi = Math.min(target + slack, samples.length);
     cuts.push(quietestBlockCenter(samples, target - slack, hi, sampleRate / 10));
   }
-  cuts.push(samples.length);
+  if (samples.length > 0) cuts.push(samples.length);
   return cuts;
 }
 

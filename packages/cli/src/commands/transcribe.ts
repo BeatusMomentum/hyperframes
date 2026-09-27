@@ -1,8 +1,9 @@
 import { failCommand, setCommandExitCode } from "../utils/commandResult.js";
+import { normalizeErrorMessage } from "../utils/errorMessage.js";
 // fallow-ignore-file code-duplication
 import { defineCommand } from "citty";
 import type { Example } from "./_examples.js";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { findParakeet, PARAKEET_MODEL_LABEL, transcribeWithParakeet } from "../whisper/parakeet.js";
 
 type CaptionExportFormat = "srt" | "vtt";
@@ -276,6 +277,9 @@ function pickRunner(engine: string, sherpaInstalled: () => boolean): Runner {
   return findParakeet() ? "parakeet-mlx" : "whisper";
 }
 
+/** When Parakeet fails, only auto falls back; an explicit --engine parakeet fails with the error. */
+const parakeetFallsBack = (engine: string) => engine === "auto";
+
 // fallow-ignore-next-line complexity
 async function transcribeAudio(
   inputPath: string,
@@ -293,7 +297,8 @@ async function transcribeAudio(
   const { loadTranscript, patchCaptionHtml, stripBeforeOnset } =
     await import("../whisper/normalize.js");
 
-  const { sherpaParakeetInstalled, transcribeWithSherpa } = await import("../whisper/sherpa.js");
+  const { DecodeCancelled, prepareSherpaWav, sherpaParakeetInstalled, transcribeWithSherpa } =
+    await import("../whisper/sherpa.js");
 
   const engine = (opts.engine ?? "auto").toLowerCase();
   if (engine !== "auto" && engine !== "parakeet" && engine !== "whisper") {
@@ -314,16 +319,17 @@ async function transcribeAudio(
       c.dim(`  Note: --model applies to the whisper engine only; ignored under Parakeet.`),
     );
   }
-  const label = runner === "whisper" ? model : "Parakeet";
+  const label = (r: Runner) => c.accent(r === "whisper" ? model : "Parakeet");
   const spin = opts.json ? null : clack.spinner({ output: process.stderr });
-  spin?.start(`Transcribing with ${c.accent(label)}...`);
+  spin?.start(`Transcribing with ${label(runner)}...`);
   const onProgress = spin ? (msg: string) => spin.message(msg) : undefined;
+  let wavPath = inputPath;
   const run = (r: Runner) =>
     r === "sherpa"
-      ? transcribeWithSherpa(inputPath, dir, { onProgress })
+      ? transcribeWithSherpa(wavPath, dir, { onProgress })
       : r === "parakeet-mlx"
-        ? transcribeWithParakeet(inputPath, dir, { language: opts.language, onProgress })
-        : transcribe(inputPath, dir, {
+        ? transcribeWithParakeet(wavPath, dir, { language: opts.language, onProgress })
+        : transcribe(wavPath, dir, {
             model,
             language: opts.language,
             onProgress,
@@ -332,17 +338,26 @@ async function transcribeAudio(
           });
 
   try {
+    // Outside the fallback: an unreadable input is not a Parakeet failure. The fallback reuses it.
+    if (runner === "sherpa") wavPath = prepareSherpaWav(inputPath, onProgress);
     let result: Awaited<ReturnType<typeof run>>;
     try {
       result = await run(runner);
     } catch (err) {
-      if (runner !== "sherpa") throw err;
+      if (runner !== "sherpa" || err instanceof DecodeCancelled) throw err;
+      const reason = normalizeErrorMessage(err).replace(/\.+$/, "");
+      const parakeetError = `Parakeet failed: ${reason}. To repair it, run: hyperframes models install parakeet`;
+      if (!parakeetFallsBack(engine)) throw new Error(parakeetError);
       runner = pickRunner(engine, () => false);
-      const reason = err instanceof Error ? err.message : String(err);
       spin?.clear();
-      console.error(c.warn(`Parakeet (sherpa-onnx) failed, using ${runner} instead. ${reason}`));
-      spin?.start(`Transcribing with ${c.accent(runner)}...`);
-      result = await run(runner);
+      console.error(c.warn(`${parakeetError}. Using ${runner} for this run.`));
+      spin?.start(`Transcribing with ${label(runner)}...`);
+      try {
+        result = await run(runner);
+      } catch (fallbackErr) {
+        const why = normalizeErrorMessage(fallbackErr);
+        throw new Error(`${parakeetError}. The ${runner} fallback failed too: ${why}`);
+      }
     }
 
     let { words } = loadTranscript(result.transcriptPath);
@@ -385,6 +400,11 @@ async function transcribeAudio(
       );
     }
   } catch (err) {
+    if (err instanceof DecodeCancelled) {
+      if (opts.json) console.log(JSON.stringify({ ok: false, error: err.message }));
+      else spin?.stop(c.warn(err.message));
+      failCommand(130);
+    }
     // Surface the last few lines of the ASR subprocess's stderr, which
     // execFileSync captures but otherwise drops on the floor — that's where
     // parakeet-mlx / whisper report the actual failure cause.
@@ -427,5 +447,7 @@ async function transcribeAudio(
       spin?.stop(c.error(`Transcription failed: ${message}`));
     }
     failCommand();
+  } finally {
+    if (wavPath !== inputPath) rmSync(wavPath, { force: true });
   }
 }

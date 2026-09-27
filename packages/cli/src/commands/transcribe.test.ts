@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WhisperUnavailableError } from "../whisper/manager.js";
@@ -7,9 +7,12 @@ import { CliRuntimeError, consumeCommandResult } from "../utils/commandResult.js
 
 // Make the whisper core report "unavailable" so we exercise the soft-skip path.
 const transcribeMock = vi.fn();
+const prepareWavMock = vi.fn((input: string) => input);
+let audioSeconds = 1;
 vi.mock("../whisper/transcribe.js", () => ({
   transcribe: transcribeMock,
-  prepareWav: (input: string) => input,
+  prepareWav: (input: string) => prepareWavMock(input),
+  getPreparedWavDurationSeconds: () => audioSeconds,
 }));
 
 // Engine selection: which runners look installed, and the sherpa decode child it spawns.
@@ -63,6 +66,7 @@ describe("transcribe command", () => {
     dirs = [];
     consumeCommandResult();
     transcribeMock.mockReset();
+    prepareWavMock.mockReset().mockImplementation((input: string) => input);
     trackTranscribeUnavailable.mockReset();
     trackCommandFailure.mockReset();
     mlxMock.mockReset();
@@ -77,6 +81,7 @@ describe("transcribe command", () => {
     consumeCommandResult();
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("explicit run exits non-zero and is NOT reported as a command failure", async () => {
@@ -136,6 +141,7 @@ describe("transcribe command", () => {
     // passes on a machine with no Parakeet and silently tests nothing on one
     // that has it.
     expect(transcribeMock).toHaveBeenCalled();
+    expect(prepareWavMock).not.toHaveBeenCalled();
     expect(consumeCommandResult().exitCode).toBe(0);
     expect(trackTranscribeUnavailable).toHaveBeenCalledWith({ optional: true });
     expect(trackCommandFailure).not.toHaveBeenCalled();
@@ -202,30 +208,171 @@ describe("transcribe command", () => {
       expect(transcribeMock).not.toHaveBeenCalled();
     });
 
-    it("falls back to whisper with one stderr line when the decode child crashes", async () => {
+    const crashChild = (signal: string, stderr = "") =>
       execFileMock.mockImplementation((_cmd, _args, _opts, done) => {
-        const crash = Object.assign(new Error("Command failed"), { code: null, signal: "SIGABRT" });
-        done(crash, "", "terminate called after throwing an instance of 'Ort::Exception'\n");
+        done(Object.assign(new Error("Command failed"), { code: null, signal }), "", stderr);
       });
+
+    async function transcribeFails(engine: string, extra: Record<string, unknown> = {}) {
+      const { dir, input } = dummyAudio();
+      dirs.push(dir);
+      let exitCode = 0;
+      try {
+        await transcribeCmd.run!({ args: { input, json: true, engine, ...extra } } as never);
+      } catch (err) {
+        if (!(err instanceof CliRuntimeError)) throw err;
+        exitCode = err.result.exitCode;
+      }
+      return { exitCode: exitCode || consumeCommandResult().exitCode, out: lastJson() };
+    }
+
+    it("auto falls back to whisper with one line naming the Parakeet error and the repair", async () => {
+      crashChild("SIGABRT", "terminate called after throwing an instance of 'Ort::Exception'\n");
       expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
         engine: "whisper",
         word: "whisper",
       });
       const warnings = vi.mocked(console.error).mock.calls.map(([line]) => String(line));
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/sherpa-onnx.*whisper.*SIGABRT.*Ort::Exception/);
+      expect(warnings[0]).toMatch(
+        /^.*Parakeet failed: .*SIGABRT.*Ort::Exception.*hyperframes models install parakeet.*Using whisper/,
+      );
     });
 
-    it("falls back without spawning when glibc is too old for sherpa-onnx", async () => {
-      vi.mocked(process.report.getReport).mockReturnValue({
-        header: { glibcVersionRuntime: "2.31" },
-      } as never);
+    it("an explicit --engine parakeet fails with the Parakeet error instead of falling back", async () => {
+      crashChild("SIGABRT", "Protobuf parsing failed.\n");
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { exitCode, out } = await transcribeFails("parakeet");
+      expect(exitCode).toBe(1);
+      expect(out.error).toMatch(
+        /^Parakeet failed: .*Protobuf parsing failed\. To repair it, run: hyperframes models install parakeet$/,
+      );
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("reports the Parakeet error, not whisper_unavailable, when the fallback is missing too", async () => {
+      crashChild("SIGABRT");
+      transcribeMock.mockRejectedValue(new WhisperUnavailableError("whisper-cpp not found"));
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { exitCode, out } = await transcribeFails("auto", { optional: true });
+      expect(exitCode).toBe(1);
+      expect(out.skipped).toBeUndefined();
+      expect(out.error).toMatch(/^Parakeet failed: .*install parakeet.*whisper-cpp not found/);
+    });
+
+    it("stops with exit 130 on Ctrl-C instead of falling back", async () => {
+      crashChild("SIGINT");
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { exitCode, out } = await transcribeFails("auto");
+      expect(exitCode).toBe(130);
+      expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    describe.skipIf(process.platform === "win32")("when ffmpeg exits 255 while preparing", () => {
+      it.each([
+        ["Exiting normally, received signal 2.", 130, "Transcription cancelled"],
+        [
+          "Error opening input files: Operation not permitted",
+          1,
+          "ffmpeg failed: Error opening input files: Operation not permitted",
+        ],
+      ])("after saying %j, the run exits %i", async (said, code, error) => {
+        const actual = await vi.importActual<typeof import("../whisper/transcribe.js")>(
+          "../whisper/transcribe.js",
+        );
+        prepareWavMock.mockImplementation((input: string) => actual.prepareWav(input));
+        const dir = mkdtempSync(join(tmpdir(), "hf-transcribe-ffmpeg-"));
+        dirs.push(dir);
+        const ffmpeg = join(dir, "ffmpeg");
+        const script = `process.stderr.write(${JSON.stringify(`${said}\n`)}); process.exit(255);`;
+        writeFileSync(ffmpeg, `#!${process.execPath}\n${script}\n`);
+        chmodSync(ffmpeg, 0o755);
+        vi.stubEnv("HYPERFRAMES_FFMPEG_PATH", ffmpeg);
+        Object.assign(runners, { sherpa: true, mlx: false });
+        const { exitCode, out } = await transcribeFails("auto");
+        expect(exitCode).toBe(code);
+        expect(out).toEqual({ ok: false, error });
+        expect(transcribeMock).not.toHaveBeenCalled();
+      });
+    });
+
+    it("fails an unreadable input as an input error, with no Parakeet repair and no fallback", async () => {
+      prepareWavMock.mockImplementation(() => {
+        throw new Error("Command failed: ffmpeg -i silent.mp4 -vn -ar 16000");
+      });
+      Object.assign(runners, { sherpa: true, mlx: false });
+      for (const optional of [false, true]) {
+        const { exitCode, out } = await transcribeFails("auto", { optional });
+        expect(exitCode).toBe(1);
+        expect(out).toEqual({
+          ok: false,
+          error: "Command failed: ffmpeg -i silent.mp4 -vn -ar 16000",
+        });
+      }
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("prepares the audio once, hands the same WAV to the fallback, and removes it", async () => {
+      crashChild("SIGABRT");
+      const prepared: string[] = [];
+      prepareWavMock.mockImplementation((input: string) => {
+        prepared.push(`${input}.16k.wav`);
+        writeFileSync(prepared[0]!, "wav");
+        return prepared[0]!;
+      });
       expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
         engine: "whisper",
       });
-      expect(execFileMock).not.toHaveBeenCalled();
-      expect(String(vi.mocked(console.error).mock.calls[0]?.[0])).toMatch(/glibc 2\.32.*2\.31/);
+      expect(prepared).toHaveLength(1);
+      const sherpaInput = JSON.parse(
+        execFileMock.mock.calls[0]?.[2].env.HYPERFRAMES_PARAKEET_INPUT,
+      );
+      expect(sherpaInput.wavPath).toBe(prepared[0]);
+      expect(transcribeMock.mock.calls[0]?.[0]).toBe(prepared[0]);
+      expect(existsSync(prepared[0]!)).toBe(false);
     });
+
+    it("gives the decode at least 30 minutes, and twice the audio length", async () => {
+      Object.assign(runners, { sherpa: true, mlx: false });
+      for (const [seconds, timeout] of [
+        [60, 1_800_000],
+        [3600, 7_200_000],
+      ]) {
+        audioSeconds = seconds!;
+        const { dir, input } = dummyAudio();
+        dirs.push(dir);
+        await transcribeCmd.run!({ args: { input, json: true, engine: "auto" } } as never);
+        expect(execFileMock.mock.calls.at(-1)?.[2]).toMatchObject({ timeout });
+      }
+      audioSeconds = 1;
+    });
+
+    it("succeeds with 0 words when the audio has no speech", async () => {
+      execFileMock.mockImplementation((_cmd, _args, _opts, done) => {
+        done(null, `HYPERFRAMES_PARAKEET_RESULT:${JSON.stringify([])}\n`, "");
+      });
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { dir, input } = dummyAudio();
+      dirs.push(dir);
+      await transcribeCmd.run!({ args: { input, json: true, engine: "auto" } } as never);
+      expect(lastJson()).toMatchObject({ ok: true, engine: "parakeet", wordCount: 0 });
+    });
+
+    it.runIf(process.platform === "linux" && process.arch === "x64")(
+      "falls back without spawning when glibc is too old for sherpa-onnx",
+      async () => {
+        vi.mocked(process.report.getReport).mockReturnValue({
+          header: { glibcVersionRuntime: "2.31" },
+        } as never);
+        expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
+          engine: "whisper",
+        });
+        expect(execFileMock).not.toHaveBeenCalled();
+        expect(String(vi.mocked(console.error).mock.calls[0]?.[0])).toMatch(/glibc 2\.32.*2\.31/);
+      },
+    );
   });
 
   it("imports an SRT and exports an SRT sidecar from transcript.json", async () => {
