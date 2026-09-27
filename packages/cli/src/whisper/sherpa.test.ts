@@ -112,19 +112,19 @@ describe("installSherpaRuntime", () => {
         fakeRuntime(args[args.indexOf("--prefix") + 1]!, BROKEN),
       );
       await expect(installSherpaRuntime({ run, dir })).rejects.toThrow(
-        "The sherpa-onnx runtime installed but does not load: libonnxruntime.so: cannot open shared object",
+        "The sherpa-onnx runtime was reinstalled but still does not load (libonnxruntime.so: cannot open shared object). Use --engine whisper for now.",
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it.skipIf(process.platform === "win32")(
-    "treats a probe stopped by Ctrl-C as a cancel and keeps the runtime",
-    async () => {
+  it.skipIf(process.platform === "win32").each(["SIGINT", "SIGHUP"])(
+    "treats a probe stopped by %s as a cancel and keeps the runtime",
+    async (signal) => {
       const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
       try {
-        fakeRuntime(dir, 'process.kill(process.pid, "SIGINT");');
+        fakeRuntime(dir, `process.kill(process.pid, "${signal}");`);
         const run = vi.fn();
         await expect(installSherpaRuntime({ run, dir })).rejects.toBeInstanceOf(DecodeCancelled);
         expect(run).not.toHaveBeenCalled();
@@ -134,6 +134,16 @@ describe("installSherpaRuntime", () => {
       }
     },
   );
+
+  it("reads its own probe timeout as a broken runtime, not a cancel, and says so", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    try {
+      fakeRuntime(dir, "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);");
+      expect(sherpaRuntimeLoadError(dir, 300)).toBe("loading it timed out after 0.3 s");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("keeps each platform and arch in its own runtime dir", () => {
     expect(SHERPA_RUNTIME_DIR).toMatch(

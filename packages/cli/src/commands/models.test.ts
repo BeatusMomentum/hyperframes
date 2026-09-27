@@ -20,15 +20,21 @@ vi.mock("../utils/renderCancellation.js", () => ({
 
 import modelsCmd from "./models.js";
 
-async function install(): Promise<{ exitCode: number; out: Record<string, unknown> }> {
+async function install() {
   let exitCode = 0;
+  let threw = false;
   try {
     await modelsCmd.run!({ args: { action: "install", name: "parakeet", json: true } } as never);
   } catch (err) {
     if (!(err instanceof CliRuntimeError)) throw err;
     exitCode = err.result.exitCode;
+    threw = true;
   }
-  return { exitCode, out: JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0])) };
+  exitCode ||= consumeCommandResult().exitCode;
+  const out: Record<string, unknown> = JSON.parse(
+    String(vi.mocked(console.log).mock.calls.at(-1)?.[0]),
+  );
+  return { exitCode, threw, out };
 }
 
 describe("models install parakeet --json", () => {
@@ -46,6 +52,7 @@ describe("models install parakeet --json", () => {
   it("prints one result naming what it installed and where", async () => {
     expect(await install()).toEqual({
       exitCode: 0,
+      threw: false,
       out: {
         ok: true,
         model: "parakeet-tdt-0.6b-v3",
@@ -66,6 +73,7 @@ describe("models install parakeet --json", () => {
     sherpa.ensureParakeetModel.mockRejectedValue(new Error("tokens.txt did not match"));
     expect(await install()).toEqual({
       exitCode: 1,
+      threw: true,
       out: { ok: false, error: "tokens.txt did not match" },
     });
   });
@@ -74,6 +82,7 @@ describe("models install parakeet --json", () => {
     sherpa.sherpaUnsupportedReason.mockReturnValue("Parakeet needs glibc 2.32 or newer");
     expect(await install()).toEqual({
       exitCode: 1,
+      threw: true,
       out: { ok: false, error: "Parakeet needs glibc 2.32 or newer" },
     });
     expect(sherpa.installSherpaRuntime).not.toHaveBeenCalled();
@@ -82,8 +91,9 @@ describe("models install parakeet --json", () => {
 
   it("stops with exit 130 when Ctrl-C stops the runtime check before any listener runs", async () => {
     sherpa.installSherpaRuntime.mockRejectedValue(new sherpa.DecodeCancelled("cancelled"));
-    const { exitCode, out } = await install();
+    const { exitCode, threw, out } = await install();
     expect(exitCode).toBe(130);
+    expect(threw).toBe(false);
     expect(out).toMatchObject({ ok: false, error: expect.stringMatching(/cancelled/) });
   });
 
@@ -92,8 +102,9 @@ describe("models install parakeet --json", () => {
       cancel.abort();
       signal.throwIfAborted();
     });
-    const { exitCode, out } = await install();
+    const { exitCode, threw, out } = await install();
     expect(exitCode).toBe(130);
+    expect(threw).toBe(false);
     expect(out).toMatchObject({ ok: false, error: expect.stringMatching(/cancelled/) });
     expect(sherpa.installSherpaRuntime).toHaveBeenCalledWith({ signal: cancel.signal });
   });

@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadToFile } from "../cloud/download.js";
+import { stoppedByCancelSignal } from "../utils/renderCancellation.js";
 import {
   CACHE_DIR,
   install,
@@ -121,21 +122,29 @@ const LOAD_RUNTIME = `try {
 }`;
 
 /** Loads it in a child as the decode worker does: null when it loads, else the loader's error. */
-export function sherpaRuntimeLoadError(dir = SHERPA_RUNTIME_DIR): string | null {
+export function sherpaRuntimeLoadError(
+  dir = SHERPA_RUNTIME_DIR,
+  timeoutMs = 60_000,
+): string | null {
   if (!isInstalled(dir, RUNTIME)) return `${RUNTIME} is not installed in ${dir}`;
   const env = { ...process.env, HF_SHERPA_MANIFEST: join(dir, "package.json") };
   const probe = spawnSync(process.execPath, ["-e", LOAD_RUNTIME], {
     env,
     encoding: "utf8",
     stdio: ["ignore", "ignore", "pipe"],
-    timeout: 60_000,
+    timeout: timeoutMs,
   });
   if (probe.status === 0) return null;
   // Ctrl-C reaches the probe too: a cancel, never proof that a working runtime is broken.
-  if (!probe.error && (probe.signal === "SIGINT" || probe.signal === "SIGTERM")) {
-    throw new DecodeCancelled("Parakeet install cancelled");
-  }
-  return bounded(probe.stderr?.trim() || probe.error?.message || `exited with ${probe.status}`);
+  if (stoppedByCancelSignal(probe)) throw new DecodeCancelled("Parakeet install cancelled");
+  const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+  return bounded(
+    probe.stderr?.trim() ||
+      (timedOut ? `loading it timed out after ${timeoutMs / 1000} s` : probe.error?.message) ||
+      (probe.signal
+        ? `loading it crashed (${probe.signal})`
+        : `it exited ${probe.status} with no output`),
+  );
 }
 
 /** The native package, pinned too: the runtime's own optionalDependencies accept any 1.13.x. */
@@ -155,8 +164,11 @@ export async function installSherpaRuntime({
   const native = sherpaPlatformPackage();
   await install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
   const stillBroken = sherpaRuntimeLoadError(dir);
-  if (stillBroken)
-    throw new Error(`The sherpa-onnx runtime installed but does not load: ${stillBroken}`);
+  if (stillBroken) {
+    throw new Error(
+      `The sherpa-onnx runtime was reinstalled but still does not load (${stillBroken}). Use --engine whisper for now.`,
+    );
+  }
   return true;
 }
 
@@ -304,9 +316,7 @@ function decode(wavPath: string, signal: AbortSignal): Promise<SherpaWindow[]> {
         signal,
       },
       (err, stdout, stderr) => {
-        const interrupted =
-          err && !err.killed && (err.signal === "SIGINT" || err.signal === "SIGTERM");
-        if (signal.aborted || interrupted) {
+        if (signal.aborted || (err && stoppedByCancelSignal(err))) {
           reject(new DecodeCancelled("Transcription cancelled"));
           return;
         }

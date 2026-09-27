@@ -209,6 +209,20 @@ describe("transcribe command", () => {
       expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
     });
 
+    it("reports the fallback's own timeout as a failure, not a cancel", async () => {
+      crashChild("SIGABRT");
+      transcribeMock.mockImplementation(async () => {
+        throw Object.assign(new Error("spawnSync whisper-cli ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+          signal: "SIGTERM",
+        });
+      });
+      Object.assign(runners, { sherpa: true, mlx: false });
+      const { exitCode, out } = await transcribeFails("auto");
+      expect(exitCode).toBe(1);
+      expect(out.error).toMatch(/The whisper fallback failed too: spawnSync whisper-cli ETIMEDOUT/);
+    });
+
     it("--engine parakeet with nothing installed names the install command", async () => {
       Object.assign(runners, { sherpa: false, mlx: false });
       const { dir, input } = dummyAudio();

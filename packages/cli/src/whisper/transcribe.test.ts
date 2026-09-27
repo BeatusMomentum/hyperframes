@@ -165,14 +165,17 @@ describe("resolveWhisperTimeoutMs with overrideMs", () => {
 });
 
 describe("isWhisperTimeoutError", () => {
-  it("returns true for a Node SIGTERM child-timeout error", () => {
-    const err = Object.assign(new Error("Command failed"), { signal: "SIGTERM" });
+  it("returns true for execFileSync's own timeout (ETIMEDOUT with SIGTERM)", () => {
+    const err = Object.assign(new Error("Command failed"), {
+      code: "ETIMEDOUT",
+      signal: "SIGTERM",
+    });
     expect(isWhisperTimeoutError(err)).toBe(true);
   });
 
-  it("returns true for an ETIMEDOUT-coded error", () => {
-    const err = Object.assign(new Error("Command failed"), { code: "ETIMEDOUT" });
-    expect(isWhisperTimeoutError(err)).toBe(true);
+  it("returns false for a SIGTERM someone else sent, so it reaches the cancel rule", () => {
+    const err = Object.assign(new Error("Command failed"), { signal: "SIGTERM" });
+    expect(isWhisperTimeoutError(err)).toBe(false);
   });
 
   it("returns false for a non-timeout child error", () => {
@@ -197,7 +200,10 @@ describe("wrapWhisperTimeoutError", () => {
   });
 
   it("wraps SIGTERM timeouts with a discoverable hint naming --timeout and the env var", () => {
-    const original = Object.assign(new Error("Command failed"), { signal: "SIGTERM" });
+    const original = Object.assign(new Error("Command failed"), {
+      code: "ETIMEDOUT",
+      signal: "SIGTERM",
+    });
     const wrapped = wrapWhisperTimeoutError(original, {
       effectiveTimeoutMs: 1_260_000,
       model: "medium.en",

@@ -95,6 +95,7 @@ test(
           encoding: "utf8",
           env: {
             ...process.env,
+            HYPERFRAMES_PARAKEET: "",
             PATH: `${bin}:${process.env.PATH}`,
             HOME: root,
             HYPERFRAMES_MEDIA_HOME: join(root, "home"),

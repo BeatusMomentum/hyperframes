@@ -5,6 +5,7 @@ import { join, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { findFFmpeg, findFFprobe, getFFmpegInstallHint } from "../browser/ffmpeg.js";
+import { stoppedByCancelSignal } from "../utils/renderCancellation.js";
 import { ensureWhisper, ensureModel, hasFFmpeg, DEFAULT_MODEL } from "./manager.js";
 
 /**
@@ -307,12 +308,11 @@ function runFfmpeg(ffmpegPath: string, args: string[], output: string, timeout: 
     });
   } catch (err) {
     rmSync(output, { force: true });
-    const { code, signal, stderr } = err as { code?: string; signal?: string; stderr?: Buffer };
+    const stop = err as { code?: string; signal?: string; stderr?: Buffer };
     // A code means Node stopped it; ffmpeg traps Ctrl-C and says so (exit 255 is EPERM too on 7+).
-    if (code) throw err;
-    const said = String(stderr ?? "").trim();
-    const cancelled =
-      /Exiting normally, received signal/.test(said) || signal === "SIGINT" || signal === "SIGTERM";
+    if (stop.code) throw err;
+    const said = String(stop.stderr ?? "").trim();
+    const cancelled = /Exiting normally, received signal/.test(said) || stoppedByCancelSignal(stop);
     const reason = said.split("\n").at(-1) || (err as Error).message;
     // stderr: the command shows its last lines, where ffmpeg names the cause above its summary line.
     const failure = new Error(`ffmpeg failed: ${reason}`, { cause: err });
@@ -569,14 +569,9 @@ export async function transcribe(
 // Timeout error discoverability
 // ---------------------------------------------------------------------------
 
-// Node's `execFileSync` kills the child with SIGTERM when its `timeout` option
-// fires, so the resulting Error carries `signal === "SIGTERM"`. On some platforms
-// / Node versions `code === "ETIMEDOUT"` is also set. Match either signal so we
-// don't miss a timeout on a platform we haven't validated.
+// execFileSync's own timeout sets code ETIMEDOUT (and SIGTERM); a bare SIGTERM is someone stopping it.
 export function isWhisperTimeoutError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const record = err as { signal?: unknown; code?: unknown };
-  return record.signal === "SIGTERM" || record.code === "ETIMEDOUT";
+  return err instanceof Error && (err as { code?: unknown }).code === "ETIMEDOUT";
 }
 
 export interface WrapWhisperTimeoutOptions {
