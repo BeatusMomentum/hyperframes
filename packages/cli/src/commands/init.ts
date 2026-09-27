@@ -5,6 +5,7 @@
 // fallow-ignore-file complexity
 import { failCommand, finishCommand } from "../utils/commandResult.js";
 import { writeNewFileSync } from "../utils/writeNewFile.js";
+import { isAttendedTerminal } from "../utils/attendedTerminal.js";
 import { defineCommand, runCommand } from "citty";
 import type { Example } from "./_examples.js";
 
@@ -802,7 +803,7 @@ export default defineCommand({
       modelFlag ?? DEFAULT_MODEL,
       languageFlag,
     );
-    const interactive = !nonInteractive && process.stdout.isTTY === true;
+    const interactive = !nonInteractive && isAttendedTerminal();
 
     if (skipSkillsFlagIgnored) {
       console.log(
