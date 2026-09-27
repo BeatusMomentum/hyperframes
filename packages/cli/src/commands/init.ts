@@ -888,13 +888,14 @@ export default defineCommand({
       if (sourceFilePath && !skipTranscribe) {
         try {
           const { ensureWhisper, ensureModel } = await import("../whisper/manager.js");
-          await ensureWhisper();
+          await ensureWhisper({ mayInstall: false });
           await ensureModel(initialTranscriptionModel);
           console.log("Transcribing...");
           const { transcribe: runTranscribe } = await import("../whisper/transcribe.js");
           const result = await runTranscribe(sourceFilePath, destDir, {
             model: modelFlag,
             language: languageFlag,
+            mayInstall: false,
           });
           console.log(
             `Transcribed: ${result.wordCount} words (${result.durationSeconds.toFixed(1)}s)`,
@@ -1067,6 +1068,7 @@ export default defineCommand({
           const { ensureWhisper, ensureModel } = await import("../whisper/manager.js");
           await ensureWhisper({
             onProgress: (msg) => spin.message(msg),
+            mayInstall: true,
           });
           await ensureModel(initialTranscriptionModel, {
             onProgress: (msg) => spin.message(msg),
