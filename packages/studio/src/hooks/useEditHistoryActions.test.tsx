@@ -17,7 +17,7 @@ function mount(result: {
   message?: string;
   label?: string;
   paths?: string[];
-  changedSince?: { id: string; label: string };
+  changedSince?: { id: string; label: string; paths?: string[] };
 }) {
   const editHistory = {
     undo: vi.fn<EditHistoryHandle["undo"]>(async () => result),

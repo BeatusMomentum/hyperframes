@@ -177,13 +177,15 @@ it("the offer undoes an agent turn Studio has not seen yet, locking and soft-app
 
   const refused = await act(() => hook().undo({ readFile }));
   const locked: string[][] = [];
-  const serialize = <T,>(paths: readonly string[], task: () => Promise<T>) => {
+  const serialize = <T>(paths: readonly string[], task: () => Promise<T>) => {
     locked.push([...paths]);
     return task();
   };
   const since = refused.changedSince!;
   expect(since.paths).toEqual(["index.html"]);
-  expect(await act(() => staleUndoEntry(since.id, { readFile, serialize }, since.paths))).toMatchObject({
+  expect(
+    await act(() => staleUndoEntry(since.id, { readFile, serialize }, since.paths)),
+  ).toMatchObject({
     ok: true,
     files: { "index.html": { previous: "C", restored: "B" } },
   });
