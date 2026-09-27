@@ -48,7 +48,6 @@ export function captureDurationRollback(iframe: HTMLIFrameElement | null): () =>
 export interface LengthSync {
   lengthAfterEdit: LengthAfterEdit;
   activeCompPath: string | null;
-  writeProjectFile: CutoverDeps["writeProjectFile"];
 }
 
 /**
@@ -66,6 +65,8 @@ export async function syncEditLength(input: {
   coalesceKey?: string;
   coalesceMs: number;
   recordEdit: (edit: RecordEditInput) => Promise<void>;
+  /** The edit's own writer, so this write queues behind the edit's saves and GSAP rewrite. */
+  writeProjectFile: CutoverDeps["writeProjectFile"];
   lengthSync?: LengthSync;
 }): Promise<void> {
   const { iframe, projectId, targetPath, lengthSync } = input;
@@ -90,7 +91,7 @@ export async function syncEditLength(input: {
       "",
       {
         editHistory: { recordEdit: input.recordEdit },
-        writeProjectFile: lengthSync.writeProjectFile,
+        writeProjectFile: input.writeProjectFile,
         reloadPreview: input.reloadPreview,
         readProjectFile: (path) => readProjectFileContent(projectId, path),
       },

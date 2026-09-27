@@ -242,8 +242,9 @@ export function useTimelineEditing({
             label: "Move timeline clip",
             coalesceKey,
             recordEdit,
+            writeProjectFile,
             edit: { kind: "shift", delta: updates.start - element.start },
-            lengthSync: { lengthAfterEdit, activeCompPath, writeProjectFile },
+            lengthSync: { lengthAfterEdit, activeCompPath },
           }).finally(() => invalidateGsapCache?.());
         const moveFallback = () =>
           enqueueEdit(element, "Move timeline clip", buildMovePatches, coalesceKey, record).then(
@@ -332,10 +333,8 @@ export function useTimelineEditing({
       const hasPbsAdjustment =
         updates.playbackStart != null ||
         (updates.start !== element.start && element.playbackStart != null);
-      // Server-path fallback: after persisting the attr patch, scale GSAP tween
-      // positions/durations on the server, then soft-reload with the rewritten
-      // script (timing-only resize) — same no-flash path as move; full reload is
-      // the fallback.
+      // Server-path fallback: after the attr patch, scale GSAP tweens on the server and soft-reload
+      // the rewritten script (timing-only resize, no flash, as move); full reload is the fallback.
       const coalesceKey = `timeline-resize:${element.hfId ?? element.id}`;
       const finishResizeGsapSync = () =>
         finishClipTimingFallback({
@@ -347,12 +346,13 @@ export function useTimelineEditing({
           label: "Resize timeline clip",
           coalesceKey,
           recordEdit,
+          writeProjectFile,
           edit: {
             kind: "scale",
             from: { start: element.start, duration: element.duration },
             to: { start: updates.start, duration: updates.duration },
           },
-          lengthSync: { lengthAfterEdit, activeCompPath, writeProjectFile },
+          lengthSync: { lengthAfterEdit, activeCompPath },
         }).finally(() => invalidateGsapCache?.());
       const resizeFallback = () =>
         enqueueEdit(element, "Resize timeline clip", buildResizePatches, coalesceKey, record).then(

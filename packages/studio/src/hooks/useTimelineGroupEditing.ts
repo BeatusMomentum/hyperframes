@@ -315,6 +315,7 @@ export function useTimelineGroupEditing({
             errorLabel: "Failed to shift GSAP positions",
             coalesceKey,
             recordEdit,
+            writeProjectFile,
             activeCompPath,
             changes,
             resolveChangePath: (element) => targetPathFor(element, activeCompPath),
@@ -324,7 +325,7 @@ export function useTimelineGroupEditing({
               if (delta === 0 || !domId) return null;
               return shiftGsapPositions(projectId, changePath, domId, delta);
             },
-            lengthSync: { lengthAfterEdit, activeCompPath, writeProjectFile },
+            lengthSync: { lengthAfterEdit, activeCompPath },
           });
         } finally {
           invalidateGsapCache?.();
@@ -427,6 +428,7 @@ export function useTimelineGroupEditing({
             errorLabel: "Failed to scale GSAP positions",
             coalesceKey,
             recordEdit,
+            writeProjectFile,
             activeCompPath,
             changes,
             resolveChangePath: (element) => targetPathFor(element, activeCompPath),
@@ -446,7 +448,7 @@ export function useTimelineGroupEditing({
                 change.duration,
               );
             },
-            lengthSync: { lengthAfterEdit, activeCompPath, writeProjectFile },
+            lengthSync: { lengthAfterEdit, activeCompPath },
           });
         } finally {
           invalidateGsapCache?.();
