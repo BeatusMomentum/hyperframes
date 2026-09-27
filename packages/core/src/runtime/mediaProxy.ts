@@ -243,11 +243,7 @@ export function swapToProxy(
       return;
     }
     swappedElements.set(el, originalAttr);
-    // The swapped src points at a different file — sync state (drift offsets,
-    // seek-retry latches, volume tracking) computed against the original
-    // source must not carry over, or the next tick misreads a fresh file's
-    // buffering as drift. Evict before `load()` so the very next sync tick
-    // treats this element as a first tick.
+    // Sync state measured on the original would read the new file's buffering as drift.
     evictMediaSyncState(el);
     el.src = proxiedSrc;
     el.load();
