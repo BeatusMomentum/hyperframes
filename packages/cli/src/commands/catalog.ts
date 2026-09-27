@@ -550,13 +550,13 @@ function printInstalledView(
   const items = typeFilter
     ? view.items.filter((item) => `hyperframes:${item.type}` === typeFilter)
     : view.items;
-  const manifestUnreadable = view.usage.manifestUnreadable;
+  const configUnreadable = view.usage.manifestUnreadable;
   if (json) {
     console.log(
-      JSON.stringify({ items, scannedFiles: view.scannedFiles, manifestUnreadable }, null, 2),
+      JSON.stringify({ items, scannedFiles: view.scannedFiles, configUnreadable }, null, 2),
     );
   } else {
-    for (const line of installedViewLines(items, view.scannedFiles, manifestUnreadable))
+    for (const line of installedViewLines(items, view.scannedFiles, configUnreadable))
       console.log(line);
   }
 }

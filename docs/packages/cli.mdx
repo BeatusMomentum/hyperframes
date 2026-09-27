@@ -191,8 +191,9 @@ its install path (the configured folder or the default one); those are marked
 when `index.html` mounts it and "not used" when it does not; a component is
 pasted into your own markup, so it reads "pasted inline, can't tell"; a recorded
 item whose file is gone reads "file removed". It combines with `--type` and
-`--json` (`{ items, scannedFiles, manifestUnreadable }`, where each item has
-`name`, `type`, `file`, `status` and `foundBy`), not with `--query`, `--tag` or
+`--json` (`{ items, scannedFiles, configUnreadable }`, where each item has
+`name`, `type`, `file`, `status` and `foundBy`, and `configUnreadable` says
+`hyperframes.json` could not be read), not with `--query`, `--tag` or
 `--human-friendly`. Run it from a project folder, one with an `index.html`.
 
 ## Bring in source material

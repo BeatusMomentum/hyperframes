@@ -320,6 +320,19 @@ describe("listProjectCatalogItems", () => {
     expect(items.map((item) => item.file)).toEqual(["compositions/glitch.html"]);
   });
 
+  it("prefers the project's own folder when both hold the item", () => {
+    const { items } = listOf(
+      {
+        "index.html": entryDoc(),
+        "scenes/glitch.html": subCompDoc("glitch"),
+        "compositions/glitch.html": subCompDoc("glitch"),
+      },
+      { paths: { blocks: "scenes/" } },
+      [{ name: "glitch", type: "hyperframes:block" }],
+    );
+    expect(items.map((item) => item.file)).toEqual(["scenes/glitch.html"]);
+  });
+
   it("lists recorded items only, and says so, without the registry list", () => {
     const view = listOf(
       { "index.html": entryDoc(), "compositions/glitch.html": subCompDoc("glitch") },

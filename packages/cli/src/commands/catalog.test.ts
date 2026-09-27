@@ -1,4 +1,7 @@
 // fallow-ignore-file code-duplication
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RegistryItem } from "@hyperframes/core";
@@ -78,6 +81,7 @@ describe("countUnindexed", () => {
 
 const state = vi.hoisted(() => ({
   registry: [] as Array<{ name: string; type: string; tags?: string[] }>,
+  manifestFetches: 0,
   artifactRevision: "revision-current",
   cachedVectorRevision: "revision-current",
   vectorFetches: 0,
@@ -113,10 +117,10 @@ vi.mock("../registry/resolver.js", () => ({
 }));
 
 vi.mock("../registry/remote.js", () => ({
-  fetchRegistryManifest: async () => ({
-    items: state.registry,
-    catalogArtifact: { revision: state.artifactRevision },
-  }),
+  fetchRegistryManifest: async () => {
+    state.manifestFetches += 1;
+    return { items: state.registry, catalogArtifact: { revision: state.artifactRevision } };
+  },
 }));
 
 vi.mock("@clack/prompts", () => ({
@@ -275,6 +279,7 @@ async function runForExit(
 }
 
 beforeEach(() => {
+  state.manifestFetches = 0;
   state.modelStatus = "ready";
   state.artifactRevision = "revision-current";
   state.cachedVectorRevision = "revision-current";
@@ -949,5 +954,35 @@ describe("installedViewLines", () => {
     expect(installedViewLines([], false).at(-1)).toBe(
       "Registry list unavailable: showing only items recorded by hyperframes add.",
     );
+  });
+});
+
+describe("catalog --installed", () => {
+  const inProject = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-catalog-installed-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+  };
+
+  it("fails outside a project, as other project commands do, before fetching the registry", async () => {
+    inProject({});
+    const { exitCode, err } = await runForExit({ installed: true });
+    expect(exitCode).toBe(1);
+    expect(err).toContain("No composition found");
+    expect(state.manifestFetches).toBe(0);
+  });
+
+  it("refuses --query before fetching the registry", async () => {
+    inProject({ "index.html": "<html></html>" });
+    const { exitCode, err } = await runForExit({ installed: true, query: "chart" });
+    expect(exitCode).toBe(1);
+    expect(err).toContain("does not combine with --query");
+    expect(state.manifestFetches).toBe(0);
+  });
+
+  it("says in --json when hyperframes.json could not be read", async () => {
+    inProject({ "index.html": "<html></html>", "hyperframes.json": "{ broken" });
+    const out: unknown = JSON.parse(await runCatalog({ installed: true, json: true }));
+    expect(out).toMatchObject({ items: [], scannedFiles: true, configUnreadable: true });
   });
 });
