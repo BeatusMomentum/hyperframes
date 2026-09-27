@@ -258,11 +258,7 @@ function devProjectApi(): Plugin {
           !filePath.endsWith(".json")
         )
           return;
-        // Mirrors the CLI host's `project.id` field on the same event — see its
-        // doc comment for why a stale tab needs this to ignore another
-        // project's saves on a shared connection. This host is multi-project
-        // (any dir under `dataDir` resolves), so unlike the CLI host it can't
-        // assume one fixed id.
+        // The project id lets a stale tab ignore another project's saves, as on the CLI host.
         const projectId = projectIdForWatchedFile(dataDir, filePath);
         if (!projectId) return;
         console.log(`[Studio] File changed: ${filePath}`);
