@@ -912,17 +912,18 @@ class Engine {
     return entry.files.filter((file) => (this.tracked.get(file.path)?.hash ?? null) !== file.after);
   }
 
-  /** The newest later change to `changed` that an undo can still take, so undoing it first unblocks `entry`. */
+  /** The newest later change whose content is still on a file `entry` is blocked on. */
   blockerOf(entry: HistoryEntry, changed: HistoryFileChange[]): HistoryName | undefined {
     const paths = new Set(changed.map((file) => file.path));
     const undone = undoneIds(this.log.entries);
     const later = this.log.entries.slice(this.log.entries.indexOf(entry) + 1).reverse();
+    const holdsBlockedFile = (candidate: HistoryEntry) =>
+      candidate.files.some(
+        (file) =>
+          paths.has(file.path) && (this.tracked.get(file.path)?.hash ?? null) === file.after,
+      );
     const blocker = later.find(
-      (candidate) =>
-        !candidate.undoes &&
-        !undone.has(candidate.id) &&
-        candidate.files.some((file) => paths.has(file.path)) &&
-        !this.movedOn(candidate).length,
+      (candidate) => !candidate.undoes && !undone.has(candidate.id) && holdsBlockedFile(candidate),
     );
     if (!blocker) return undefined;
     return { id: blocker.id, label: blocker.label, paths: blocker.files.map((file) => file.path) };

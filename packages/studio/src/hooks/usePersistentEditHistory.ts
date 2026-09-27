@@ -184,7 +184,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
         // 404: this app keeps no history, so there is nothing to step.
         if (!posted.ok && posted.status === 404) return { ok: false, reason: "empty" };
         if (!posted.ok) return { ok: false, reason: "failed", message: posted.error };
-        const reply = posted.body as HistoryResult & { changedSince?: EntryName };
+        const reply = posted.body as HistoryResult;
         if (!reply.ok) {
           const { files } = reply.conflict;
           const { changedSince } = reply;

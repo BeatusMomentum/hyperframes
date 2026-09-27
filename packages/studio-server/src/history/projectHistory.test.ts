@@ -1697,6 +1697,23 @@ describe("claim: a writer that records after writing", () => {
     const refused = await history.step("back", you);
     expect(refused).toMatchObject({ ok: false });
     expect(refused).not.toHaveProperty("changedSince", expect.anything());
+    expect(history.changedSince(history.next("back", you)!.id)).toBeUndefined();
+  });
+
+  it("names a later change still on the blocked file though another of its files moved on", async () => {
+    const { history, write } = await project({ "index.html": "A", "scene.html": "s1" });
+    write("index.html", "B");
+    await history.claim(you, "Moved Title", ["index.html"]);
+    const turn = await change(history, agent, "Agent turn", () => {
+      write("index.html", "C");
+      write("scene.html", "s2");
+    });
+    await change(history, agent, "Agent turn 2", () => write("scene.html", "s3"));
+
+    expect(await history.step("back", you)).toMatchObject({
+      ok: false,
+      changedSince: { id: turn.id, paths: ["index.html", "scene.html"] },
+    });
   });
 
   it("names the agent's earlier turn, not its undo of a later one or the turn it undid", async () => {
