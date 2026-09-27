@@ -7,10 +7,10 @@
 
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, relative, sep } from "node:path";
 import { readBundleFile } from "./readBundleFile.js";
 import {
   createProjectWatcher,
@@ -755,40 +755,45 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
 
     async listRegistryCatalog() {
       const { listRegistryItems, loadAllItems } = await import("../registry/resolver.js");
-      const entries = await listRegistryItems();
+      const { loadProjectConfig } = await import("../utils/projectConfig.js");
+      // The same registry `add` installs from, so the panel lists what can be installed.
+      const registry = { baseUrl: loadProjectConfig(projectDir).registry };
+      const entries = await listRegistryItems(undefined, registry);
       const blockAndComponentEntries = entries.filter(
         (e) => e.type === "hyperframes:block" || e.type === "hyperframes:component",
       );
-      return loadAllItems(blockAndComponentEntries);
+      return loadAllItems(blockAndComponentEntries, registry);
     },
 
     async installRegistryBlock(opts) {
-      const { resolveItemWithDependencies } = await import("../registry/resolver.js");
-      const { installItem } = await import("../registry/installer.js");
-      const { gateRegistryItemsCompatibility } = await import("../registry/compatibility.js");
-      // Resolve transitive registryDependencies and install them first so a
-      // block that depends on other registry items installs completely.
-      const items = await resolveItemWithDependencies(opts.blockName);
-      // Compatibility-gate the whole set before writing anything (same gate as
-      // `hyperframes add`), so an incompatible block or dep aborts cleanly.
-      const warnings = gateRegistryItemsCompatibility(items);
-      for (const warning of warnings) {
+      const { addToProject, primaryInstalledTarget } = await import("../commands/add.js");
+      const { recordRewrittenInstall } = await import("../registry/installer.js");
+      const { registryTargetPath } = await import("../registry/publication.js");
+      const { result, item } = await addToProject({
+        name: opts.blockName,
+        projectDir: opts.project.dir,
+        skipClipboard: true,
+        source: "studio",
+      });
+      for (const warning of result.warnings) {
         process.stderr.write(`hyperframes:registry ${warning}\n`);
       }
-      const written: string[] = [];
-      for (const dep of items) {
-        const result = await installItem(dep, { destDir: opts.project.dir });
-        written.push(...result.written);
-      }
-      const item = items[items.length - 1]!;
+      const written = result.written;
 
       rewriteWrittenToHostViewport(opts.project.dir, written);
+      recordRewrittenInstall(opts.project.dir, written);
 
-      const relativePaths = written.map((abs) => {
-        const rel = abs.startsWith(opts.project.dir) ? abs.slice(opts.project.dir.length + 1) : abs;
-        return rel;
-      });
-      return { written: relativePaths, block: item };
+      // The item's own file first, as add recorded it, since Studio mounts the first .html it gets.
+      const root = realpathSync(opts.project.dir);
+      const primary = primaryInstalledTarget(item);
+      const primaryPath = registryTargetPath(root, primary);
+      const others = written
+        .filter((abs) => abs !== primaryPath)
+        .map((abs) => relative(root, abs).split(sep).join("/"));
+      return {
+        written: written.includes(primaryPath) ? [primary, ...others] : others,
+        block: item,
+      };
     },
   };
 
