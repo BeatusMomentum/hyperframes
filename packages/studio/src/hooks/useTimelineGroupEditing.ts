@@ -11,6 +11,7 @@ import {
 import {
   extendRootDurationIfNeeded,
   formatTimelineAttributeNumber,
+  formatTimelineMediaOffset,
   patchIframeDomTiming,
   patchTimelineMoveTiming,
   patchTimelineResizeTiming,
@@ -365,7 +366,7 @@ export function useTimelineGroupEditing({
         ];
         if (change.playbackStart != null) {
           const liveAttr = playbackStartAttributeForElement(change.element);
-          liveAttrs.push([liveAttr, formatTimelineAttributeNumber(change.playbackStart)]);
+          liveAttrs.push([liveAttr, formatTimelineMediaOffset(change.playbackStart)]);
         }
         patchIframeDomTiming(previewIframeRef.current, change.element, liveAttrs, activeCompPath);
       }
