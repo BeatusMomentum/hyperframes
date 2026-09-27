@@ -328,13 +328,12 @@ async function runFfmpeg(
   if (!ffmpegPath) {
     throw new FfmpegUnavailableError();
   }
-  // Tone-map what renders tone-map: a PQ or HLG transfer. The tone map discards
-  // alpha, so the alpha-preserving VP8 variant keeps its source colour values.
+  const keepsAlpha = variant === "vp8";
   const { hdrTransfer } = metadata.color;
-  const toneMap = (hdrTransfer === "pq" || hdrTransfer === "hlg") && variant !== "vp8";
+  const toneMap = (hdrTransfer === "pq" || hdrTransfer === "hlg") && !keepsAlpha;
   if (toneMap) await ensureHdrFilters(ffmpegPath);
   const evenScale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
-  const pixelFormat = variant === "vp8" ? "yuva420p" : "yuv420p";
+  const pixelFormat = keepsAlpha ? "yuva420p" : "yuv420p";
   // The tone map ends in RGB; older ffmpeg (seen on 5.1) converts it with BT.601 unless the matrix is named.
   const videoFilter = toneMap
     ? [
