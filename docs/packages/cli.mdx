@@ -274,7 +274,7 @@ npx hyperframes transcribe transcript.json --to srt
 | Flag              | Description                                                                                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--dir, -d`       | Project directory (default: current directory)                                                                                                                                                     |
-| `--engine, -e`    | ASR engine: `auto` (default — Parakeet if installed, else whisper), `parakeet` (fails if Parakeet is missing or broken), or `whisper`                                                              |
+| `--engine, -e`    | ASR engine: `auto` (default — Parakeet if installed and the language is one of its 25, else whisper), `parakeet` (fails if Parakeet is missing, broken, or lacks the `--language`), or `whisper` |
 | `--model, -m`     | Whisper model (default `small.en`): `tiny.en`, `base.en`, `small.en`, `medium.en`, `large-v3`                                                                                                       |
 | `--language, -l`  | Language code (`en`, `es`, `ja`, …). Filters out speech in other languages.                                                                                                                        |
 | `--to`            | Export a sidecar instead: `srt` or `vtt`                                                                                                                                                           |
@@ -286,7 +286,9 @@ npx hyperframes transcribe transcript.json --to srt
 
 The command works out what you gave it. Audio and video are transcribed
 locally — Parakeet when it is installed (`hyperframes models install parakeet`;
-faster and more accurate), whisper.cpp otherwise. If Parakeet fails under
+faster and more accurate), whisper.cpp otherwise. Parakeet covers en, es, fr,
+de, bg, hr, cs, da, nl, et, fi, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, sv,
+ru and uk; `auto` uses whisper for any other `--language`. If Parakeet fails under
 `auto`, the run says why, names the repair command, and uses whisper. Transcript files are imported and
 normalized instead: whisper.cpp JSON, OpenAI Whisper API JSON with word
 timestamps, SRT, and VTT all land as the same `[{text, start, end}]` word array
@@ -317,7 +319,8 @@ npx hyperframes models install parakeet --json   # one JSON result
 `parakeet` installs the sherpa-onnx runtime from npm and NVIDIA's Parakeet TDT
 0.6B v3 speech model (int8, about 640 MB, CC-BY-4.0) into
 `~/.cache/hyperframes`. Every file is checked against a pinned size and
-sha256. Re-running is a no-op, and repairs a broken install. It runs on macOS
+sha256. Re-running is a no-op on a good install and reinstalls any missing or
+corrupt part, including a runtime whose native binary is gone. It runs on macOS
 (arm64, x64), Windows (x64, ia32) and Linux (x64, arm64, glibc 2.32 or newer),
 and refuses up front anywhere else. Ctrl-C stops the download and keeps no
 partial file.

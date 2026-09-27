@@ -62,7 +62,7 @@ export default defineCommand({
     engine: {
       type: "string",
       description:
-        "ASR engine: auto (Parakeet if installed, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; install it with `hyperframes models install parakeet`.",
+        "ASR engine: auto (Parakeet if installed and it covers --language, else whisper), parakeet, or whisper. Default: auto. Parakeet is more accurate and faster; install it with `hyperframes models install parakeet`.",
       alias: "e",
     },
     model: {
