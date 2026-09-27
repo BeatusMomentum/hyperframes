@@ -3,6 +3,7 @@ import type { HfColorCurvePoint, HfHueCurvePoint } from "./colorGradingCurves";
 import {
   COLOR_GRADING_ADJUST_KEYS,
   COLOR_GRADING_ADVANCED_LIMITS,
+  COLOR_GRADING_CAMERA_COLOR_SPACES,
   COLOR_GRADING_COLOR_SPACE,
   COLOR_GRADING_CONTRACT_VERSION,
   COLOR_GRADING_CURVE_KEYS,
@@ -40,6 +41,29 @@ export const COLOR_GRADING_AUTHORED_OPACITY_ATTR = "data-hf-authored-opacity";
 export const HF_COLOR_GRADING_CANVAS_ID_PREFIX = "__hf_color_grading_";
 
 export const HF_COLOR_GRADING_COLOR_SPACE = COLOR_GRADING_COLOR_SPACE;
+
+export type HfColorGradingCameraColorSpace = (typeof COLOR_GRADING_CAMERA_COLOR_SPACES)[number];
+
+/** Shader curve id and the camera gamut's linear-light matrix to BT.709, row-major, D65 both sides. */
+export const HF_COLOR_GRADING_CAMERA_INPUTS: Record<
+  HfColorGradingCameraColorSpace,
+  { curve: number; toRec709: readonly number[] }
+> = {
+  // Matrix from colour-science 0.4.7 matrix_RGB_to_RGB(S-Gamut3.Cine, ITU-R BT.709).
+  "slog3-sgamut3cine": {
+    curve: 1,
+    toRec709: [
+      1.6269474099, -0.5401385388, -0.0868088707, -0.1785155272, 1.4179409274, -0.2394254004,
+      -0.044436115, -0.1959199662, 1.2403560812,
+    ],
+  },
+};
+
+export function readHfColorGradingCameraInput(colorSpace: string) {
+  return Object.hasOwn(HF_COLOR_GRADING_CAMERA_INPUTS, colorSpace)
+    ? HF_COLOR_GRADING_CAMERA_INPUTS[colorSpace as HfColorGradingCameraColorSpace]
+    : null;
+}
 
 export type HfColorGradingPresetId =
   | "neutral"
@@ -1538,7 +1562,7 @@ export function isHfColorGradingActive(
     Math.abs(grading.details.vignette) > 0.0001 ||
     Math.abs(grading.details.grain) > 0.0001 ||
     HF_COLOR_GRADING_ACTIVE_EFFECT_KEYS.some((key) => Math.abs(grading.effects[key]) > 0.0001);
-  if (hasIndependentTreatment) return true;
+  if (hasIndependentTreatment || readHfColorGradingCameraInput(grading.colorSpace)) return true;
   if (grading.intensity === 0) return false;
   if (grading.lut && grading.lut.intensity !== 0) return true;
   return (

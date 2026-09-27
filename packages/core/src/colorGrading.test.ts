@@ -393,6 +393,12 @@ describe("color grading", () => {
     expect(isHfColorGradingActive(optionsOnly)).toBe(false);
   });
 
+  it("keeps a camera log conversion active even at zero creative intensity", () => {
+    const grading = normalizeHfColorGrading({ colorSpace: "slog3-sgamut3cine", intensity: 0 });
+    expect(isHfColorGradingActive(grading)).toBe(true);
+    expect(isHfColorGradingActive(normalizeHfColorGrading({ intensity: 0 }))).toBe(false);
+  });
+
   it("uses the public ASCII defaults when only the family is enabled", () => {
     const grading = normalizeHfColorGrading({ effects: { ascii: 1 } });
 

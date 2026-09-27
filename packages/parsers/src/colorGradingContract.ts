@@ -1,5 +1,7 @@
 export const COLOR_GRADING_CONTRACT_VERSION = 2;
 export const COLOR_GRADING_COLOR_SPACE = "rec709";
+/** Camera log encodings a grade converts to rec709 before any control runs. */
+export const COLOR_GRADING_CAMERA_COLOR_SPACES = ["slog3-sgamut3cine"] as const;
 export const COLOR_GRADING_MAX_CURVE_POINTS = 16;
 export const COLOR_GRADING_MAX_SECONDARIES = 4;
 export const COLOR_GRADING_ADVANCED_LIMITS = {
@@ -399,11 +401,13 @@ function validateColorSpace(
   if (
     grading.colorSpace !== undefined &&
     !isColorGradingVariableRef(grading.colorSpace) &&
-    grading.colorSpace !== COLOR_GRADING_COLOR_SPACE
+    grading.colorSpace !== COLOR_GRADING_COLOR_SPACE &&
+    !(COLOR_GRADING_CAMERA_COLOR_SPACES as readonly unknown[]).includes(grading.colorSpace)
   ) {
+    const allowed = [COLOR_GRADING_COLOR_SPACE, ...COLOR_GRADING_CAMERA_COLOR_SPACES];
     issues.push({
       path: "colorSpace",
-      message: `must be "${COLOR_GRADING_COLOR_SPACE}" or a variable reference`,
+      message: `must be one of ${allowed.map((id) => `"${id}"`).join(", ")} or a variable reference`,
     });
   }
 }

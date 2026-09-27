@@ -52,6 +52,13 @@ describe("color grading contract", () => {
     expect(isColorGradingVariableRef("${grade.amount}")).toBe(true);
   });
 
+  it("accepts a camera log colour space and rejects an unknown one", () => {
+    expect(validateColorGradingContract({ colorSpace: "slog3-sgamut3cine" })).toEqual([]);
+    expect(validateColorGradingContract({ colorSpace: "slog2-sgamut" })).toEqual([
+      expect.objectContaining({ path: "colorSpace" }),
+    ]);
+  });
+
   it("rejects unknown fields, invalid ranges, and malformed palettes", () => {
     expect(
       validateColorGradingContract({

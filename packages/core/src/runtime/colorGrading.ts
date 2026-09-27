@@ -11,6 +11,7 @@ import {
   isHfColorGradingActive,
   normalizeHfColorGrading,
   normalizeHfColorGradingWithVariables,
+  readHfColorGradingCameraInput,
   type HfColorGradingAdjustKey,
   type HfColorGradingAnimatablePath,
   type HfColorGradingDetailKey,
@@ -91,6 +92,8 @@ interface ProgramInfo {
   lutDomainMin: WebGLUniformLocation | null;
   lutDomainMax: WebGLUniformLocation | null;
   lutIntensity: WebGLUniformLocation | null;
+  cameraCurve: WebGLUniformLocation | null;
+  cameraToRec709: WebGLUniformLocation | null;
   shadowWheel: WebGLUniformLocation | null;
   midtoneWheel: WebGLUniformLocation | null;
   highlightWheel: WebGLUniformLocation | null;
@@ -388,6 +391,8 @@ const FRAGMENT_SHADER = [
   "uniform vec3 u_lutDomainMin;",
   "uniform vec3 u_lutDomainMax;",
   "uniform float u_lutIntensity;",
+  "uniform float u_cameraCurve;",
+  "uniform mat3 u_cameraToRec709;",
   "uniform vec3 u_shadowWheel;",
   "uniform vec3 u_midtoneWheel;",
   "uniform vec3 u_highlightWheel;",
@@ -505,7 +510,23 @@ const FRAGMENT_SHADER = [
   "  centered *= 1.0 + curvature * dist;",
   "  return centered * 0.5 + 0.5;",
   "}",
-  "vec4 sampleSource(vec2 uv){ return texture2D(u_source, clampUv(uv)); }",
+  // Sony S-Log3 is defined on legal-range 10-bit code values; the texture holds full range.
+  "float decodeSLog3(float v){",
+  "  float cv = v * 876.0 + 64.0;",
+  "  if (cv >= 171.2102946929) return pow(10.0, (cv - 420.0) / 261.5) * 0.19 - 0.01;",
+  "  return (cv - 95.0) * 0.01125 / (171.2102946929 - 95.0);",
+  "}",
+  // Camera log to BT.709 gamma 2.4, before any control; values above 1 stay for the grade.
+  "vec3 applyCameraInput(vec3 color){",
+  "  if (u_cameraCurve < 0.5) return color;",
+  "  vec3 scene = vec3(decodeSLog3(color.r), decodeSLog3(color.g), decodeSLog3(color.b));",
+  // Row-major upload read as column-major, so vector-times-matrix applies the authored matrix.
+  "  return pow(max(scene * u_cameraToRec709, 0.0), vec3(1.0 / 2.4));",
+  "}",
+  "vec4 sampleSource(vec2 uv){",
+  "  vec4 color = texture2D(u_source, clampUv(uv));",
+  "  return vec4(applyCameraInput(color.rgb), color.a);",
+  "}",
   "vec4 sampleBlur(vec2 uv){ return texture2D(u_blurSource, clampUv(uv)); }",
   "vec3 sampleBloom(vec2 uv){ return texture2D(u_bloomSource, clampUv(uv)).rgb; }",
   "vec3 sampleKuwahara(vec2 uv){",
@@ -1700,6 +1721,8 @@ function createProgramInfo(canvas: HTMLCanvasElement): {
       lutDomainMin: gl.getUniformLocation(program, "u_lutDomainMin"),
       lutDomainMax: gl.getUniformLocation(program, "u_lutDomainMax"),
       lutIntensity: gl.getUniformLocation(program, "u_lutIntensity"),
+      cameraCurve: gl.getUniformLocation(program, "u_cameraCurve"),
+      cameraToRec709: gl.getUniformLocation(program, "u_cameraToRec709"),
       shadowWheel: gl.getUniformLocation(program, "u_shadowWheel"),
       midtoneWheel: gl.getUniformLocation(program, "u_midtoneWheel"),
       highlightWheel: gl.getUniformLocation(program, "u_highlightWheel"),
@@ -2864,6 +2887,9 @@ function applyUniforms(
     lut?.domainMax[2] ?? 1,
   );
   gl.uniform1f(program.lutIntensity, grading.lut?.intensity ?? 0);
+  const camera = readHfColorGradingCameraInput(grading.colorSpace);
+  gl.uniform1f(program.cameraCurve, camera?.curve ?? 0);
+  if (camera) gl.uniformMatrix3fv(program.cameraToRec709, false, camera.toRec709);
   const { curves, hueCurves, secondaries } = grading;
   const rgbCurvesEnabled = hasHfColorGradingRgbCurveValues(curves);
   const hueCurvesEnabled = hasHfColorGradingHueCurveValues(hueCurves);
