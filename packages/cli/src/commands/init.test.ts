@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyResolutionPreset,
@@ -295,6 +295,7 @@ describe("hyperframes init flag rename", () => {
   });
 
   const whisperOnMachine =
+    Boolean(process.env.HYPERFRAMES_WHISPER_PATH) ||
     spawnSync("which", ["whisper-cli"]).status === 0 ||
     ["/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"].some((p) => existsSync(p));
 
@@ -313,10 +314,12 @@ describe("hyperframes init flag rename", () => {
       // A fresh HOME hides any whisper built into ~/.cache by an earlier run.
       const res = runInit([join(dir, "proj"), "--non-interactive", "--audio", audio], {
         HOME: dir,
-        PATH: `${bin}:${process.env.PATH}`,
+        USERPROFILE: dir,
+        PATH: `${bin}${delimiter}${process.env.PATH}`,
       });
       expect(res.stdout).toContain("hyperframes models install parakeet");
-      expect(existsSync(installLog)).toBe(false);
+      // The fakes are sh scripts, which Windows cannot run.
+      if (process.platform !== "win32") expect(existsSync(installLog)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

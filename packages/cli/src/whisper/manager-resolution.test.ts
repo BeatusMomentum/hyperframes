@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// brew, git and cmake are on PATH; every non-`which` command is recorded as an install attempt.
+// brew, git and cmake are on PATH; any command but a which/where lookup counts as an install.
 const state = vi.hoisted(() => ({ attended: false, installs: [] as string[] }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -8,7 +8,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return {
     ...actual,
     execFileSync: vi.fn((command: string, args: string[]) => {
-      if (command === "which") {
+      if (command === "which" || command === "where") {
         if (args[0] === "whisper") return "/fake/python-whisper\n";
         if (["brew", "git", "cmake"].includes(args[0] ?? "")) return `/fake/${args[0]}\n`;
         throw new Error(`${args[0]} not found`);
@@ -39,7 +39,9 @@ describe("findWhisper", () => {
   });
 });
 
-describe("ensureWhisper", () => {
+// Lookups run `where` when process.platform is win32, so cover both hosts on every CI lane.
+describe.each(["linux", "win32"])("ensureWhisper on a %s host", (hostPlatform) => {
+  const realPlatform = process.platform;
   const unattendedError = {
     code: "WHISPER_UNAVAILABLE",
     message: expect.stringMatching(/hyperframes models install parakeet.*brew install whisper-cpp/),
@@ -47,6 +49,11 @@ describe("ensureWhisper", () => {
 
   beforeEach(() => {
     state.installs.length = 0;
+    Object.defineProperty(process, "platform", { value: hostPlatform });
+  });
+
+  afterAll(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
   });
 
   it("an unattended run only probes: no brew, no source build", async () => {
