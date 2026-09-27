@@ -222,7 +222,7 @@ const HDR_TO_SDR_TONEMAP_FILTER =
 const HDR_TO_SDR_TRANSFORM_KEY = "hdr2sdr-hable-bt709";
 const SDR_CANVAS_PASSTHROUGH_FILTER = "setparams=color_primaries=bt709:color_trc=iec61966-2-1";
 const SDR_JPEG_AS_BT601_FULL_RANGE_FILTER =
-  "format=gbrp,scale=out_color_matrix=bt601:out_range=pc,format=yuv420p";
+  "scale=flags=neighbor,format=gbrp,scale=out_color_matrix=bt601:out_range=pc:flags=neighbor,format=yuv420p";
 
 function sdrToHdrTransformKey(transfer: HdrTransfer): string {
   return `sdr2hdr-${transfer}`;

@@ -1456,7 +1456,7 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
       "-f",
       "lavfi",
       "-i",
-      `color=c=0xC83C28:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=1:r=1,format=rgb24`,
+      `color=c=0xC83C28:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=1:r=1,format=rgb24,drawbox=x=31:y=0:w=64:h=${UI_FIXTURE_HEIGHT}:c=0x0000FE:t=fill`,
       "-vf",
       "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
       "-c:v",
@@ -1479,10 +1479,13 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
 
     expect(result.errors).toEqual([]);
     const frame = result.extracted[0]!.framePaths.get(0)!;
-    const source = readFirstFramePixel(fixture, 10, 10);
-    const shown = readFirstFramePixel(frame, 10, 10);
-    const worst = Math.max(...shown.map((v, i) => Math.abs(v - source[i]!)));
-    expect(worst, `source ${source} jpg ${shown}`).toBeLessThanOrEqual(3);
+    // x=10 is flat colour; x=32 sits one pixel inside the blue edge.
+    for (const x of [10, 32]) {
+      const source = readFirstFramePixel(fixture, x, 10);
+      const shown = readFirstFramePixel(frame, x, 10);
+      const worst = Math.max(...shown.map((v, i) => Math.abs(v - source[i]!)));
+      expect(worst, `x=${x}: source ${source} jpg ${shown}`).toBeLessThanOrEqual(3);
+    }
   }, 60_000);
 
   it("keeps jpg and png extraction caches separate", async () => {

@@ -1751,14 +1751,14 @@ describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
   it("delivers Chrome's JPEG colours in the BT.709 the mp4 is tagged with", () => {
     const ffmpeg = getFfmpegBinary();
     const dir = mkdtempSync(join(tmpdir(), "hf-sdr-colour-"));
-    const rgbAt = (file: string, decode: string): number[] => [
+    const rgbAt = (file: string, decode: string, x: number): number[] => [
       ...spawnSync(ffmpeg, [
         "-v",
         "error",
         "-i",
         file,
         "-vf",
-        `${decode}format=rgb24,crop=1:1:8:8`,
+        `${decode}format=rgb24,crop=1:1:${x}:8`,
         "-frames:v",
         "1",
         "-f",
@@ -1777,7 +1777,7 @@ describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
           "-f",
           "lavfi",
           "-i",
-          `color=c=${color}:s=16x16`,
+          `color=c=${color}:s=64x16,format=rgb24,drawbox=x=31:y=0:w=33:h=16:c=0x0000FE:t=fill`,
           "-frames:v",
           "1",
           "-pix_fmt",
@@ -1788,7 +1788,7 @@ describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
         const args = buildEncoderArgs(
           {
             fps: { num: 30, den: 1 },
-            width: 16,
+            width: 64,
             height: 16,
             codec: "h264",
             preset: "ultrafast",
@@ -1799,12 +1799,20 @@ describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
         );
         expect(spawnSync(ffmpeg, args).status).toBe(0);
 
-        const captured = rgbAt(jpg, "");
-        const delivered = rgbAt(out, "scale=in_color_matrix=bt709:in_range=tv,");
-        const worst = Math.max(...delivered.map((v, i) => Math.abs(v - captured[i]!)));
-        expect(worst, `${color}: capture ${captured} delivered ${delivered}`).toBeLessThanOrEqual(
-          1,
-        );
+        // x=8 is flat colour; x=32 sits one pixel inside the blue edge, where a smoothing
+        // chroma resample bleeds the colour across.
+        for (const [x, limit] of [
+          [8, 2],
+          [32, 2],
+        ] as const) {
+          const captured = rgbAt(jpg, "", x);
+          const delivered = rgbAt(out, "scale=in_color_matrix=bt709:in_range=tv,", x);
+          const worst = Math.max(...delivered.map((v, i) => Math.abs(v - captured[i]!)));
+          expect(
+            worst,
+            `${color} x=${x}: capture ${captured} delivered ${delivered}`,
+          ).toBeLessThanOrEqual(limit);
+        }
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
