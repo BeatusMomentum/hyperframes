@@ -10,6 +10,23 @@ const CARD_GAP = 6;
 const CARD_TEXT_H = 38.5;
 const ROW_OVERSCAN = 2;
 
+/** Column count and card width of the auto-fill grid at a given width. */
+export function gridColumns(width: number): { columns: number; cardWidth: number } {
+  const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)));
+  return { columns, cardWidth: (width - (columns - 1) * CARD_GAP) / columns };
+}
+
+/** The rows to mount, plus the row holding keyboard focus, or scrolling it away would drop focus to <body>. */
+export function withFocusedRow(rows: number[], focusedRow: number | null, count: number): number[] {
+  if (focusedRow === null || rows.includes(focusedRow) || focusedRow >= count) return rows;
+  return [...rows, focusedRow].sort((a, b) => a - b);
+}
+
+/** Row heights are cached by key, so a new column count or card width must not reuse the old ones. */
+export function gridRowKey(columns: number, cardWidth: number, index: number): string {
+  return `${columns}:${Math.round(cardWidth)}:${index}`;
+}
+
 /**
  * Renders only the rows near the viewport. Every mounted card is a paint chunk Chrome re-layerizes on
  * each frame the preview repaints, so an unvirtualized catalog taxed playback on every frame.
@@ -42,18 +59,15 @@ export function BlockGrid({
     return () => observer.disconnect();
   }, []);
 
-  const columns = Math.max(1, Math.floor((gridWidth + CARD_GAP) / (CARD_MIN_W + CARD_GAP)));
-  const cardWidth = (gridWidth - (columns - 1) * CARD_GAP) / columns;
+  const { columns, cardWidth } = gridColumns(gridWidth);
   const rowCount = Math.ceil(blocks.length / columns);
   const rangeExtractor = useCallback(
-    (range: Range) => {
-      const rows = defaultRangeExtractor(range);
-      // Keep the row holding keyboard focus mounted, or scrolling it away would drop focus to <body>.
-      return focusedRow === null || rows.includes(focusedRow) || focusedRow >= range.count
-        ? rows
-        : [...rows, focusedRow].sort((a, b) => a - b);
-    },
+    (range: Range) => withFocusedRow(defaultRangeExtractor(range), focusedRow, range.count),
     [focusedRow],
+  );
+  const getItemKey = useCallback(
+    (index: number) => gridRowKey(columns, cardWidth, index),
+    [columns, cardWidth],
   );
   const virtualizer = useVirtualizer({
     count: rowCount,
@@ -62,6 +76,7 @@ export function BlockGrid({
     overscan: ROW_OVERSCAN,
     scrollMargin: gridTop,
     rangeExtractor,
+    getItemKey,
   });
 
   return (
