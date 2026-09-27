@@ -932,6 +932,19 @@ describe("installedViewLines", () => {
     expect(lines.at(-1)).toBe("2 items, 1 in use by index.html.");
   });
 
+  it("counts one item in the singular", () => {
+    const one = { name: "glitch", type: "block", file: "compositions/glitch.html" } as const;
+    expect(installedViewLines([{ ...one, status: "not-used", foundBy: "file" }], true).at(-1)).toBe(
+      "1 item, 0 in use by index.html.",
+    );
+  });
+
+  it("says when hyperframes.json could not be read", () => {
+    expect(installedViewLines([], true, true).at(-1)).toBe(
+      "hyperframes.json could not be read: items recorded by hyperframes add are missing.",
+    );
+  });
+
   it("says when only recorded items could be listed", () => {
     expect(installedViewLines([], false).at(-1)).toBe(
       "Registry list unavailable: showing only items recorded by hyperframes add.",

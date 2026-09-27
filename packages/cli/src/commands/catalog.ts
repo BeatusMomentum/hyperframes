@@ -24,6 +24,7 @@ import {
 import { trackCatalogInstalledView } from "../telemetry/events.js";
 import { resolve } from "node:path";
 import { finishCommand } from "../utils/commandResult.js";
+import { resolveProject } from "../utils/project.js";
 import { isAttendedTerminal } from "../utils/attendedTerminal.js";
 import { runAdd } from "./add.js";
 import { hasNoSearchableTokens, searchByWords } from "../registry/localSearch.js";
@@ -209,7 +210,7 @@ export default defineCommand({
         "Use on-device meaning search; pass --yes to approve a first non-interactive download",
     },
   },
-  // one flag-parsing entry point feeding three output paths (json, interactive, table); splitting those is its own change
+  // one flag-parsing entry point feeding four output paths; splitting those is its own change
   // fallow-ignore-next-line complexity
   async run({ args }) {
     const json = args.json === true;
@@ -224,6 +225,15 @@ export default defineCommand({
       console.error(`Invalid --type: "${args.type}". Use "block" or "component".`);
       finishCommand(1);
     }
+    if (args.installed === true) {
+      if (interactive || args.query || args.tag) {
+        console.error(
+          "--installed lists this project's catalog items; it does not combine with --query, --tag or --human-friendly.",
+        );
+        finishCommand(1);
+      }
+      resolveProject(dir);
+    }
 
     // Asked for the whole manifest on purpose: its item list defines coverage,
     // and its artifact revision is the one owner of vector freshness.
@@ -235,12 +245,6 @@ export default defineCommand({
     const filtered = typeFilter ? catalog.filter((e) => e.type === typeFilter) : catalog;
 
     if (args.installed === true) {
-      if (interactive || args.query || args.tag) {
-        console.error(
-          "--installed lists this project's catalog items; it does not combine with --query, --tag or --human-friendly.",
-        );
-        finishCommand(1);
-      }
       printInstalledView(dir, manifest ? catalog : undefined, typeFilter, json);
       return;
     }
@@ -546,15 +550,35 @@ function printInstalledView(
   const items = typeFilter
     ? view.items.filter((item) => `hyperframes:${item.type}` === typeFilter)
     : view.items;
-  if (json) console.log(JSON.stringify({ items, scannedFiles: view.scannedFiles }, null, 2));
-  else for (const line of installedViewLines(items, view.scannedFiles)) console.log(line);
+  const manifestUnreadable = view.usage.manifestUnreadable;
+  if (json) {
+    console.log(
+      JSON.stringify({ items, scannedFiles: view.scannedFiles, manifestUnreadable }, null, 2),
+    );
+  } else {
+    for (const line of installedViewLines(items, view.scannedFiles, manifestUnreadable))
+      console.log(line);
+  }
 }
 
 /** `catalog --installed` as terminal lines: one row per item, or how to add one. */
-export function installedViewLines(items: ProjectCatalogItem[], scannedFiles: boolean): string[] {
-  const note = scannedFiles
-    ? []
-    : [c.dim("Registry list unavailable: showing only items recorded by hyperframes add.")];
+export function installedViewLines(
+  items: ProjectCatalogItem[],
+  scannedFiles: boolean,
+  manifestUnreadable = false,
+): string[] {
+  const note = [
+    ...(scannedFiles
+      ? []
+      : [c.dim("Registry list unavailable: showing only items recorded by hyperframes add.")]),
+    ...(manifestUnreadable
+      ? [
+          c.dim(
+            "hyperframes.json could not be read: items recorded by hyperframes add are missing.",
+          ),
+        ]
+      : []),
+  ];
   if (items.length === 0) {
     return [
       "No catalog items in this project yet.",
@@ -576,7 +600,8 @@ export function installedViewLines(items: ProjectCatalogItem[], scannedFiles: bo
     );
   }
   const inUse = items.filter((item) => item.status === "in-use").length;
-  lines.push("", c.dim(`${items.length} items, ${inUse} in use by index.html.`), ...note);
+  const count = `${items.length} item${items.length === 1 ? "" : "s"}`;
+  lines.push("", c.dim(`${count}, ${inUse} in use by index.html.`), ...note);
   return lines;
 }
 

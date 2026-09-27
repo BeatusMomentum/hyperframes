@@ -311,6 +311,15 @@ describe("listProjectCatalogItems", () => {
     expect(items.map((item) => item.file)).toEqual(["scenes/glitch.html"]);
   });
 
+  it("also finds an item in the default folder when the project sets its own, as Studio installs there", () => {
+    const { items } = listOf(
+      { "index.html": entryDoc(), "compositions/glitch.html": subCompDoc("glitch") },
+      { paths: { blocks: "scenes/" } },
+      [{ name: "glitch", type: "hyperframes:block" }],
+    );
+    expect(items.map((item) => item.file)).toEqual(["compositions/glitch.html"]);
+  });
+
   it("lists recorded items only, and says so, without the registry list", () => {
     const view = listOf(
       { "index.html": entryDoc(), "compositions/glitch.html": subCompDoc("glitch") },

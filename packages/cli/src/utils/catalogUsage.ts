@@ -205,10 +205,8 @@ function itemStatus(
 }
 
 /**
- * Every catalog item in a project: those `hyperframes add` recorded, plus any
- * registry item whose file sits at its install path, and whether the video
- * (the project's `index.html`, as render uses by default) mounts each one.
- * `catalog` is the registry's item list; without it only recorded items show.
+ * Every catalog item `hyperframes add` recorded or whose file sits at its install path, and whether `index.html`
+ * mounts it. Without `catalog` (the registry's item list) only recorded items show.
  */
 export function listProjectCatalogItems(
   projectDir: string,
@@ -237,11 +235,15 @@ export function listProjectCatalogItems(
   for (const entry of catalog ?? []) {
     const type = ITEM_TYPES[entry.type as keyof typeof ITEM_TYPES];
     if (!type || seen.has(entry.name)) continue;
-    // Every registry item installs to <dir>/<name>.html or <dir>/<name>/<name>.html.
-    const dir = (type === "block" ? paths.blocks : paths.components).replace(/\/+$/, "");
-    const file = [`${dir}/${entry.name}.html`, `${dir}/${entry.name}/${entry.name}.html`].find(
-      (candidate) => existsSync(resolve(projectDir, candidate)),
+    // Every registry item installs to <dir>/<name>.html or <dir>/<name>/<name>.html. Studio installs ignore
+    // `paths`, so the default folder is searched too.
+    const key = type === "block" ? "blocks" : "components";
+    const dirs = new Set(
+      [paths[key], DEFAULT_PROJECT_CONFIG.paths[key]].map((d) => d.replace(/\/+$/, "")),
     );
+    const file = [...dirs]
+      .flatMap((dir) => [`${dir}/${entry.name}.html`, `${dir}/${entry.name}/${entry.name}.html`])
+      .find((candidate) => existsSync(resolve(projectDir, candidate)));
     if (!file) continue;
     seen.add(entry.name);
     items.push({

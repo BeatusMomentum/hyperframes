@@ -775,8 +775,8 @@ export function trackInitTemplate(templateId: string, props?: { tailwind?: boole
 }
 
 /**
- * `hyperframes catalog --installed` ran. Shares render_complete's catalog properties so the two compare; item names
- * are public registry names, never paths or content.
+ * `hyperframes catalog --installed` ran. Uses render_complete's catalog property names, but its items include those
+ * found by file; item names are public registry names, never paths or content.
  */
 export function trackCatalogInstalledView(props: {
   view: ProjectCatalogItems;
