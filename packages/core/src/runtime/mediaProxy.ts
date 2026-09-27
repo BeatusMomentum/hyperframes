@@ -5,6 +5,7 @@ import { findInjectedRenderFrame } from "./renderFrameSibling";
 import type { RuntimeJson } from "./types";
 import { isVideoElement } from "./domRealm";
 import { swappedElements } from "./proxySrc";
+import { waitForServedProxy } from "./proxyWait";
 
 /**
  * One entry per project-root-relative asset pathname, injected by the
@@ -258,30 +259,10 @@ export function swapToProxy(
   );
 }
 
-/** Asks for one byte of the proxy (an element never sees its status) while the
- * server answers 202 (copy being made) or 503 (queue full), after each Retry-After. */
-async function proxyServed(
-  href: string,
-  live: () => boolean,
-): Promise<{ served: boolean; waited: boolean }> {
-  let waited = false;
-  while (live()) {
-    const res = await fetch(href, { headers: { Range: "bytes=0-0" }, cache: "no-store" }).catch(
-      () => null,
-    );
-    void res?.body?.cancel().catch(() => {});
-    if (res?.status !== 202 && res?.status !== 503) return { served: res?.ok ?? false, waited };
-    waited = true;
-    const seconds = Math.min(Number(res.headers.get("Retry-After")) || 2, 30);
-    await new Promise((resolveWait) => setTimeout(resolveWait, seconds * 1000));
-  }
-  return { served: false, waited };
-}
-
 /** A swapped element that errored: reload it once its proxy is served, or diagnose. */
 function reloadWhenProxyServed(el: HTMLMediaElement, src: string): void {
   const live = () => el.isConnected && currentSrcValue(el) === src;
-  void proxyServed(src, live).then(({ served, waited }) => {
+  void waitForServedProxy(src, live).then(({ served, waited }) => {
     if (!live()) return;
     if (served && (waited || !reloadedWithoutWait.has(el))) {
       if (!waited) reloadedWithoutWait.add(el);

@@ -236,6 +236,12 @@
       "types": "./dist/runtime/clipTree.d.ts",
       "environments": ["browser", "bun", "node"]
     },
+    "./runtime/proxy-wait": {
+      "source": "./src/runtime/proxyWait.ts",
+      "runtime": "./dist/runtime/proxyWait.js",
+      "types": "./dist/runtime/proxyWait.d.ts",
+      "environments": ["browser", "bun", "node"]
+    },
     "./runtime/custom-ease": {
       "source": "./src/runtime/customEase.ts",
       "runtime": "./dist/runtime/customEase.js",
