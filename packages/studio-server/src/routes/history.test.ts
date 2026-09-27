@@ -222,7 +222,7 @@ describe("history routes", () => {
     expect(back).toMatchObject({ label: "Moved Title", changedSince: { label: "Agent turn" } });
     expect(await (await call("/step", { direction: "back" })).json()).toMatchObject({
       ok: false,
-      changedSince: { id: back.changedSince.id, label: "Agent turn" },
+      changedSince: { id: back.changedSince.id, label: "Agent turn", paths: ["index.html"] },
     });
   });
 

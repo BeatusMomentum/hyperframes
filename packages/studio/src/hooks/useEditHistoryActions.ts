@@ -12,7 +12,7 @@ interface HistoryResult {
   paths?: string[];
   /** Per-file restored/previous content, used to soft-apply the preview. */
   files?: Record<string, { previous: string; restored: string }>;
-  changedSince?: { id: string; label: string };
+  changedSince?: { id: string; label: string; paths?: string[] };
 }
 interface HistoryFileCallbacks {
   readFile: (path: string) => Promise<string>;
@@ -21,7 +21,11 @@ interface HistoryFileCallbacks {
 export interface EditHistoryHandle {
   undo: (cb: HistoryFileCallbacks) => Promise<HistoryResult>;
   redo: (cb: HistoryFileCallbacks) => Promise<HistoryResult>;
-  undoEntry?: (entryId: string, cb: HistoryFileCallbacks) => Promise<HistoryResult>;
+  undoEntry?: (
+    entryId: string,
+    cb: HistoryFileCallbacks,
+    paths?: readonly string[],
+  ) => Promise<HistoryResult>;
   state: {
     undo: ReadonlyArray<{ createdAt: number }>;
     redo: ReadonlyArray<{ createdAt: number }>;
@@ -85,7 +89,7 @@ export function useEditHistoryActions({
             "info",
             {
               label: `Undo ${since.label}`,
-              run: () => void apply("undo", (cb) => undoEntry(since.id, cb)),
+              run: () => void apply("undo", (cb) => undoEntry(since.id, cb, since.paths)),
             },
           );
           return;

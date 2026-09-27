@@ -64,7 +64,7 @@ function nextStep(history: ProjectHistory, direction: "back" | "forward") {
 }
 
 function nameOf(entry: HistoryEntry | undefined) {
-  return entry && { id: entry.id, label: entry.label };
+  return entry && { id: entry.id, label: entry.label, paths: entry.files.map((file) => file.path) };
 }
 
 function withChangedSince(history: ProjectHistory, refused: HistoryResult, id: string | undefined) {

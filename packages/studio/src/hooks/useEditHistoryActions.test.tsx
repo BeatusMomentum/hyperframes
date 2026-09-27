@@ -77,7 +77,7 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["index.html"],
-      changedSince: { id: "turn-1", label: "Agent turn" },
+      changedSince: { id: "turn-1", label: "Agent turn", paths: ["index.html"] },
     });
     await act(() => actions.undo());
     expect(deps.showToast).toHaveBeenCalledWith(
@@ -90,7 +90,9 @@ describe("useEditHistoryActions", () => {
     await vi.waitFor(() =>
       expect(deps.showToast).toHaveBeenCalledWith("Undid: Agent turn", "info"),
     );
-    expect(deps.editHistory.undoEntry).toHaveBeenCalledWith("turn-1", expect.anything());
+    expect(deps.editHistory.undoEntry).toHaveBeenCalledWith("turn-1", expect.anything(), [
+      "index.html",
+    ]);
   });
 
   it("offers no undo of the later change when a redo is refused", async () => {

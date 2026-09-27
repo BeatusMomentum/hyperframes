@@ -161,6 +161,35 @@ it("a refused undo names the agent's later change, and undoing that first lets C
   expect(file()).toBe("A");
 });
 
+it("the offer undoes an agent turn Studio has not seen yet, locking and soft-applying its files", async () => {
+  const { history, hook, save, readFile } = await studio();
+  save("B");
+  await act(() =>
+    hook().recordEdit({
+      label: "Moved Title",
+      files: { "index.html": { before: "A", after: "B" } },
+    }),
+  );
+  const window = await history.beginWindow({ kind: "agent", name: "Agent" }, "Agent turn");
+  save("C");
+  await window.close();
+  const staleUndoEntry = hook().undoEntry;
+
+  const refused = await act(() => hook().undo({ readFile }));
+  const locked: string[][] = [];
+  const serialize = <T,>(paths: readonly string[], task: () => Promise<T>) => {
+    locked.push([...paths]);
+    return task();
+  };
+  const since = refused.changedSince!;
+  expect(since.paths).toEqual(["index.html"]);
+  expect(await act(() => staleUndoEntry(since.id, { readFile, serialize }, since.paths))).toMatchObject({
+    ok: true,
+    files: { "index.html": { previous: "C", restored: "B" } },
+  });
+  expect(locked).toEqual([["index.html"]]);
+});
+
 it("an undo's writes carry the write token Studio marked, so their echo is not read as an outside edit", async () => {
   const { dir, hook, save, readFile } = await studio();
   save("B");
