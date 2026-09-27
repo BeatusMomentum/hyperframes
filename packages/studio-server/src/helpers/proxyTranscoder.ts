@@ -55,7 +55,7 @@ const FAILURE_CACHE_TTL_MS = 60 * 1000;
 /** What a route tells a client to wait before asking again for a copy still being made. */
 export const PROXY_PENDING_RETRY_AFTER_SECONDS = 2;
 // Outlives a few pending retries, so an ask that got "still being made" hears the failure,
-// yet installing ffmpeg or its filters recovers within seconds.
+// yet installing ffmpeg recovers within seconds.
 const ENVIRONMENT_FAILURE_TTL_MS = 5 * PROXY_PENDING_RETRY_AFTER_SECONDS * 1000;
 const MAX_FAILURE_CACHE_ENTRIES = 128;
 export const DEFAULT_PROXY_WAIT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -315,9 +315,7 @@ function ensureHdrFilters(ffmpegPath: string): Promise<void> {
 
 function rememberFailure(cachePath: string, error: unknown): void {
   const ttlMs =
-    error instanceof FfmpegUnavailableError ||
-    error instanceof FfmpegMissingFilterError ||
-    error instanceof ProxySourceOutsideProjectError
+    error instanceof FfmpegUnavailableError || error instanceof FfmpegMissingFilterError
       ? ENVIRONMENT_FAILURE_TTL_MS
       : FAILURE_CACHE_TTL_MS;
   failedTranscodes.delete(cachePath);

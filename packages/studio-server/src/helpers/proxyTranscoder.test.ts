@@ -347,6 +347,13 @@ describe("resolveProxy", () => {
       await flush();
     }
     await Promise.all(accepted);
+
+    // A full queue is not remembered: once there is room, the same clip transcodes.
+    const retry = resolveProxy(projectDir, sourcePaths.at(-1)!);
+    await flush();
+    expect(calls).toHaveLength(accepted.length + 1);
+    succeed(calls.at(-1)!);
+    await expect(retry).resolves.toBeTruthy();
   });
 
   it("honors bounded concurrency and queue environment overrides", async () => {

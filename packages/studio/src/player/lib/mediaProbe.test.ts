@@ -98,6 +98,21 @@ describe("media probe registry", () => {
     expect(route).toHaveBeenCalledTimes(2);
   });
 
+  it("stops waiting for a proxied clip once the registry is reset", async () => {
+    vi.useFakeTimers();
+    const route = vi.fn(
+      async () => new Response(null, { status: 202, headers: { "Retry-After": "2" } }),
+    );
+    vi.stubGlobal("fetch", route);
+    const probed = probeMediaUrl("/clip.mov?hf-proxy=h264");
+    await vi.advanceTimersByTimeAsync(1_000);
+    resetMediaProbeRegistry();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(await probed).toBeNull();
+    expect(route).toHaveBeenCalledTimes(1);
+  });
+
   it("retries failures only after the failure TTL", async () => {
     vi.useFakeTimers();
     getDurationFromMetadata.mockRejectedValue(new Error("bad source"));
