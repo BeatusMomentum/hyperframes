@@ -135,7 +135,19 @@ function runWhisper() {
       ["hyperframes", "transcribe", inputPath, "--dir", workDir],
       { stdio: ["ignore", "pipe", "pipe"], timeout: 1_800_000 },
     );
-    execFileSync(resolved.cmd, resolved.args, resolved.opts);
+    try {
+      execFileSync(resolved.cmd, resolved.args, resolved.opts);
+    } catch (e) {
+      // stderr holds spinner redraws; the last lines carry the reason.
+      const tail = String(e.stderr ?? "")
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+        .split(/[\r\n]+/)
+        .map((l) => l.trim())
+        .filter((l) => l && l !== "│")
+        .slice(-3)
+        .join("\n");
+      throw new Error(`hyperframes transcribe failed (exit ${e.status ?? e.code})${tail ? `:\n${tail}` : ""}`);
+    }
     const produced = join(workDir, "transcript.json");
     if (!existsSync(produced)) throw new Error("whisper produced no transcript.json");
     const tmp = `${outPath}.tmp-${process.pid}`;

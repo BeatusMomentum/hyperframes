@@ -376,10 +376,11 @@ export async function transcribeWav({ wavRel, lang = "en", hyperframesDir }) {
   }
   rmSync(td, { recursive: true, force: true });
   if (words) return { words };
+  if (r.status === 0) return { words: null, error: "hyperframes transcribe found no words" };
   return {
     words: null,
     error:
-      `hyperframes transcribe exited ${r.status} with no words. If no engine is installed, ` +
+      `hyperframes transcribe exited ${r.status}. If no engine is installed, ` +
       "run `npx hyperframes models install parakeet`, or install whisper-cpp",
   };
 }

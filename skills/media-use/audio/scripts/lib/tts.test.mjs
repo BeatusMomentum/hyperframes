@@ -176,3 +176,23 @@ test(
     }
   },
 );
+
+test(
+  "transcribeWav gives no install hint when the CLI ran and found no words",
+  { skip: process.platform === "win32" },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tts-transcribe-"));
+    const realPath = process.env.PATH;
+    try {
+      writeFileSync(join(dir, "npx"), "#!/bin/sh\nexit 0\n");
+      chmodSync(join(dir, "npx"), 0o755);
+      process.env.PATH = `${dir}:${realPath}`;
+      const r = await transcribeWav({ wavRel: "v.wav", hyperframesDir: dir });
+      assert.equal(r.words, null);
+      assert.doesNotMatch(r.error, /install/);
+    } finally {
+      process.env.PATH = realPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
