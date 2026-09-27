@@ -299,6 +299,21 @@ describe("createPickerModule", () => {
       }
     });
 
+    it("names a script-built element whose tag needs escaping by a selector that finds it", () => {
+      const picker = createPickerModule({ postMessage: createMockPostMessage() });
+      picker.installPickerApi();
+      document.body.innerHTML = "";
+      const tags = [document.createElement("x:y"), document.createElement("x:y")];
+      document.body.append(...tags);
+      const restore = emulateHitTest(() => [tags[1]!]);
+      try {
+        const selector = (window as any).__HF_PICKER_API.pickAtPoint(10, 10)?.selector as string;
+        expect([...document.querySelectorAll(selector)]).toEqual([tags[1]]);
+      } finally {
+        restore();
+      }
+    });
+
     it("adopts the override only for the hit test, leaving the DOM and a saved outerHTML untouched", () => {
       const adopted: CSSStyleSheet[] = [];
       Object.defineProperty(document, "adoptedStyleSheets", {
