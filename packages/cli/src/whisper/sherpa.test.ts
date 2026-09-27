@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -86,6 +94,35 @@ describe("installSherpaRuntime", () => {
     expect(SHERPA_RUNTIME_DIR).toMatch(
       new RegExp(`sherpa-onnx-node@1\\.13\\.8-${process.platform}-${process.arch}$`),
     );
+  });
+});
+
+describe("sherpaParakeetInstalled", () => {
+  it("counts a runtime missing its native binary, so transcribe reports it instead of skipping it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hf-sherpa-home-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const sherpa = await import("./sherpa.js");
+      const manifest = join(sherpa.SHERPA_RUNTIME_DIR, "node_modules", "sherpa-onnx-node");
+      mkdirSync(manifest, { recursive: true });
+      writeFileSync(join(manifest, "package.json"), "{}");
+      mkdirSync(sherpa.PARAKEET_MODEL_DIR, { recursive: true });
+      for (const [name, bytes] of [
+        ["encoder.int8.onnx", 652_184_281],
+        ["decoder.int8.onnx", 11_845_275],
+        ["joiner.int8.onnx", 6_355_277],
+        ["tokens.txt", 93_939],
+      ] as const) {
+        writeFileSync(join(sherpa.PARAKEET_MODEL_DIR, name), "");
+        truncateSync(join(sherpa.PARAKEET_MODEL_DIR, name), bytes);
+      }
+      expect(sherpa.sherpaRuntimeInstalled()).toBe(false);
+      expect(sherpa.sherpaParakeetInstalled()).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

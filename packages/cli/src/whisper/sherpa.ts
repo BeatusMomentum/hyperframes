@@ -135,10 +135,13 @@ export function installSherpaRuntime({
   return install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
 }
 
-/** Sizes only: hashing 650 MB on every transcribe is too slow, and install already verified them. */
+/**
+ * Model sizes only (install verified the hashes). The runtime counts once its manifest is there, even
+ * if broken: transcribe must then fail with the repair, not quietly pick whisper.
+ */
 export function sherpaParakeetInstalled(): boolean {
   return (
-    sherpaRuntimeInstalled() &&
+    isInstalled(SHERPA_RUNTIME_DIR, RUNTIME) &&
     PARAKEET_MODEL_FILES.every(
       (f) =>
         statSync(join(PARAKEET_MODEL_DIR, f.name), { throwIfNoEntry: false })?.size === f.bytes,
