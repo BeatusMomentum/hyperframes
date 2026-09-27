@@ -268,6 +268,7 @@ export interface TranscribeOptions {
    * default derived from prepared WAV duration and the selected model.
    */
   timeoutMs?: number;
+  mayInstall?: boolean;
 }
 
 export interface TranscribeResult {
@@ -425,7 +426,10 @@ export async function transcribe(
 
   // 1. Ensure whisper binary
   options?.onProgress?.("Checking whisper...");
-  const whisper = await ensureWhisper({ onProgress: options?.onProgress });
+  const whisper = await ensureWhisper({
+    onProgress: options?.onProgress,
+    mayInstall: options?.mayInstall,
+  });
 
   // 2. Ensure model
   options?.onProgress?.("Checking model...");

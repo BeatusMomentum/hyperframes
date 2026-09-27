@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -27,13 +28,16 @@ const tailwindScript =
 // TypeScript-aware runtime. vitest runs under node, so `process.execPath`
 // would be node and couldn't load the entry. This repo hard-depends on bun
 // (package.json scripts), so assuming it's on PATH is safe.
-function runInit(args: string[]): { status: number; stdout: string; stderr: string } {
+function runInit(
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+): { status: number; stdout: string; stderr: string } {
   const res = spawnSync("bun", ["run", cliEntry, "init", ...args], {
     encoding: "utf-8",
     timeout: 30_000,
     // The `--skip-skills` flag is neutered (see init.ts); the GitHub skills check
     // is opted out only via this env var, so tests stay offline and fast.
-    env: { ...process.env, HYPERFRAMES_SKIP_SKILLS: "1" },
+    env: { ...process.env, HYPERFRAMES_SKIP_SKILLS: "1", ...env },
   });
   return {
     status: res.status ?? -1,
@@ -285,6 +289,34 @@ describe("hyperframes init flag rename", () => {
       expect(res.status).toBe(1);
       expect(res.stderr).toContain("Audio file not found: missing.mp3");
       expect(existsSync(target)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const whisperOnMachine =
+    spawnSync("which", ["whisper-cli"]).status === 0 ||
+    ["/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"].some((p) => existsSync(p));
+
+  it.skipIf(whisperOnMachine)("--audio off a terminal never installs whisper", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-init-test-"));
+    const bin = join(dir, "bin");
+    const installLog = join(dir, "installs.log");
+    mkdirSync(bin);
+    for (const tool of ["brew", "git", "cmake"]) {
+      writeFileSync(join(bin, tool), `#!/bin/sh\necho "${tool} $*" >> "${installLog}"\nexit 1\n`);
+      chmodSync(join(bin, tool), 0o755);
+    }
+    const audio = join(dir, "voice.wav");
+    writeFileSync(audio, "not-real-audio");
+    try {
+      // A fresh HOME hides any whisper built into ~/.cache by an earlier run.
+      const res = runInit([join(dir, "proj"), "--non-interactive", "--audio", audio], {
+        HOME: dir,
+        PATH: `${bin}:${process.env.PATH}`,
+      });
+      expect(res.stdout).toContain("hyperframes models install parakeet");
+      expect(existsSync(installLog)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

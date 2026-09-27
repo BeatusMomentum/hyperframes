@@ -97,6 +97,23 @@ describe("transcribe command", () => {
     expect(trackCommandFailure).not.toHaveBeenCalled();
   });
 
+  it("--json never lets whisper install and reports why it skipped", async () => {
+    const { dir, input } = dummyAudio();
+    dirs.push(dir);
+    await transcribeCmd.run!({ args: { input, json: true, engine: "whisper" } } as never);
+
+    expect(transcribeMock).toHaveBeenCalledWith(
+      input,
+      dir,
+      expect.objectContaining({ mayInstall: false }),
+    );
+    expect(lastJson()).toMatchObject({
+      ok: false,
+      reason: "whisper_unavailable",
+      error: expect.stringContaining("whisper-cpp not found"),
+    });
+  });
+
   it("--optional skips cleanly with exit 0", async () => {
     const { dir, input } = dummyAudio();
     dirs.push(dir);
