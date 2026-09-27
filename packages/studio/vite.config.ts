@@ -12,11 +12,7 @@ import {
 import { join, resolve } from "node:path";
 import { readNodeRequestBody } from "./vite.request-body.js";
 import { watch } from "chokidar";
-import {
-  createProjectSignatureCache,
-  createViteAdapter,
-  projectFileChange,
-} from "./vite.adapter";
+import { createProjectSignatureCache, createViteAdapter, projectFileChange } from "./vite.adapter";
 import { previewConfigPayload } from "./vite.preview-config";
 import { loadStudioServerDevModule } from "./vite.studio-server-module";
 import type { openProjectHistory } from "@hyperframes/studio-server";

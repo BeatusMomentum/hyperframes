@@ -15,11 +15,7 @@ import { join, win32 } from "node:path";
 import { isValidProjectId } from "./src/utils/projectRouting";
 import { createStudioApi, type ProjectHistory } from "@hyperframes/studio-server";
 import type { ViteDevServer } from "vite";
-import {
-  createProjectSignatureCache,
-  createViteAdapter,
-  projectFileChange,
-} from "./vite.adapter";
+import { createProjectSignatureCache, createViteAdapter, projectFileChange } from "./vite.adapter";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -205,7 +201,9 @@ describe("Vite dev watcher file changes", () => {
       "promo",
     );
     expect(projectFileChange(data, join(data, "promo", "voice.wav"))?.projectId).toBe("promo");
-    expect(projectFileChange(data, join(data, "promo", ".waveform-cache", "peaks.json"))).toBeNull();
+    expect(
+      projectFileChange(data, join(data, "promo", ".waveform-cache", "peaks.json")),
+    ).toBeNull();
     expect(projectFileChange(data, join(data, "promo", ".thumbnails", "t.jpg"))).toBeNull();
   });
 });
