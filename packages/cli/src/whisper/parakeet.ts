@@ -209,13 +209,15 @@ export function spliceGap(
     }));
   const kept = wordsOf(tokens(decoded, 0));
   const added = wordsOf(tokens(patch, offset)).filter(
-    ([first]) => first!.text.startsWith(" ") && first!.start >= from && first!.start < to,
+    ([first]) => first!.start >= from && first!.start < to,
   );
   const before = kept.filter(([first]) => first!.start < from).map(letters);
   const after = kept.filter(([first]) => first!.start >= to).map(letters);
   const head = added.filter(([first]) => first!.start < from + EDGE_SECONDS).map(letters);
   const tail = added.filter(([first]) => first!.start >= to - EDGE_SECONDS).map(letters);
-  const fresh = added.slice(overlap(before, head), added.length - overlap(tail, after));
+  const fresh = added
+    .slice(overlap(before, head), added.length - overlap(tail, after))
+    .map(([first, ...rest]) => [{ ...first!, text: ` ${first!.text.trimStart()}` }, ...rest]);
   const merged = [...kept, ...fresh].sort((a, b) => a[0]!.start - b[0]!.start).flat();
   return {
     tokens: merged.map((t) => t.text),

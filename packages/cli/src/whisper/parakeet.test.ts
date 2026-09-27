@@ -150,6 +150,13 @@ describe("spliceGap", () => {
     expect(text(spliceGap(decoded, patch, 0, [3.3, 5]))).toBe("it's so what now");
   });
 
+  it("keeps a patch's first word even when it has no leading space", () => {
+    const decoded = w([" so", 9], [" right", 12]);
+    expect(text(spliceGap(decoded, w(["ask", 9.4], [" not", 10.1]), 0, [9.1, 12]))).toBe(
+      "so ask not right",
+    );
+  });
+
   it("keeps a real repeat that starts well inside the gap", () => {
     const decoded = w([" that", 2], [" right", 4]);
     const patch = w([" that", 3], [" is", 3.4]);
