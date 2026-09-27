@@ -256,7 +256,11 @@ function main() {
       const line = so.trim().split("\n").filter(Boolean).pop();
       info = JSON.parse(line);
     } catch (e) {
-      console.error("[transcribe] hyperframes whisper failed:", e.message);
+      let reason = e.message;
+      try {
+        reason = JSON.parse(String(e.stdout).trim().split("\n").pop()).error || reason;
+      } catch {}
+      console.error("[transcribe] hyperframes whisper failed:", reason);
       process.exit(1);
     }
     const flatPath = info.transcriptPath || out;

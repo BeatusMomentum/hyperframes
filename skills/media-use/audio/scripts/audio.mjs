@@ -162,7 +162,11 @@ if (only.has("tts") && lines.length) {
       return null;
     }
     let wordArr = words; // heygen: native; else transcribe
-    if (!wordArr) wordArr = await transcribeWav({ wavRel: rel, lang, hyperframesDir });
+    if (!wordArr) {
+      const t = await transcribeWav({ wavRel: rel, lang, hyperframesDir });
+      wordArr = t.words;
+      if (t.error) anomalies.push(`line ${id}: no word timings (${t.error})`);
+    }
     const dur = ffprobeDuration(abs);
     if (!isFinite(dur) || dur <= 0) {
       anomalies.push(`line ${id}: bad voice duration — omitted`);

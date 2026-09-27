@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,27 +15,44 @@ fs.writeFileSync(transcriptPath, JSON.stringify([{ text: "hello", start: 0.1, en
 console.log(JSON.stringify({ ok: true, engine: "parakeet", model: "parakeet-tdt-0.6b-v3", transcriptPath }));
 `;
 
-test("the CLI fallback labels the transcript with the engine the CLI ran", () => {
+/** Runs transcribe.cjs against a project whose hyperframes CLI is `stubCli`. */
+function runWithStubCli(stubCli, check) {
   const root = mkdtempSync(join(tmpdir(), "embedded-captions-transcribe-"));
   try {
     const cliDir = join(root, "hf", "packages", "cli", "dist");
     mkdirSync(cliDir, { recursive: true });
-    writeFileSync(join(cliDir, "cli.js"), STUB_CLI);
+    writeFileSync(join(cliDir, "cli.js"), stubCli);
     const project = join(root, "project");
     mkdirSync(project);
     writeFileSync(join(project, "source.mp4"), "");
     writeFileSync(join(project, "audio.mp3"), "");
-    execFileSync(
+    const res = spawnSync(
       process.execPath,
       [fileURLToPath(new URL("./transcribe.cjs", import.meta.url)), project],
       {
-        stdio: "ignore",
+        encoding: "utf8",
         env: { ...process.env, HYPERFRAMES_ROOT: join(root, "hf"), TRANSCRIBE_ENGINE: "whisper" },
       },
     );
-    const transcript = JSON.parse(readFileSync(join(project, "transcript.json"), "utf8"));
-    assert.equal(transcript.engine, "parakeet(parakeet-tdt-0.6b-v3)");
+    check(res, project);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+test("the CLI fallback labels the transcript with the engine the CLI ran", () => {
+  runWithStubCli(STUB_CLI, (res, project) => {
+    assert.equal(res.status, 0);
+    const transcript = JSON.parse(readFileSync(join(project, "transcript.json"), "utf8"));
+    assert.equal(transcript.engine, "parakeet(parakeet-tdt-0.6b-v3)");
+  });
+});
+
+test("a failed CLI run reports the CLI's JSON error, not just the exit code", () => {
+  const failing = `console.log(JSON.stringify({ ok: false, skipped: true, reason: "whisper_unavailable", error: "run: hyperframes models install parakeet" }));
+process.exit(1);`;
+  runWithStubCli(failing, (res) => {
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /hyperframes models install parakeet/);
+  });
 });

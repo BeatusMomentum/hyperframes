@@ -9,6 +9,7 @@ import {
   synthesizeOne,
   synthesizeHeygen,
   synthResult,
+  transcribeWav,
 } from "./tts.mjs";
 
 test("parseFfmpegDurationBanner reads ffmpeg's stderr Duration line", () => {
@@ -155,3 +156,23 @@ test("synthResult names a non-zero subprocess exit", () => {
   assert.equal(res.ok, false);
   assert.match(res.error, /kokoro .* exited with status 2/);
 });
+
+test(
+  "transcribeWav explains a failed transcription instead of silently returning no words",
+  { skip: process.platform === "win32" },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tts-transcribe-"));
+    const realPath = process.env.PATH;
+    try {
+      writeFileSync(join(dir, "npx"), "#!/bin/sh\nexit 1\n");
+      chmodSync(join(dir, "npx"), 0o755);
+      process.env.PATH = `${dir}:${realPath}`;
+      const r = await transcribeWav({ wavRel: "v.wav", hyperframesDir: dir });
+      assert.equal(r.words, null);
+      assert.match(r.error, /exited 1.*hyperframes models install parakeet/);
+    } finally {
+      process.env.PATH = realPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

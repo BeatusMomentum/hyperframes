@@ -355,9 +355,9 @@ export async function synthesizeHeygen({ text, voiceId, lang, speed, wavAbs }, d
   }
 }
 
-// ElevenLabs/Kokoro have no word timings — run Whisper over the wav. Returns the
-// flat [{id,text,start,end}] word array, or null. Each call uses a throwaway
-// --dir so parallel scenes don't collide on transcript.json.
+// ElevenLabs/Kokoro have no word timings — run Whisper over the wav. Returns
+// { words } (the flat word array) or { words: null, error }. Each call uses a
+// throwaway --dir so parallel scenes don't collide on transcript.json.
 export async function transcribeWav({ wavRel, lang = "en", hyperframesDir }) {
   const model = lang === "en" ? "small.en" : "small";
   const td = mkdtempSync(join(tmpdir(), "hf-trans-"));
@@ -375,7 +375,13 @@ export async function transcribeWav({ wavRel, lang = "en", hyperframesDir }) {
     }
   }
   rmSync(td, { recursive: true, force: true });
-  return words;
+  if (words) return { words };
+  return {
+    words: null,
+    error:
+      `hyperframes transcribe exited ${r.status} with no words. If no engine is installed, ` +
+      "run `npx hyperframes models install parakeet`, or install whisper-cpp",
+  };
 }
 
 // ── tiny local utils ──────────────────────────────────────────────────────────

@@ -25,9 +25,9 @@ import { resolveNpxInvocation } from "./lib/npx-sync.mjs";
 // captions / the audio engine.
 //
 // Parakeet v3 covers English + 25 European languages. For other languages, or
-// when parakeet-mlx is not installed, it falls back to whisper.cpp via
-// `hyperframes transcribe` (99 languages; the CLI resolves/builds whisper.cpp
-// on first use — it is not bundled). `--engine` forces one.
+// when parakeet-mlx is not installed, it falls back to `hyperframes transcribe`
+// (99 languages). That needs an installed engine: `npx hyperframes models install
+// parakeet`, or whisper.cpp installed by hand. `--engine` forces one.
 
 const { values: args } = parseArgs({
   options: {
@@ -122,7 +122,7 @@ function runParakeet(runner) {
   }
 }
 
-// whisper.cpp via the hyperframes CLI (fetched/built on first use — see
+// whisper.cpp via the hyperframes CLI (must already be installed — see
 // SKILL.md): writes transcript.json into --dir; relocate to --out.
 function runWhisper() {
   const workDir = mkdtempSync(join(tmpdir(), "media-use-whisper-"));
