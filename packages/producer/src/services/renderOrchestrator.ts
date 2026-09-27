@@ -2752,6 +2752,31 @@ export function resolveCaptureForceScreenshotForPageSideCompositing(args: {
   return args.usePageSideCompositing ? true : args.forceScreenshot;
 }
 
+/**
+ * Which compositor blends shader transitions. Disk-frame formats always take the page-side
+ * blend: the layered path streams into a video encoder, and they never carry HDR (hdrMode.ts).
+ */
+export function resolveShaderTransitionCompositing(args: {
+  outputFormat: RenderOutputFormat;
+  enablePageSideCompositing: boolean;
+  hasShaderTransitions: boolean;
+  hasHdrContent: boolean;
+}): { pageSide: boolean; layered: boolean } {
+  const pageSide =
+    (args.enablePageSideCompositing ||
+      outputRequiresPageSideShaderCompositing(args.outputFormat)) &&
+    args.hasShaderTransitions &&
+    !args.hasHdrContent &&
+    outputSupportsPageSideShaderCompositing(args.outputFormat);
+  const layered =
+    !pageSide &&
+    shouldUseLayeredComposite({
+      hasHdrContent: args.hasHdrContent,
+      hasShaderTransitions: args.hasShaderTransitions,
+    });
+  return { pageSide, layered };
+}
+
 export function shouldDiscardProbeSessionForPageSideCompositing(args: {
   hasProbeSession: boolean;
   usePageSideCompositing: boolean;
@@ -4214,15 +4239,17 @@ async function executeRenderPipeline(input: {
     // shader blend inside Chrome via a page-side WebGL canvas, the layered
     // Node-side composite path is unnecessary for SDR shader transitions.
     // MP4's streaming path takes one opaque RGB screenshot per output frame.
-    // GIF and PNG sequences take the same page-side composite through their RGBA
-    // PNG disk-frame path so transparency survives. HDR content still
+    // GIF and PNG sequences take the same page-side composite through their PNG
+    // disk-frame path. HDR content still
     // forces the layered path (HDR layers need per-layer alpha + native HDR raw
     // frame compositing in Node; that's out of scope for this opt-in).
-    const usePageSideCompositingForTransitions =
-      (cfg.enablePageSideCompositing || outputRequiresPageSideShaderCompositing(outputFormat)) &&
-      compiled.hasShaderTransitions &&
-      !hasHdrContent &&
-      outputSupportsPageSideShaderCompositing(outputFormat);
+    const shaderCompositing = resolveShaderTransitionCompositing({
+      outputFormat,
+      enablePageSideCompositing: cfg.enablePageSideCompositing,
+      hasShaderTransitions: compiled.hasShaderTransitions,
+      hasHdrContent,
+    });
+    const usePageSideCompositingForTransitions = shaderCompositing.pageSide;
     if (usePageSideCompositingForTransitions) {
       activeFileServer.addPreHeadScript(HF_PAGE_SIDE_COMPOSITING_STUB);
       if (
@@ -4250,13 +4277,7 @@ async function executeRenderPipeline(input: {
           "screenshot per output frame.",
       );
     }
-    // GIF and PNG sequences always blend page-side, so they never reach the layered path's encoder.
-    const useLayeredComposite =
-      !usePageSideCompositingForTransitions &&
-      shouldUseLayeredComposite({
-        hasHdrContent,
-        hasShaderTransitions: compiled.hasShaderTransitions,
-      });
+    const useLayeredComposite = shaderCompositing.layered;
     const inversionFallback = resolveInversionRetryPlan({
       deWorkerInversion,
       preInversionWorkerCount: preRoutingWorkerCount,

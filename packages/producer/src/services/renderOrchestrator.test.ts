@@ -34,6 +34,7 @@ import {
   isRecoverableParallelCaptureError,
   MAX_TRANSIENT_CAPTURE_RETRIES,
   resolveCaptureForceScreenshotForPageSideCompositing,
+  resolveShaderTransitionCompositing,
   resolveRenderWorkDirPrefix,
   shouldDiscardProbeSessionForPageSideCompositing,
   resolveInversionRetryPlan,
@@ -1471,6 +1472,56 @@ describe("resolveRenderWorkerCount", () => {
 
     expect(workers).toBe(2);
     expect(log.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveShaderTransitionCompositing", () => {
+  const sdrShader = { hasShaderTransitions: true, hasHdrContent: false };
+
+  it("blends disk-frame formats page-side even when page-side compositing is off", () => {
+    for (const outputFormat of ["png-sequence", "gif"] as const) {
+      expect(
+        resolveShaderTransitionCompositing({
+          ...sdrShader,
+          outputFormat,
+          enablePageSideCompositing: false,
+        }),
+      ).toEqual({ pageSide: true, layered: false });
+    }
+  });
+
+  it("leaves video formats on the layered path when page-side compositing is off", () => {
+    for (const outputFormat of ["mp4", "webm", "mov"] as const) {
+      expect(
+        resolveShaderTransitionCompositing({
+          ...sdrShader,
+          outputFormat,
+          enablePageSideCompositing: false,
+        }),
+      ).toEqual({ pageSide: false, layered: true });
+    }
+  });
+
+  it("keeps HDR content on the layered path", () => {
+    expect(
+      resolveShaderTransitionCompositing({
+        outputFormat: "mp4",
+        enablePageSideCompositing: true,
+        hasShaderTransitions: true,
+        hasHdrContent: true,
+      }),
+    ).toEqual({ pageSide: false, layered: true });
+  });
+
+  it("uses neither compositor without shader transitions or HDR", () => {
+    expect(
+      resolveShaderTransitionCompositing({
+        outputFormat: "png-sequence",
+        enablePageSideCompositing: true,
+        hasShaderTransitions: false,
+        hasHdrContent: false,
+      }),
+    ).toEqual({ pageSide: false, layered: false });
   });
 });
 
