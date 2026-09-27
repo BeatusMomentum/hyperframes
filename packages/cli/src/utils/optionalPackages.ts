@@ -160,10 +160,9 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** Past this a live pid may be a reuse (containers restart at the same pids), not the installer. */
-const STAGING_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const STAGING_PID_TRUSTED_FOR_MS = 6 * 60 * 60 * 1000;
 
-/** Removes staging dirs whose owning pid is dead (crash or kill mid-install), or that are too old. */
+/** Removes staging dirs whose pid is dead (killed install), or too old to trust a live pid (reuse). */
 export function sweepStaleStaging(dir: string): void {
   const prefix = `${basename(dir)}.tmp-`;
   const parent = dirname(dir);
@@ -174,7 +173,7 @@ export function sweepStaleStaging(dir: string): void {
     if (pid === undefined) continue;
     const stale = join(parent, entry);
     const age = Date.now() - (statSync(stale, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-    if (isProcessAlive(Number(pid)) && age < STAGING_MAX_AGE_MS) continue;
+    if (isProcessAlive(Number(pid)) && age < STAGING_PID_TRUSTED_FOR_MS) continue;
     try {
       rmSync(stale, { recursive: true, force: true });
     } catch (err) {
