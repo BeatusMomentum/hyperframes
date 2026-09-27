@@ -494,29 +494,39 @@ describe("resolveProxy", () => {
     await expect(retry).resolves.toBeTruthy();
   });
 
-  it("keeps an environment failure briefly, so an ask that stopped waiting hears it next", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
-    const { spawn, calls } = createSpawnSpy();
-    let ffmpegPath: string | undefined;
+  // A real ffprobe answers after a macrotask, so a failure lands after a zero wait gave up.
+  async function loadWithSlowProbe(
+    spawn: SpawnImpl,
+    ffmpegPath: () => string | undefined,
+    probe: () => Promise<unknown>,
+  ): Promise<typeof import("./proxyTranscoder.js")> {
     vi.resetModules();
     vi.doMock("node:child_process", () => {
       const mocked = { spawn };
       return { ...mocked, default: mocked };
     });
-    vi.doMock("@hyperframes/parsers/ff-binaries", () => ({ findFfBinary: () => ffmpegPath }));
-    // A real ffprobe answers after a macrotask, so the failure lands after a zero wait gave up.
+    vi.doMock("@hyperframes/parsers/ff-binaries", () => ({ findFfBinary: ffmpegPath }));
     vi.doMock("./mediaMetadata.js", () => ({
       probeMediaMetadata: () =>
-        new Promise((resolveProbe) =>
-          setTimeout(resolveProbe, 5, { kind: "video", color: { isHdr: false } }),
-        ),
+        new Promise((resolveProbe) => setTimeout(resolveProbe, 5)).then(probe),
     }));
-    const { resolveProxy, waitForProxy, ProxyWaitTimeoutError } =
-      await import("./proxyTranscoder.js");
+    return import("./proxyTranscoder.js");
+  }
+
+  const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+
+  it("keeps an environment failure briefly, so an ask that stopped waiting hears it next", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const { spawn, calls } = createSpawnSpy();
+    let ffmpegPath: string | undefined;
+    const { resolveProxy, waitForProxy, ProxyWaitTimeoutError } = await loadWithSlowProbe(
+      spawn,
+      () => ffmpegPath,
+      async () => ({ kind: "video", color: { isHdr: false } }),
+    );
     const projectDir = tmpProject();
     const sourcePath = join(projectDir, "video.mov");
     writeFileSync(sourcePath, "source-bytes");
-    const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
     await expect(waitForProxy(resolveProxy(projectDir, sourcePath), 0)).rejects.toBeInstanceOf(
       ProxyWaitTimeoutError,
@@ -534,6 +544,28 @@ describe("resolveProxy", () => {
     succeed(calls[0]!);
     await expect(retry).resolves.toBeTruthy();
     now.mockRestore();
+  });
+
+  it("remembers a failure that is not a transcode error, so it is not retried on every ask", async () => {
+    const { spawn } = createSpawnSpy();
+    const probe = vi.fn(async () => {
+      throw new Error("EBUSY: file locked");
+    });
+    const { resolveProxy, waitForProxy, ProxyWaitTimeoutError } = await loadWithSlowProbe(
+      spawn,
+      () => FFMPEG_PATH,
+      probe,
+    );
+    const projectDir = tmpProject();
+    const sourcePath = join(projectDir, "video.mov");
+    writeFileSync(sourcePath, "source-bytes");
+
+    await expect(waitForProxy(resolveProxy(projectDir, sourcePath), 0)).rejects.toBeInstanceOf(
+      ProxyWaitTimeoutError,
+    );
+    await sleep(30);
+    await expect(waitForProxy(resolveProxy(projectDir, sourcePath), 0)).rejects.toThrow("EBUSY");
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it("rejects sources outside the project before probing or spawning", async () => {
