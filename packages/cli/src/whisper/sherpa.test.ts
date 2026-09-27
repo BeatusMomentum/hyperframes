@@ -17,7 +17,7 @@ import {
   installSherpaRuntime,
   SHERPA_RUNTIME_DIR,
   sherpaPlatformPackage,
-  sherpaRuntimeInstalled,
+  sherpaRuntimeLoads,
   sherpaUnsupportedReason,
   type ModelFile,
 } from "./sherpa.js";
@@ -56,35 +56,50 @@ describe("installSherpaRuntime", () => {
       throw new Error("stop before touching the cache");
     });
     const cancel = new AbortController();
-    await installSherpaRuntime({ run, signal: cancel.signal }).catch(() => undefined);
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    await installSherpaRuntime({ run, signal: cancel.signal, dir }).catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
     expect((run.mock.calls[0] as unknown[] | undefined)?.[1]).toBe(cancel.signal);
     const args = run.mock.calls[0]?.[0] as string[] | undefined;
     expect(args).toContain("sherpa-onnx-node@1.13.8");
     expect(args).toContain(sherpaPlatformPackage());
   });
 
-  it("repairs a runtime whose native binary is missing instead of calling it installed", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
-    const native = sherpaPlatformPackage().replace(/@[^@]+$/, "");
-    const manifest = (root: string, name: string) => {
-      mkdirSync(join(root, "node_modules", name), { recursive: true });
-      writeFileSync(join(root, "node_modules", name, "package.json"), `{"name":"${name}"}`);
-    };
-    try {
-      manifest(dir, "sherpa-onnx-node");
-      manifest(dir, native);
-      expect(sherpaRuntimeInstalled(dir)).toBe(false);
-      const run = vi.fn(async (args: string[]) => {
-        const staging = args[args.indexOf("--prefix") + 1]!;
-        manifest(staging, "sherpa-onnx-node");
-        manifest(staging, native);
-        writeFileSync(join(staging, "node_modules", native, "sherpa-onnx.node"), "binary");
-      });
+  /** A stand-in runtime in `root` whose entry point loads, or throws as a missing library does. */
+  function fakeRuntime(root: string, loads: boolean) {
+    const pkg = join(root, "node_modules", "sherpa-onnx-node");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "package.json"), '{"name":"sherpa-onnx-node","main":"index.js"}');
+    const body = loads
+      ? "module.exports = {};"
+      : 'throw new Error("libonnxruntime.so: cannot open");';
+    writeFileSync(join(pkg, "index.js"), body);
+  }
 
-      await installSherpaRuntime({ run, dir });
+  it("reinstalls a runtime that is present but does not load", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    try {
+      fakeRuntime(dir, false);
+      expect(sherpaRuntimeLoads(dir)).toBe(false);
+      const run = vi.fn(async (args: string[]) =>
+        fakeRuntime(args[args.indexOf("--prefix") + 1]!, true),
+      );
+
+      expect(await installSherpaRuntime({ run, dir })).toBe(true);
       expect(run).toHaveBeenCalledTimes(1);
-      expect(existsSync(join(dir, "node_modules", native, "sherpa-onnx.node"))).toBe(true);
-      expect(sherpaRuntimeInstalled(dir)).toBe(true);
+      expect(sherpaRuntimeLoads(dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a runtime that loads alone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    try {
+      fakeRuntime(dir, true);
+      const run = vi.fn();
+      expect(await installSherpaRuntime({ run, dir })).toBe(false);
+      expect(run).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -98,7 +113,7 @@ describe("installSherpaRuntime", () => {
 });
 
 describe("sherpaParakeetInstalled", () => {
-  it("counts a runtime missing its native binary, so transcribe reports it instead of skipping it", async () => {
+  it("counts a runtime that does not load, so transcribe reports it instead of skipping it", async () => {
     const home = mkdtempSync(join(tmpdir(), "hf-sherpa-home-"));
     vi.stubEnv("HOME", home);
     vi.resetModules();
@@ -117,7 +132,7 @@ describe("sherpaParakeetInstalled", () => {
         writeFileSync(join(sherpa.PARAKEET_MODEL_DIR, name), "");
         truncateSync(join(sherpa.PARAKEET_MODEL_DIR, name), bytes);
       }
-      expect(sherpa.sherpaRuntimeInstalled()).toBe(false);
+      expect(sherpa.sherpaRuntimeLoads()).toBe(false);
       expect(sherpa.sherpaParakeetInstalled()).toBe(true);
     } finally {
       vi.unstubAllEnvs();

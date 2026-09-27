@@ -1,6 +1,6 @@
-import { execFile, type ExecFileException } from "node:child_process";
+import { execFile, spawnSync, type ExecFileException } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { createReadStream, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,10 +113,15 @@ export function sherpaUnsupportedReason(host: Host = currentHost()): string | nu
 const nativePackageName = (platform: string, arch: string) =>
   `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
 
-/** The runtime and the native binary its loader requires; either can be missing on its own. */
-export function sherpaRuntimeInstalled(dir = SHERPA_RUNTIME_DIR): boolean {
-  const binary = join(dir, "node_modules", nativePackageName(process.platform, process.arch));
-  return isInstalled(dir, RUNTIME) && existsSync(join(binary, "sherpa-onnx.node"));
+/** Loads it in a child as the decode worker does: only a load shows a missing library or bad binary. */
+export function sherpaRuntimeLoads(dir = SHERPA_RUNTIME_DIR): boolean {
+  if (!isInstalled(dir, RUNTIME)) return false;
+  const load = `require("node:module").createRequire(process.env.HF_SHERPA_MANIFEST)("${RUNTIME}")`;
+  const env = { ...process.env, HF_SHERPA_MANIFEST: join(dir, "package.json") };
+  return (
+    spawnSync(process.execPath, ["-e", load], { env, stdio: "ignore", timeout: 60_000 }).status ===
+    0
+  );
 }
 
 /** The native package, pinned too: the runtime's own optionalDependencies accept any 1.13.x. */
@@ -124,15 +129,18 @@ export function sherpaPlatformPackage(platform = process.platform, arch = proces
   return `${nativePackageName(platform, arch)}@${RUNTIME_VERSION}`;
 }
 
-export function installSherpaRuntime({
+/** Installs the runtime unless it already loads; true when it installed. */
+export async function installSherpaRuntime({
   run = runNpm,
   signal,
   dir = SHERPA_RUNTIME_DIR,
-}: { run?: typeof runNpm; signal?: AbortSignal; dir?: string } = {}): Promise<void> {
-  // install() keeps any dir holding the runtime manifest, so a half-installed one goes first.
-  if (!sherpaRuntimeInstalled(dir)) rmSync(dir, { recursive: true, force: true });
+}: { run?: typeof runNpm; signal?: AbortSignal; dir?: string } = {}): Promise<boolean> {
+  if (sherpaRuntimeLoads(dir)) return false;
+  // install() keeps any dir holding the runtime manifest, so a broken one goes first.
+  rmSync(dir, { recursive: true, force: true });
   const native = sherpaPlatformPackage();
-  return install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
+  await install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
+  return true;
 }
 
 /**

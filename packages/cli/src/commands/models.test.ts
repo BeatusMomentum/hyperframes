@@ -5,7 +5,6 @@ const sherpa = {
   SHERPA_RUNTIME_DIR: "/cache/optional/sherpa-onnx-node@1.13.8",
   PARAKEET_MODEL_DIR: "/cache/parakeet/parakeet-tdt-0.6b-v3-int8",
   sherpaUnsupportedReason: vi.fn(),
-  sherpaRuntimeInstalled: vi.fn(),
   installSherpaRuntime: vi.fn(),
   ensureParakeetModel: vi.fn(),
 };
@@ -38,8 +37,7 @@ describe("models install parakeet --json", () => {
     consumeCommandResult();
     vi.spyOn(console, "log").mockImplementation(() => {});
     sherpa.sherpaUnsupportedReason.mockReturnValue(null);
-    sherpa.sherpaRuntimeInstalled.mockReturnValue(false);
-    sherpa.installSherpaRuntime.mockResolvedValue(undefined);
+    sherpa.installSherpaRuntime.mockResolvedValue(true);
     sherpa.ensureParakeetModel.mockResolvedValue(false);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -56,6 +54,11 @@ describe("models install parakeet --json", () => {
       },
     });
     expect(dispose).toHaveBeenCalled();
+  });
+
+  it("reports changed: false when the runtime loads and the model verifies", async () => {
+    sherpa.installSherpaRuntime.mockResolvedValue(false);
+    expect((await install()).out).toMatchObject({ ok: true, changed: false });
   });
 
   it("reports a failed install as ok:false with exit 1", async () => {

@@ -419,6 +419,8 @@ async function transcribeAudio(
       );
     }
   } catch (err) {
+    // A signal that landed during a synchronous whisper run is only handled once the loop turns.
+    if (cancellation) await new Promise((resolve) => setImmediate(resolve));
     if (err instanceof DecodeCancelled || cancellation?.signal.aborted) {
       const message = "Transcription cancelled";
       if (opts.json) console.log(JSON.stringify({ ok: false, error: message }));
