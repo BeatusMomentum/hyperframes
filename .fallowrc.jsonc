@@ -147,8 +147,6 @@
     {
       "file": "packages/studio/src/utils/timelineAssetDrop.ts",
       "exports": [
-        "setCompositionDurationToContent",
-        "extendCompositionDurationIfNeeded",
         "fitTimelineAssetGeometry",
         "resolveTimelineAssetCompositionSize",
       ],
