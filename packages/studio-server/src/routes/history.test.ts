@@ -245,7 +245,7 @@ describe("history routes", () => {
     });
   });
 
-  it("offer no later change on a refused redo", async () => {
+  it("name the later change on a refused redo too", async () => {
     const { projectDir, history, call } = await demoProject();
     writeFileSync(join(projectDir, "index.html"), "B");
     await call("/claim", { label: "Moved Title", paths: ["index.html"] });
@@ -255,8 +255,7 @@ describe("history routes", () => {
     await window.close();
 
     const refused = await (await call("/step", { direction: "forward" })).json();
-    expect(refused).toMatchObject({ ok: false });
-    expect(refused).not.toHaveProperty("changedSince");
+    expect(refused).toMatchObject({ ok: false, changedSince: { label: "Agent turn" } });
   });
 
   it("name the next later change when undoing the offered one is refused too", async () => {

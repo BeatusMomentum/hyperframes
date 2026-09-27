@@ -1,5 +1,5 @@
 // fallow-ignore-file complexity
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { STUDIO_MOTION_PATH } from "../components/editor/studioMotion";
 import { serializeStudioFileMutations } from "../utils/studioFileMutationCoordinator";
 import type { ToastAction } from "../utils/studioHelpers";
@@ -60,6 +60,9 @@ export function useEditHistoryActions({
   activeCompPath,
   forceReloadSdkSession,
 }: UseEditHistoryActionsOptions) {
+  // Offers run long after the render that showed them; read the composition open at click time.
+  const activeCompPathRef = useRef(activeCompPath);
+  activeCompPathRef.current = activeCompPath;
   const readHistoryFile = useCallback(
     (path: string): Promise<string> =>
       path === STUDIO_MOTION_PATH ? readOptionalProjectFile(path) : readProjectFile(path),
@@ -104,7 +107,8 @@ export function useEditHistoryActions({
       if (result.ok && result.label) {
         const restore = { paths: result.paths, files: result.files };
         onAfterUndoRedo?.(restore);
-        if (activeCompPath && result.paths?.includes(activeCompPath)) {
+        const openPath = activeCompPathRef.current;
+        if (openPath && result.paths?.includes(openPath)) {
           forceReloadSdkSession?.();
         }
         await syncHistoryPreviewAfterApply(restore);
@@ -119,7 +123,6 @@ export function useEditHistoryActions({
       waitForPendingDomEditSaves,
       serializeHistoryFiles,
       onAfterUndoRedo,
-      activeCompPath,
       forceReloadSdkSession,
     ],
   );

@@ -45,9 +45,10 @@ function mount(result: {
     actions = useEditHistoryActions(deps);
     return null;
   }
+  const render = () => act(() => root!.render(createElement(Probe)));
   root = createRoot(document.createElement("div"));
-  act(() => root!.render(createElement(Probe)));
-  return { deps, actions };
+  render();
+  return { deps, actions, render };
 }
 
 describe("useEditHistoryActions", () => {
@@ -93,6 +94,26 @@ describe("useEditHistoryActions", () => {
     expect(deps.editHistory.undoEntry).toHaveBeenCalledWith("turn-1", expect.anything(), [
       "index.html",
     ]);
+  });
+
+  it("reloads the SDK session for the composition open when the offer is clicked", async () => {
+    const { deps, actions, render } = mount({
+      ok: false,
+      reason: "content-mismatch",
+      paths: ["scene.html"],
+      changedSince: { id: "turn-1", label: "Agent turn", paths: ["scene.html"] },
+    });
+    deps.editHistory.undoEntry.mockResolvedValue({
+      ok: true,
+      label: "Undid: Agent turn",
+      paths: ["scene.html"],
+    });
+    await act(() => actions.undo());
+    const [, , offer] = deps.showToast.mock.calls[0]!;
+    deps.activeCompPath = "scene.html";
+    render();
+    await act(async () => offer.run());
+    await vi.waitFor(() => expect(deps.forceReloadSdkSession).toHaveBeenCalled());
   });
 
   it("offers no undo of the later change when a redo is refused", async () => {

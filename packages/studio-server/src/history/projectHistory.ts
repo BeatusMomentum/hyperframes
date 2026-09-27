@@ -108,9 +108,12 @@ export interface HistoryListItem extends HistoryEntry {
   undone: boolean;
 }
 
+/** The later change a refused undo can offer to undo first. */
+export type HistoryName = { id: string; label: string; paths: string[] };
+
 export type HistoryResult =
   | { ok: true; entry: HistoryEntry | null }
-  | { ok: false; conflict: { files: string[]; newer: string[] } };
+  | { ok: false; conflict: { files: string[]; newer: string[] }; changedSince?: HistoryName };
 
 export interface HistoryWindow {
   readonly id: string;
@@ -147,7 +150,7 @@ export interface ProjectHistory {
   step(direction: "back" | "forward", who: HistoryWho, options?: Writing): Promise<HistoryResult>;
   /** The entry `who`'s next step reverts, pending changes included, as of the last scan (a step scans first). */
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined;
-  changedSince(id: string): HistoryEntry | undefined;
+  changedSince(id: string): HistoryName | undefined;
   /** A file changed since returns a conflict; `mode` takes a choice (keep-later-edits: null when none is left). */
   undo(id: string, options: { who: HistoryWho; mode?: UndoMode } & Writing): Promise<HistoryResult>;
   /** Makes the files equal what they were right after `point` (an entry id, or START). */
@@ -879,7 +882,13 @@ class Engine {
   async undoNow(id: string, who: HistoryWho, mode?: UndoMode): Promise<HistoryResult> {
     const entry = this.entry(id);
     const changed = this.movedOn(entry);
-    if (changed.length && !mode) return { ok: false, conflict: this.conflict(entry, changed) };
+    if (changed.length && !mode) {
+      return {
+        ok: false,
+        conflict: this.conflict(entry, changed),
+        changedSince: this.blockerOf(entry, changed),
+      };
+    }
     if (mode === "back-to-before") {
       const index = this.log.entries.indexOf(entry);
       const point = index > 0 ? this.log.entries[index - 1]!.id : START;
@@ -901,6 +910,22 @@ class Engine {
 
   movedOn(entry: HistoryEntry): HistoryFileChange[] {
     return entry.files.filter((file) => (this.tracked.get(file.path)?.hash ?? null) !== file.after);
+  }
+
+  /** The newest later change to `changed` that an undo can still take, so undoing it first unblocks `entry`. */
+  blockerOf(entry: HistoryEntry, changed: HistoryFileChange[]): HistoryName | undefined {
+    const paths = new Set(changed.map((file) => file.path));
+    const undone = undoneIds(this.log.entries);
+    const later = this.log.entries.slice(this.log.entries.indexOf(entry) + 1).reverse();
+    const blocker = later.find(
+      (candidate) =>
+        !candidate.undoes &&
+        !undone.has(candidate.id) &&
+        candidate.files.some((file) => paths.has(file.path)) &&
+        !this.movedOn(candidate).length,
+    );
+    if (!blocker) return undefined;
+    return { id: blocker.id, label: blocker.label, paths: blocker.files.map((file) => file.path) };
   }
 
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined {
@@ -1018,10 +1043,7 @@ class Engine {
         this.assertOpen();
         const entry = this.log.entries.find((candidate) => candidate.id === id);
         const changed = entry ? this.movedOn(entry) : [];
-        if (!entry || !changed.length) return undefined;
-        const undone = undoneIds(this.log.entries);
-        const newer = this.conflict(entry, changed).newer.map((later) => this.entry(later));
-        return newer.reverse().find((later) => !later.undoes && !undone.has(later.id));
+        return entry && changed.length ? this.blockerOf(entry, changed) : undefined;
       },
       readBlob: async (hash) => {
         this.assertOpen();

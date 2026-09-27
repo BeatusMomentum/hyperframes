@@ -1678,8 +1678,24 @@ describe("claim: a writer that records after writing", () => {
     await history.claim(you, "Moved Title", ["index.html"]);
     await history.step("back", you);
 
-    expect(await history.step("back", you)).toMatchObject({ ok: false });
+    expect(await history.step("back", you)).toMatchObject({
+      ok: false,
+      changedSince: { id: turn.id, label: "Agent turn", paths: ["index.html"] },
+    });
     expect(history.changedSince(history.next("back", you)!.id)?.id).toBe(turn.id);
+  });
+
+  it("names no later change when none of them is still in effect", async () => {
+    const { history, write } = await project({ "index.html": "A" });
+    const first = await change(history, agent, "Agent turn", () => write("index.html", "B"));
+    write("index.html", "C");
+    await history.claim(you, "Moved Title", ["index.html"]);
+    await change(history, agent, "Agent turn 2", () => write("index.html", "D"));
+    await history.undo(first.id, { who: agent, mode: "just-this" });
+
+    const refused = await history.step("back", you);
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused).not.toHaveProperty("changedSince", expect.anything());
   });
 
   it("names the agent's earlier turn, not its undo of a later one or the turn it undid", async () => {
