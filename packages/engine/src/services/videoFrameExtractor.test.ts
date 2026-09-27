@@ -1391,9 +1391,8 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
     expect(worstPngDelta).toBeLessThanOrEqual(worstDefaultDelta);
   }, 60_000);
 
-  // Chrome runs with --force-color-profile=srgb and colour-manages a frame tagged with the
-  // source's BT.709 transfer (BT.1886 -> sRGB); the SDR encoder never converts back, so a
-  // rendered BT.709 clip's 0x10 shadows came out as 0x04.
+  // Chrome runs with --force-color-profile=srgb and colour-manages any frame not tagged sRGB;
+  // the SDR encoder writes the canvas code values as they are, so frames must reach it unconverted.
   it.each([
     ["BT.709", "bt709"],
     ["BT.601", "smpte170m"],

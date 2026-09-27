@@ -449,9 +449,8 @@ export function buildEncoderArgs(
 
     // Range conversion: Chrome's full-range capture → limited/TV range; SDR also
     // converts to the BT.709 matrix it is tagged with.
-    const captureFilter = options.hdr
-      ? "scale=in_range=pc:out_range=tv"
-      : SDR_CAPTURE_TO_BT709_FILTER;
+    const sdrFilter = options.hdr ? undefined : SDR_CAPTURE_TO_BT709_FILTER;
+    const captureFilter = sdrFilter ?? "scale=in_range=pc:out_range=tv";
     if (gpuEncoder === "vaapi") {
       // vaapi already runs `format=nv12,hwupload`; the nv12 conversion aligns
       // odd dimensions before upload, so only prepend the range conversion.
@@ -464,12 +463,7 @@ export function buildEncoderArgs(
       // encoder. They hit the same "height not divisible by 2" abort as
       // libx264 on an odd-sized 4:2:0 canvas, so pad odd dimensions up to even
       // on the software side before the encode.
-      const vf = withEvenDimensionPad(
-        options.hdr ? "" : SDR_CAPTURE_TO_BT709_FILTER,
-        pixelFormat,
-        options.width,
-        options.height,
-      );
+      const vf = withEvenDimensionPad(sdrFilter ?? "", pixelFormat, options.width, options.height);
       if (vf) args.push("-vf", vf);
     } else {
       // The scale filter handles both 8-bit and 10-bit correctly. Pad odd

@@ -1143,6 +1143,7 @@ describe("buildEncoderArgs color space", () => {
         quality: 23,
         useGpu: true,
         pixelFormat: "yuv420p10le",
+        hdr: { transfer: "pq" },
       },
       inputArgs,
       "out.mp4",
@@ -1745,8 +1746,7 @@ describe("buildConcatArgs", () => {
 });
 
 describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
-  // Chrome captures JPEG frames as BT.601; the mp4 used to keep that matrix under its BT.709 tag,
-  // so a CSS #C83C28 decoded as #D44824.
+  // Chrome captures are BT.601 JPEGs; a BT.709-tagged mp4 must hold the BT.709 matrix.
   it("delivers Chrome's JPEG colours in the BT.709 the mp4 is tagged with", () => {
     const ffmpeg = getFfmpegBinary();
     const dir = mkdtempSync(join(tmpdir(), "hf-sdr-colour-"));
@@ -1766,7 +1766,7 @@ describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
       ]).stdout,
     ];
     try {
-      for (const color of ["0xC83C28", "0x101010", "0x2050E0"]) {
+      for (const color of ["0xC83C28", "0xFE0000", "0x101010", "0x2050E0"]) {
         const jpg = join(dir, "frame.jpg");
         const out = join(dir, "out.mp4");
         const synth = spawnSync(ffmpeg, [
