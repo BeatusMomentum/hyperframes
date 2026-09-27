@@ -315,7 +315,7 @@ async function transcribeAudio(
     );
   }
   const label = runner === "whisper" ? model : "Parakeet";
-  const spin = opts.json ? null : clack.spinner();
+  const spin = opts.json ? null : clack.spinner({ output: process.stderr });
   spin?.start(`Transcribing with ${c.accent(label)}...`);
   const onProgress = spin ? (msg: string) => spin.message(msg) : undefined;
   const run = (r: Runner) =>

@@ -114,6 +114,17 @@ describe("transcribe command", () => {
     });
   });
 
+  it("without --json, the skip reason goes to stderr for scripts that shell the CLI", async () => {
+    const { dir, input } = dummyAudio();
+    dirs.push(dir);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await transcribeCmd.run!({ args: { input, json: false, engine: "whisper" } } as never);
+
+    expect(stderr.mock.calls.join("")).toContain("whisper-cpp not found");
+    expect(stdout.mock.calls.join("")).not.toContain("whisper-cpp not found");
+  });
+
   it("--optional skips cleanly with exit 0", async () => {
     const { dir, input } = dummyAudio();
     dirs.push(dir);
