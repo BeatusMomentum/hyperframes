@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Plays the studio-playback fixture with the Catalog open and prints evidence: exact work counts for
-// perf-ratchet.mjs and main-thread CPU per frame. With STUDIO_BASE_URL (the base branch's Studio on this runner)
-// it alternates runs of both and exits 1 when this build's median CPU per frame exceeds MAX_CPU_RATIO of the base's.
-// Chrome runs without vsync or a frame cap, so a frame costs what the page makes it cost, even on a 60 Hz runner.
+// Plays the studio-playback fixture with the Catalog open: exact work counts for perf-ratchet.mjs, and, against
+// STUDIO_BASE_URL (the base branch's Studio on this runner, alternating runs), exits 1 when median main-thread
+// CPU per frame exceeds MAX_CPU_RATIO of the base's. Chrome runs uncapped, so a frame costs what the page costs.
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 import { resolveChromeExecutable } from "./chrome-executable.mjs";
@@ -67,10 +67,11 @@ async function serveFixtures(page, origin) {
   });
 }
 
-/** Counts, per composition animation frame, the eventful seeks of GSAP timelines. */
+/** Counts, per composition animation frame, every seek of a GSAP timeline, silent ones included. */
 function instrumentPlayback() {
-  const player = document.querySelector("hyperframes-player");
-  const win = player.shadowRoot.querySelector("iframe").contentWindow;
+  window.previewWindow = () =>
+    document.querySelector("hyperframes-player").shadowRoot.querySelector("iframe").contentWindow;
+  const win = window.previewWindow();
   const timelines = Object.values(win.__timelines).filter(
     (tl) => typeof tl?.totalTime === "function",
   );
@@ -79,9 +80,8 @@ function instrumentPlayback() {
   // Studio wraps each timeline's own totalTime, so count on the instance, outside those wrappers.
   for (const tl of timelines) {
     const totalTime = tl.totalTime;
-    tl.totalTime = function (time, suppressEvents) {
-      const eventfulSeek = arguments.length > 0 && !suppressEvents;
-      if (eventfulSeek && state.on) state.current += 1;
+    tl.totalTime = function () {
+      if (arguments.length > 0 && state.on) state.current += 1;
       return totalTime.apply(this, arguments);
     };
   }
@@ -93,11 +93,19 @@ function instrumentPlayback() {
   win.requestAnimationFrame(frame);
 }
 
-/** The renderer main thread's complete events, in time order. */
+/** The page's renderer main thread (the one producing frames; Chrome may run more than one), in time order. */
 function mainThreadEvents(traceEvents) {
-  const main = traceEvents.find(
+  const frames = new Map();
+  for (const e of traceEvents) {
+    if (e.name !== "ProxyMain::BeginMainFrame") continue;
+    const key = `${e.pid}:${e.tid}`;
+    frames.set(key, (frames.get(key) ?? 0) + 1);
+  }
+  const mains = traceEvents.filter(
     (e) => e.ph === "M" && e.name === "thread_name" && e.args.name === "CrRendererMain",
   );
+  const count = (e) => frames.get(`${e.pid}:${e.tid}`) ?? 0;
+  const main = mains.reduce((best, e) => (count(e) > count(best) ? e : best), mains[0]);
   return traceEvents
     .filter((e) => e.pid === main.pid && e.tid === main.tid && e.ph === "X")
     .sort((a, b) => a.ts - b.ts);
@@ -165,9 +173,10 @@ async function measure(url) {
     );
     await page.evaluate(instrumentPlayback);
     await page.mouse.move(0, 0);
-    await page.click('button[aria-label="Play"]');
-    await page.mouse.move(0, 0);
-    await page.waitForFunction(() => document.querySelector('button[aria-label="Pause"]'), {
+    // Play and pause go through Studio's Space shortcut and the runtime's player, which both builds share.
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => previewWindow().__player?.isPlaying?.() === true, {
       timeout: 10_000,
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -191,17 +200,13 @@ async function measure(url) {
     });
     const trace = JSON.parse(Buffer.from(await page.tracing.stop()).toString("utf8"));
     // The film's own layers come and go with its tweens, so layers are read paused at one film time.
-    await page.click('button[aria-label="Pause"]');
+    await page.evaluate(() => previewWindow().__player.pause());
     await page.evaluate(
       (t) => document.querySelector("hyperframes-player").seek(t),
       LAYER_READ_TIME_S,
     );
     await page.waitForFunction(
-      (t) => {
-        const player = document.querySelector("hyperframes-player");
-        const time = player.shadowRoot.querySelector("iframe").contentWindow.__player?.getTime?.();
-        return Math.abs(time - t) < 0.01;
-      },
+      (t) => Math.abs(previewWindow().__player?.getTime?.() - t) < 0.01,
       { timeout: 10_000 },
       LAYER_READ_TIME_S,
     );
@@ -213,6 +218,7 @@ async function measure(url) {
     await cdp.send("LayerTree.enable");
     const compositedLayers = (await layers).length;
     const cpu = cpuPerFrameMs(trace.traceEvents ?? trace);
+    if (cpu.length === 0) throw new Error(`no frames captured while playing ${url}`);
     const seekFrames = counts.seekFrames.slice(1);
     return {
       browser: await browser.version(),
@@ -220,7 +226,7 @@ async function measure(url) {
       cpuMedianMs: round(median(cpu)),
       workCounts: {
         "playing.catalogElements": counts.catalogElements,
-        "playing.compositedLayers": compositedLayers,
+        "paused.compositedLayers": compositedLayers,
         "playing.maxSeeksPerFrame": seekFrames.length ? Math.max(...seekFrames) : -1,
       },
     };
@@ -232,13 +238,26 @@ async function measure(url) {
 const head = [];
 const base = [];
 for (let round_ = 0; round_ < ROUNDS; round_ += 1) {
+  // Alternate which build goes first, so a runner that slows over the job does not favour one.
+  if (BASE_URL && round_ % 2 === 1) base.push(await measure(BASE_URL));
   head.push(await measure(HEAD_URL));
-  if (BASE_URL) base.push(await measure(BASE_URL));
+  if (BASE_URL && round_ % 2 === 0) base.push(await measure(BASE_URL));
 }
 // Counts must repeat exactly across runs of one build, or the ratchet would fail at random.
 const countSets = new Set(head.map((run) => JSON.stringify(run.workCounts)));
 if (countSets.size !== 1) {
   console.error(`work counts differ between runs of one build: ${[...countSets].join(" vs ")}`);
+  process.exit(1);
+}
+// Layer and element counts differ between Chrome releases, so they are only comparable on the recorded one.
+const ceilingsPath = fileURLToPath(new URL("./perf-ceilings.json", import.meta.url));
+const recordedBrowser = JSON.parse(readFileSync(ceilingsPath, "utf8"))["studio-playback"]?.browser;
+const measuredBrowser = /\/(\d+)\./.exec(head[0].browser)?.[1];
+if (recordedBrowser && measuredBrowser !== recordedBrowser) {
+  console.error(
+    `studio-playback counts are recorded on Chrome ${recordedBrowser} but this ran Chrome ${measuredBrowser}: ` +
+      "run it in the CI job, or take new ceilings from that job's evidence",
+  );
   process.exit(1);
 }
 const evidence = {

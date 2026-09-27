@@ -802,8 +802,10 @@ jobs:
           fi
       - name: Build the base branch's Studio for the playback timing
         # The playback gate times this Studio against its base on the same runner, in
-        # alternating runs, so the runner's speed cancels out of the ratio.
+        # alternating runs, so the runner's speed cancels out of the ratio. A failed base
+        # build must not skip the timeline gate below; the playback step then counts only.
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: |
           set -euo pipefail
           git worktree add --detach /tmp/hf-base FETCH_HEAD
@@ -815,6 +817,7 @@ jobs:
           mkdir -p packages/studio/data/projects
           cp -R "$GITHUB_WORKSPACE/packages/studio/tests/e2e/fixtures/studio-playback" \
             packages/studio/data/projects/studio-playback
+          touch /tmp/hf-base/.playback-base-built
       - name: Run both arms of the timeline viewport gate
         run: |
           set -euo pipefail
@@ -924,11 +927,13 @@ jobs:
           PIDS+=($!)
           PORTS=(5316)
           BASE_URL=""
-          if [[ -d /tmp/hf-base ]]; then
+          if [[ -f /tmp/hf-base/.playback-base-built ]]; then
             (cd /tmp/hf-base && NODE_ENV=production bun run --cwd packages/studio dev -- --port 5317 --strictPort) &
             PIDS+=($!)
             PORTS+=(5317)
             BASE_URL="http://localhost:5317/#project/studio-playback"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "::warning::The base branch's Studio did not build, so playback is counted but not timed"
           fi
           for port in "${PORTS[@]}"; do
             for i in $(seq 1 60); do

@@ -12,11 +12,11 @@
     }
   },
   "studio-playback": {
-    "browser": "154",
+    "browser": "153",
     "counts": {
       "playing.catalogElements": 6878,
-      "playing.compositedLayers": 171,
-      "playing.maxSeeksPerFrame": 1
+      "paused.compositedLayers": 171,
+      "playing.maxSeeksPerFrame": 3
     }
   }
 }
