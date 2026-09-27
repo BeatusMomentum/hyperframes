@@ -22,6 +22,16 @@ const realFfmpegFilters = realFfmpeg
   : "";
 const canToneMapForReal =
   Boolean(findFfBinary("ffprobe")) && /\szscale\s/.test(realFfmpegFilters ?? "");
+
+function meanLuma(path: string): number {
+  const stats = execFileSync(
+    realFfmpeg!,
+    ["-v", "error", "-i", path, "-frames:v", "1", "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-"],
+    { encoding: "utf8" },
+  );
+  return Number(/YAVG=([\d.]+)/.exec(stats)?.[1]);
+}
+
 // Mirrors MAX_CONCURRENT_TRANSCODES in proxyTranscoder.ts (not exported —
 // this test file and the module are authored together).
 const MAX_CONCURRENT = 2;
@@ -88,6 +98,7 @@ async function loadModule(
   spawn: SpawnImpl,
   ffmpegPath: string | undefined,
   isHdr = false,
+  hdrTransfer: string | null = isHdr ? "pq" : null,
 ): Promise<typeof import("./proxyTranscoder.js")> {
   vi.resetModules();
   vi.doMock("node:child_process", () => {
@@ -100,7 +111,7 @@ async function loadModule(
   vi.doMock("./mediaMetadata.js", () => ({
     probeMediaMetadata: async () => ({
       kind: "video",
-      color: { isHdr },
+      color: { isHdr, hdrTransfer },
     }),
   }));
   return import("./proxyTranscoder.js");
@@ -285,6 +296,22 @@ describe("resolveProxy", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("does not tone-map BT.2020 footage without a PQ or HLG transfer, as renders do", async () => {
+    const { spawn, calls } = createSpawnSpy();
+    const { resolveProxy } = await loadModule(spawn, FFMPEG_PATH, true, "unknown");
+    const projectDir = tmpProject();
+    const sourcePath = join(projectDir, "bt2020-sdr.mov");
+    writeFileSync(sourcePath, "source-bytes");
+
+    const result = resolveProxy(projectDir, sourcePath);
+    await flush();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args[calls[0]!.args.indexOf("-vf") + 1]).not.toContain("tonemap=");
+    succeed(calls[0]!);
+    await result;
+  });
+
   it.skipIf(!canToneMapForReal)(
     "tone-maps real HLG footage that tags only its transfer, as renders do",
     async () => {
@@ -313,7 +340,8 @@ describe("resolveProxy", () => {
       ]);
 
       const proxyPath = await resolveProxy(projectDir, sourcePath);
-      expect(existsSync(proxyPath)).toBe(true);
+      // The hable tone map darkens this clip (mean luma about 60 to 40); a plain copy keeps it.
+      expect(meanLuma(proxyPath)).toBeLessThan(meanLuma(sourcePath) - 10);
     },
     60_000,
   );

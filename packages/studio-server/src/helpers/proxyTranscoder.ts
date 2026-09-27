@@ -26,7 +26,7 @@ import { realpath } from "./safePath.js";
  * entry still lands for the next request.
  */
 
-export const PROXY_PARAMS_VERSION = "v4";
+export const PROXY_PARAMS_VERSION = "v5";
 
 const CACHE_DIR_NAME = ".transcode-cache";
 
@@ -328,15 +328,16 @@ async function runFfmpeg(
   if (!ffmpegPath) {
     throw new FfmpegUnavailableError();
   }
-  // The HDR tonemap filters discard alpha. VP8 is the alpha-preserving proxy
-  // variant, so retain its source color values instead of making it opaque.
-  if (metadata.color.isHdr && variant !== "vp8") await ensureHdrFilters(ffmpegPath);
+  // Tone-map what renders tone-map: a PQ or HLG transfer. The tone map discards
+  // alpha, so the alpha-preserving VP8 variant keeps its source colour values.
+  const { hdrTransfer } = metadata.color;
+  const toneMap = (hdrTransfer === "pq" || hdrTransfer === "hlg") && variant !== "vp8";
+  if (toneMap) await ensureHdrFilters(ffmpegPath);
   const evenScale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
   const pixelFormat = variant === "vp8" ? "yuva420p" : "yuv420p";
-  const videoFilter =
-    metadata.color.isHdr && variant !== "vp8"
-      ? [hdrToSdrToneMapFilter(metadata.color), evenScale, `format=${pixelFormat}`].join(",")
-      : [evenScale, `format=${pixelFormat}`].join(",");
+  const videoFilter = toneMap
+    ? [hdrToSdrToneMapFilter(metadata.color), evenScale, `format=${pixelFormat}`].join(",")
+    : [evenScale, `format=${pixelFormat}`].join(",");
 
   return new Promise((resolvePromise, reject) => {
     const commonArgs = ["-y", "-i", sourcePath, "-vf", videoFilter];
