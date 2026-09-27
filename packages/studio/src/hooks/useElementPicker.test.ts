@@ -204,6 +204,19 @@ describe("an edit to a picked element whose id another scene shares", () => {
     expect(synced[0]?.["index.html"]).toContain('id="original" data-hf-id="hf-x">');
   });
 
+  it("writes by the id when the scene's data-composition-id has the same value", () => {
+    const saved =
+      '<div data-composition-id="intro"><h1 id="intro" data-hf-id="hf-x">a</h1>' +
+      '<h1 id="copy" data-hf-id="hf-x">b</h1></div>';
+    const { picker, synced } = mountPicker({ "index.html": saved }, "#intro", "", true, {
+      page: `<!doctype html><html><body>${saved}</body></html>`,
+      id: "intro",
+    });
+    act(() => picker().setStyle("color", "red"));
+    expect(synced[0]?.["index.html"]).toContain('<div data-composition-id="intro">');
+    expect(synced[0]?.["index.html"]).toContain('id="intro" data-hf-id="hf-x" style="color: red"');
+  });
+
   it("writes nothing when neither the hf-id nor the id picks one element", () => {
     const saved =
       '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-x">a</span>' +

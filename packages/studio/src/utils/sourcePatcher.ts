@@ -167,7 +167,7 @@ function patchInlineStyle(
   value: string | null,
 ): string {
   // Find the element tag with this id
-  const idPattern = new RegExp(`(<[^>]*\\bid=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
   const match = idPattern.exec(html);
   if (!match) return html;
 
@@ -242,7 +242,7 @@ function replaceTagAtMatch(html: string, match: TagMatch, newTag: string): strin
 }
 
 function execDataAttrPattern(html: string, attr: string, value: string): TagMatch | null {
-  const pattern = new RegExp(`(<[^>]*\\b${attr}=(["'])${escapeRegex(value)}\\2[^>]*)>`, "i");
+  const pattern = new RegExp(`(<[^>]*(?<![\\w-])${attr}=(["'])${escapeRegex(value)}\\2[^>]*)>`, "i");
   const match = pattern.exec(html);
   if (match?.index == null) return null;
   return { tag: match[1], start: match.index, end: match.index + match[1].length };
@@ -253,7 +253,7 @@ function findTagByClass(html: string, target: PatchTarget): TagMatch | null {
   if (!classMatch) return null;
   const cls = classMatch[1];
   const pattern = new RegExp(
-    `(<[^>]*\\bclass=(["'])[^"']*\\b${escapeRegex(cls)}\\b[^"']*\\2[^>]*)>`,
+    `(<[^>]*(?<![\\w-])class=(["'])[^"']*\\b${escapeRegex(cls)}\\b[^"']*\\2[^>]*)>`,
     "gi",
   );
   const selectorIndex = target.selectorIndex ?? 0;
@@ -273,7 +273,7 @@ function findTagByClass(html: string, target: PatchTarget): TagMatch | null {
 }
 
 export function countTagsWithAttr(html: string, attr: string, value: string): number {
-  const pattern = new RegExp(`<[^>]*\\s${attr}=(["'])${escapeRegex(value)}\\1[^>]*>`, "gi");
+  const pattern = new RegExp(`<[^>]*(?<![\\w-])${attr}=(["'])${escapeRegex(value)}\\1[^>]*>`, "gi");
   return html.match(pattern)?.length ?? 0;
 }
 
@@ -308,7 +308,7 @@ export function readAttributeByTarget(
   if (!match) return undefined;
 
   const fullAttr = attr.startsWith("data-") ? attr : `data-${attr}`;
-  const valueMatch = new RegExp(`\\b${fullAttr}=(["'])([^"']*)\\1`).exec(match.tag);
+  const valueMatch = new RegExp(`(?<![\\w-])${fullAttr}=(["'])([^"']*)\\1`).exec(match.tag);
   return valueMatch?.[2] != null ? unescapeHtmlAttribute(valueMatch[2]) : undefined;
 }
 
@@ -327,12 +327,12 @@ function patchAttributeByTarget(
   if (!match) return html;
 
   const fullAttr = attr.startsWith("data-") ? attr : `data-${attr}`;
-  const attrPattern = new RegExp(`\\b${escapeRegex(fullAttr)}=(["'])([^"']*)\\1`);
+  const attrPattern = new RegExp(`(?<![\\w-])${escapeRegex(fullAttr)}=(["'])([^"']*)\\1`);
   const tag = match.tag;
 
   if (value === null) {
     // Remove the attribute if present
-    const boolAttrPattern = new RegExp(`\\b${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
+    const boolAttrPattern = new RegExp(`(?<![\\w-])${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
     if (!boolAttrPattern.test(tag)) return html;
     const removePattern = new RegExp(`\\s+${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
     const newTag = tag.replace(removePattern, "");
@@ -358,16 +358,16 @@ function patchAttribute(
   attr: string,
   value: string | null,
 ): string {
-  const idPattern = new RegExp(`(<[^>]*\\bid=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
   const match = idPattern.exec(html);
   if (!match) return html;
 
   const tag = match[1];
   const fullAttr = attr.startsWith("data-") ? attr : `data-${attr}`;
-  const attrPattern = new RegExp(`\\b${escapeRegex(fullAttr)}=(["'])([^"']*)\\1`);
+  const attrPattern = new RegExp(`(?<![\\w-])${escapeRegex(fullAttr)}=(["'])([^"']*)\\1`);
 
   if (value === null) {
-    const boolAttrPattern = new RegExp(`\\b${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
+    const boolAttrPattern = new RegExp(`(?<![\\w-])${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
     if (!boolAttrPattern.test(tag)) return html;
     const removePattern = new RegExp(`\\s+${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
     const newTag = tag.replace(removePattern, "");
@@ -391,7 +391,7 @@ function patchAttribute(
  */
 function patchTextContent(html: string, elementId: string, value: string): string {
   const openTagPattern = new RegExp(
-    `(<([a-z0-9-]+)[^>]*\\bid=(["'])${escapeRegex(elementId)}\\3[^>]*>)`,
+    `(<([a-z0-9-]+)[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\3[^>]*>)`,
     "i",
   );
   const match = openTagPattern.exec(html);
@@ -468,7 +468,7 @@ function patchHtmlAttributeInTag(
     return html.replace(tag, newTag);
   }
 
-  const attrPattern = new RegExp(`\\b${escapeRegex(attr)}=(["'])([^"']*)\\1`);
+  const attrPattern = new RegExp(`(?<![\\w-])${escapeRegex(attr)}=(["'])([^"']*)\\1`);
   if (value === null) {
     if (!attrPattern.test(tag)) return html;
     const removePattern = new RegExp(`\\s+${escapeRegex(attr)}=(["'])[^"']*\\1`);
@@ -492,7 +492,7 @@ function patchHtmlAttribute(
   attr: string,
   value: string | null,
 ): string {
-  const idPattern = new RegExp(`(<[^>]*\\bid=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
   const match = idPattern.exec(html);
   if (!match) return html;
   return patchHtmlAttributeInTag(html, match[1], attr, value);

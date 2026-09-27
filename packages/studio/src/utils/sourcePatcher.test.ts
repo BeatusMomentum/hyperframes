@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPatch,
   applyPatchByTarget,
+  countTagsWithAttr,
   readAttributeByTarget,
   readTagSnippetByTarget,
   type PatchOperation,
@@ -644,5 +645,25 @@ describe("T3 — hfId targeting (spec for R1)", () => {
     expect(bluePos).toBeGreaterThan(-1);
     expect(bluePos).toBeLessThan(h1End);
     expect(result).toContain('<h2 class="b">B</h2>');
+  });
+});
+
+describe("attribute names inside longer ones", () => {
+  const html =
+    '<div data-composition-id="intro"><h1 id="intro" data-src="a.png" src="b.png">T</h1></div>';
+
+  it("patches the tag whose id matches, not one whose data-composition-id does", () => {
+    const patched = applyPatch(html, "intro", {
+      type: "inline-style",
+      property: "color",
+      value: "red",
+    });
+    expect(patched).toContain('<div data-composition-id="intro">');
+    expect(patched).toContain('<h1 id="intro" data-src="a.png" src="b.png" style="color: red">');
+  });
+
+  it("counts and reads an attribute by its own name only", () => {
+    expect(countTagsWithAttr(html, "id", "intro")).toBe(1);
+    expect(readAttributeByTarget(html, { id: "intro" }, "src")).toBe("a.png");
   });
 });
