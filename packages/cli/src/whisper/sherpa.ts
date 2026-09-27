@@ -189,7 +189,17 @@ export async function ensureParakeetModel({
       const temp = join(staging, file.name);
       rmSync(dest, { force: true });
       const url = `https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}/${file.name}`;
-      await download(url, temp, { signal, onProgress: (bytes) => onBytes?.(done + bytes, total) });
+      await download(url, temp, {
+        signal,
+        onProgress: (bytes) => onBytes?.(done + bytes, total),
+      }).catch((err: unknown) => {
+        if (signal?.aborted) throw err;
+        const why = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Could not download ${file.name} from huggingface.co (${why}). Check your network and re-run.`,
+          { cause: err },
+        );
+      });
       if (!(await verifies(temp, file))) {
         throw new Error(
           `${file.name} did not match its pinned size and sha256, so it was discarded. Re-run to retry.`,

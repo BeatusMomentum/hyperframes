@@ -294,6 +294,11 @@ describe("transcribe command", () => {
           1,
           "ffmpeg failed: Error opening input files: Operation not permitted",
         ],
+        [
+          "Output file does not contain any stream\nError opening output files: Invalid argument",
+          1,
+          "ffmpeg failed: Error opening output files: Invalid argument\nOutput file does not contain any stream",
+        ],
       ])("after saying %j, the run exits %i", async (said, code, error) => {
         const actual = await vi.importActual<typeof import("../whisper/transcribe.js")>(
           "../whisper/transcribe.js",

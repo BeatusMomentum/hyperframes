@@ -106,6 +106,19 @@ describe("ensureParakeetModel", () => {
     expect(stagingLeft()).toEqual([]);
   });
 
+  it("names the file, the host and a retry when a download fails", async () => {
+    tempDir();
+    const download = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      ensureParakeetModel({ dir, files: [file("encoder.onnx", "enc")], download }),
+    ).rejects.toThrow(
+      "Could not download encoder.onnx from huggingface.co (fetch failed). Check your network and re-run.",
+    );
+    expect(stagingLeft()).toEqual([]);
+  });
+
   it("stops at the next file on cancel, keeping only files that verified", async () => {
     tempDir();
     const files = [file("encoder.onnx", "enc"), file("tokens.txt", "tok")];

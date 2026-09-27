@@ -427,11 +427,16 @@ async function transcribeAudio(
     // Surface the last few lines of the ASR subprocess's stderr, which
     // execFileSync captures but otherwise drops on the floor — that's where
     // parakeet-mlx / whisper report the actual failure cause.
+    const base = err instanceof Error ? err.message : String(err);
     const stderr =
       err && typeof err === "object" && "stderr" in err && err.stderr
-        ? String(err.stderr).trim().split("\n").slice(-3).join("\n")
+        ? String(err.stderr)
+            .trim()
+            .split("\n")
+            .slice(-3)
+            .filter((line) => !base.includes(line))
+            .join("\n")
         : "";
-    const base = err instanceof Error ? err.message : String(err);
     const message = stderr ? `${base}\n${stderr}` : base;
 
     // whisper-cpp is an optional prerequisite, not part of the CLI. When it is
