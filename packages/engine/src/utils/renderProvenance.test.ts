@@ -87,7 +87,7 @@ describe.skipIf(!HAS_FFMPEG)("provenance survives a real encode", () => {
     dir = mkdtempSync(join(tmpdir(), "hf-provenance-"));
   });
   afterEach(() => {
-    // Windows can hold an ffmpeg output open for a moment after the process exits.
+    // A timed-out test leaves its ffmpeg running; retry so the timeout, not EBUSY, is the failure reported.
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
@@ -224,7 +224,7 @@ describe.skipIf(!HAS_FFMPEG)("provenance survives a real encode", () => {
       renderer: PROVENANCE_RENDERER_NAME,
       version: PROVENANCE_VERSION,
     });
-  }, 60_000);
+  });
 
   it("survives the encode -> mux -> faststart chain that produces a delivered mp4", async () => {
     // The stage that actually bites: `muxVideoWithAudio` and `applyFaststart`
@@ -265,7 +265,7 @@ describe.skipIf(!HAS_FFMPEG)("provenance survives a real encode", () => {
       renderer: PROVENANCE_RENDERER_NAME,
       version: PROVENANCE_VERSION,
     });
-  }, 60_000);
+  });
 });
 
 describe("resolveOwnVersionFrom", () => {
