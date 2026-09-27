@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { findFFmpeg } from "../browser/ffmpeg.js";
 import { isAttendedTerminal } from "../utils/attendedTerminal.js";
 import { downloadFile } from "../utils/download.js";
+import { sherpaUnsupportedReason } from "./sherpaSupport.js";
 
 const MODELS_DIR = join(homedir(), ".cache", "hyperframes", "whisper", "models");
 const DEFAULT_MODEL = "small.en";
@@ -185,10 +186,13 @@ export async function ensureWhisper(options?: {
   if (existing) return existing;
 
   if (!(options?.mayInstall ?? isAttendedTerminal())) {
+    // Suggest Parakeet only where `models install parakeet` can run.
+    const hint = sherpaUnsupportedReason()
+      ? `Install whisper-cpp: ${getInstallInstructions()}`
+      : "For much better transcripts, run: hyperframes models install parakeet. " +
+        `Or install whisper-cpp: ${getInstallInstructions()}`;
     throw new WhisperUnavailableError(
-      "whisper-cpp not found, and unattended or --json runs do not install it. " +
-        "For much better transcripts, run: hyperframes models install parakeet. " +
-        `Or install whisper-cpp: ${getInstallInstructions()}`,
+      `whisper-cpp not found, and unattended or --json runs do not install it. ${hint}`,
     );
   }
 

@@ -26,6 +26,7 @@ vi.mock("node:os", async (importOriginal) => ({
   homedir: () => state.home,
   platform: () => "linux",
 }));
+vi.mock("../whisper/sherpaSupport.js", () => ({ sherpaUnsupportedReason: () => null }));
 const confirm = vi.fn(async () => true);
 vi.mock("@clack/prompts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clack/prompts")>()),

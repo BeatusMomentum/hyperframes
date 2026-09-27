@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // brew, git and cmake are on PATH; any command but a which/where lookup counts as an install.
-const state = vi.hoisted(() => ({ attended: false, installs: [] as string[] }));
+const state = vi.hoisted(() => ({
+  attended: false,
+  installs: [] as string[],
+  parakeetBlocked: null as string | null,
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -30,6 +34,7 @@ vi.mock("node:os", async (importOriginal) => ({
 }));
 
 vi.mock("../utils/attendedTerminal.js", () => ({ isAttendedTerminal: () => state.attended }));
+vi.mock("./sherpaSupport.js", () => ({ sherpaUnsupportedReason: () => state.parakeetBlocked }));
 
 describe("findWhisper", () => {
   it("does not treat the OpenAI Python whisper command as whisper.cpp", async () => {
@@ -49,6 +54,7 @@ describe.each(["linux", "win32"])("ensureWhisper on a %s host", (hostPlatform) =
 
   beforeEach(() => {
     state.installs.length = 0;
+    state.parakeetBlocked = null;
     Object.defineProperty(process, "platform", { value: hostPlatform });
   });
 
@@ -61,6 +67,18 @@ describe.each(["linux", "win32"])("ensureWhisper on a %s host", (hostPlatform) =
     const { ensureWhisper } = await import("./manager.js");
 
     await expect(ensureWhisper()).rejects.toMatchObject(unattendedError);
+    expect(state.installs).toEqual([]);
+  });
+
+  it("an unattended run where Parakeet cannot run gives only the whisper-cpp instruction", async () => {
+    state.attended = false;
+    state.parakeetBlocked = "Parakeet needs glibc 2.32 or newer; this system has glibc 2.31.";
+    const { ensureWhisper } = await import("./manager.js");
+
+    const err = await ensureWhisper().catch((e: Error) => e);
+    expect(err).toMatchObject({ code: "WHISPER_UNAVAILABLE" });
+    expect(err.message).toMatch(/Install whisper-cpp: brew install whisper-cpp$/);
+    expect(err.message).not.toContain("parakeet");
     expect(state.installs).toEqual([]);
   });
 

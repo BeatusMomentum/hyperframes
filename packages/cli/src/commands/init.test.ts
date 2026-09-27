@@ -317,7 +317,7 @@ describe("hyperframes init flag rename", () => {
         USERPROFILE: dir,
         PATH: `${bin}${delimiter}${process.env.PATH}`,
       });
-      expect(res.stdout).toContain("hyperframes models install parakeet");
+      expect(res.stdout).toContain("unattended or --json runs do not install it");
       // The fakes are sh scripts, which Windows cannot run.
       if (process.platform !== "win32") expect(existsSync(installLog)).toBe(false);
     } finally {
