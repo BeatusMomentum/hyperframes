@@ -13,7 +13,8 @@ import { buildTimelineLogicalRows } from "./timelineKeyboardNavigation";
 import { usePlayerStore, type TimelineElement } from "../store/playerStore";
 import type { MultiDragPreviewInput } from "./timelineMultiDragPreview";
 import type { TimelineEditCallbacks } from "./timelineCallbacks";
-import type { DraggedClipState, BlockedClipState } from "./useTimelineClipDrag";
+import type { DraggedClipState, BlockedClipState, ResizingClipState } from "./useTimelineClipDrag";
+import { timelineClipFocusId } from "./timelineNavigationIdentity";
 import * as transitionSeams from "./timelineTransitionSeams";
 
 vi.mock("./timelineTransitionSeams", async (importOriginal) => {
@@ -83,6 +84,8 @@ interface RenderLanesOptions {
   hoveredClip?: string | null;
   renderClipContent?: React.ComponentProps<typeof TimelineLanes>["renderClipContent"];
   snapGuide?: { time: number; type: "beat" | "clip-edge" | "playhead" } | null;
+  /** Props the section-clip tests override, applied last. */
+  lanes?: Partial<React.ComponentProps<typeof TimelineLanes>>;
 }
 
 function renderLanes(options: RenderLanesOptions = {}): {
@@ -151,6 +154,7 @@ function renderLanes(options: RenderLanesOptions = {}): {
           hoveredClip={next.hoveredClip ?? null}
           renderClipContent={next.renderClipContent}
           draggedClip={next.draggedClip ?? null}
+          resizingClip={null}
           draggedElement={null}
           snapGuide={next.snapGuide ?? null}
           multiDragPreview={next.multiDragPreview ?? null}
@@ -177,6 +181,7 @@ function renderLanes(options: RenderLanesOptions = {}): {
           onSelectElement={onSelectElement}
           onRazorSplit={vi.fn()}
           onRazorSplitAll={vi.fn()}
+          {...next.lanes}
         />,
       );
     });
@@ -522,6 +527,59 @@ describe("TimelineLanes transition seams", () => {
 
     expect(view.host.querySelectorAll("[data-timeline-row]").length).toBeGreaterThanOrEqual(3);
     expect(derivations.reduce((calls, derive) => calls + derive.mock.calls.length, 0)).toBe(1);
+    act(() => view.root.unmount());
+  });
+});
+
+describe("TimelineLanes section clips", () => {
+  const section: TimelineElement = {
+    ...element("intro", TRACK_A),
+    compositionSrc: "compositions/intro.html",
+  };
+  const clipOf = (host: HTMLElement) =>
+    host.querySelector<HTMLElement>(
+      `[data-timeline-focus-id=${CSS.escape(timelineClipFocusId("intro"))}]`,
+    )!;
+  const doubleClick = (target: HTMLElement) =>
+    act(() => target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+  const enter = (target: HTMLElement) =>
+    act(() => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+
+  it("opens a section clip once per double-click and once per Enter", () => {
+    const onDrillDown = vi.fn();
+    const view = renderLanes({ elements: [section], lanes: { onDrillDown } });
+    doubleClick(clipOf(view.host));
+    expect(onDrillDown).toHaveBeenCalledExactlyOnceWith(section);
+    enter(clipOf(view.host));
+    expect(onDrillDown).toHaveBeenCalledTimes(2);
+    act(() => view.root.unmount());
+  });
+
+  it("names both ways to open a section clip in its tooltip", () => {
+    const view = renderLanes({ elements: [section] });
+    expect(clipOf(view.host).title).toBe(
+      "compositions/intro.html • Double-click or press Enter to open",
+    );
+    act(() => view.root.unmount());
+  });
+
+  it("opens nothing on the double-click that ends a drag or trim", () => {
+    const onDrillDown = vi.fn();
+    const view = renderLanes({
+      elements: [section],
+      lanes: { onDrillDown, suppressClickRef: { current: true } },
+    });
+    doubleClick(clipOf(view.host));
+    expect(onDrillDown).not.toHaveBeenCalled();
+    act(() => view.root.unmount());
+  });
+
+  it("opens nothing on Enter while the clip is being trimmed", () => {
+    const onDrillDown = vi.fn();
+    const resizingClip = { element: section, started: true } as ResizingClipState;
+    const view = renderLanes({ elements: [section], lanes: { onDrillDown, resizingClip } });
+    enter(clipOf(view.host));
+    expect(onDrillDown).not.toHaveBeenCalled();
     act(() => view.root.unmount());
   });
 });

@@ -31,7 +31,7 @@ import { isTimelineClipActive } from "./useTimelineActiveClips";
 import { queryTimelineClipIndex } from "../lib/timelineClipIndex";
 import { getTimelineElementIdentity } from "../lib/timelineElementHelpers";
 import { timelineClipFocusId } from "./timelineNavigationIdentity";
-import { useTimelineKeyboardActor } from "./useTimelineKeyboardActor";
+import { drillOnDoubleClick, useTimelineKeyboardActor } from "./useTimelineKeyboardActor";
 import { TimelineTransitionOverlays } from "./TimelineTransitionOverlays";
 import { deriveTimelineTransitionSeamsByTrack } from "./timelineTransitionSeams";
 
@@ -60,6 +60,7 @@ export function TimelineLanes({
   selectedElementIds,
   hoveredClip,
   draggedClip,
+  resizingClip,
   draggedElement,
   snapGuide,
   multiDragPreview,
@@ -134,9 +135,10 @@ export function TimelineLanes({
     focusedTargetId,
     rowGeometry,
     scrollRef,
-    onToggleRow: (row) => {
-      if (row.elementId) toggleClipExpandedTracked(row.elementId);
-    },
+    tracks,
+    gesture: { drag: draggedClip, resize: resizingClip, blocked: blockedClipRef },
+    onToggleRow: (row) => row.elementId && toggleClipExpandedTracked(row.elementId),
+    onDrillDown,
   });
   return (
     <div
@@ -443,11 +445,7 @@ export function TimelineLanes({
                         onResizeStart={clipGestures.onResizeStart}
                         onPointerDown={clipGestures.onPointerDown}
                         onClick={clipGestures.onClick}
-                        onDoubleClick={(e) => {
-                          e.stopPropagation();
-                          if (suppressClickRef.current) return;
-                          if (isComposition && onDrillDown) onDrillDown(el);
-                        }}
+                        onDoubleClick={drillOnDoubleClick(el, suppressClickRef, onDrillDown)}
                       >
                         {renderClipChildren(
                           previewElement,

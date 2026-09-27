@@ -1,5 +1,14 @@
-import { useCallback, useMemo, type FocusEvent, type KeyboardEvent, type RefObject } from "react";
-import { usePlayerStore } from "../store/playerStore";
+import {
+  useCallback,
+  useMemo,
+  type FocusEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type RefObject,
+} from "react";
+import { getTimelineElementIdentity } from "../lib/timelineElementHelpers";
+import { usePlayerStore, type TimelineElement } from "../store/playerStore";
+import { isTimelineGestureInProgress, type TimelineGestureInput } from "./timelineEditing";
 import type { TimelineRowGeometry } from "./timelineLayout";
 import {
   isTimelineNavigationKey,
@@ -13,7 +22,33 @@ interface TimelineKeyboardActorInput {
   focusedTargetId: string | null;
   rowGeometry: TimelineRowGeometry;
   scrollRef: RefObject<HTMLDivElement | null>;
+  tracks: readonly (readonly [number, readonly TimelineElement[]])[];
+  gesture: Omit<TimelineGestureInput, "blocked"> & {
+    blocked: RefObject<TimelineGestureInput["blocked"]>;
+  };
   onToggleRow: (target: TimelineLogicalRow) => void;
+  onDrillDown?: (element: TimelineElement) => void;
+}
+
+/** Opens a composition clip. Double-click and Enter both route through here. */
+function drillIntoComposition(
+  element: TimelineElement,
+  onDrillDown: ((element: TimelineElement) => void) | undefined,
+): boolean {
+  if (!element.compositionSrc || !onDrillDown) return false;
+  onDrillDown(element);
+  return true;
+}
+
+export function drillOnDoubleClick(
+  element: TimelineElement,
+  suppressClickRef: RefObject<boolean>,
+  onDrillDown: ((element: TimelineElement) => void) | undefined,
+) {
+  return (event: MouseEvent) => {
+    event.stopPropagation();
+    if (!suppressClickRef.current) drillIntoComposition(element, onDrillDown);
+  };
 }
 
 function eventTarget(event: FocusEvent | KeyboardEvent): HTMLElement | null {
@@ -69,7 +104,10 @@ export function useTimelineKeyboardActor({
   focusedTargetId,
   rowGeometry,
   scrollRef,
+  tracks,
+  gesture,
   onToggleRow,
+  onDrillDown,
 }: TimelineKeyboardActorInput) {
   const rovingTargetId =
     (focusedTargetId && locateTimelineLogicalTarget(logicalRows, focusedTargetId)?.target.id) ??
@@ -130,6 +168,20 @@ export function useTimelineKeyboardActor({
         openContextMenu(targetElement);
         return;
       }
+      if (event.key === "Enter" && located.target.kind === "clip") {
+        // Opening mid-gesture would unmount the clip and drop the drag or trim.
+        if (isTimelineGestureInProgress({ ...gesture, blocked: gesture.blocked.current })) {
+          event.preventDefault();
+          return;
+        }
+        if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+        const clipId = located.target.elementId;
+        const element = tracks
+          .flatMap(([, elements]) => elements)
+          .find((candidate) => getTimelineElementIdentity(candidate) === clipId);
+        if (element && drillIntoComposition(element, onDrillDown)) event.preventDefault();
+        return;
+      }
       if (
         (event.key !== "Enter" && event.key !== " ") ||
         located.target.kind !== "row" ||
@@ -140,7 +192,16 @@ export function useTimelineKeyboardActor({
       event.preventDefault();
       onToggleRow(located.target);
     },
-    [logicalRowCountByTrack, logicalRows, onToggleRow, rowGeometry, scrollRef],
+    [
+      gesture,
+      logicalRowCountByTrack,
+      logicalRows,
+      onDrillDown,
+      onToggleRow,
+      rowGeometry,
+      scrollRef,
+      tracks,
+    ],
   );
 
   return { rovingTargetId, onFocus, onKeyDown };

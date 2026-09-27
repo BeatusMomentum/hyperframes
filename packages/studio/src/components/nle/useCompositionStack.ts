@@ -36,6 +36,8 @@ export function useCompositionStack({
 
   const onCompositionChangeRef = useRef(onCompositionChange);
   onCompositionChangeRef.current = onCompositionChange;
+  const compositionStackRef = useRef(compositionStack);
+  compositionStackRef.current = compositionStack;
 
   const updateCompositionStack: typeof setCompositionStack = useCallback((action) => {
     setCompositionStack((prev) => {
@@ -109,10 +111,13 @@ export function useCompositionStack({
       label: "Master",
       previewUrl: buildProjectApiPath(projectId, `/preview`),
     };
-    if (activeCompositionPath === "index.html") {
+    if (!activeCompositionPath || activeCompositionPath === "index.html") {
+      const shown = compositionStackRef.current;
+      const alreadyShowingMaster = shown.length === 1 && shown[0]?.previewUrl === master.previewUrl;
+      if (alreadyShowingMaster) return;
       usePlayerStore.getState().setElements([]);
       updateCompositionStack([master]);
-    } else if (activeCompositionPath) {
+    } else {
       // Any composition file that isn't the root, wherever it lives. Gating
       // this on a `compositions/` prefix meant a project laying its comps out
       // anywhere else (`parts/part-1.html`, generated multi-part builds) hit
@@ -129,9 +134,6 @@ export function useCompositionStack({
         if (prev[prev.length - 1]?.id === activeCompositionPath) return prev;
         return [master, { id: activeCompositionPath, label, previewUrl }];
       });
-    } else {
-      usePlayerStore.getState().setElements([]);
-      updateCompositionStack([master]);
     }
   }, [activeCompositionPath, projectId, updateCompositionStack]);
 

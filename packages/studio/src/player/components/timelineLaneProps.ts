@@ -111,6 +111,7 @@ export interface TimelineLaneBaseProps {
  * state and the edit callbacks TimelineCanvas does not otherwise touch.
  */
 export interface TimelineLanesProps extends TimelineLaneBaseProps {
+  resizingClip: ResizingClipState | null;
   /** Live-derived by TimelineCanvas from {@link TimelineLaneBaseProps.draggedClip}. */
   draggedElement: TimelineElement | null;
   /** Live move or trim snap target, resolved once by TimelineCanvas. */

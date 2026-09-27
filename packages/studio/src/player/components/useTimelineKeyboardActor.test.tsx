@@ -3,7 +3,7 @@
 import React, { act, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { usePlayerStore } from "../store/playerStore";
+import { usePlayerStore, type TimelineElement } from "../store/playerStore";
 import { createTimelineRowGeometry } from "./timelineLayout";
 import type { TimelineLogicalRow } from "./timelineKeyboardNavigation";
 import { useTimelineKeyboardActor } from "./useTimelineKeyboardActor";
@@ -52,18 +52,38 @@ const rows: readonly TimelineLogicalRow[] = [
   },
 ];
 
+const sectionClip: TimelineElement = {
+  id: "clip-1",
+  tag: "div",
+  start: 0,
+  duration: 2,
+  track: 1,
+  compositionSrc: "compositions/intro.html",
+};
+const plainClip: TimelineElement = { id: "clip-2", tag: "div", start: 1, duration: 2, track: 2 };
+const tracks = [
+  [1, [sectionClip]],
+  [2, [plainClip]],
+] as const;
+
 interface HarnessProps {
   focusedTargetId?: string | null;
   logicalRows?: readonly TimelineLogicalRow[];
   rowHeights?: readonly number[];
   onToggleRow?: (target: TimelineLogicalRow) => void;
+  onDrillDown?: (element: TimelineElement) => void;
+  gesture?: Parameters<typeof useTimelineKeyboardActor>[0]["gesture"];
 }
+
+const noGesture = { drag: null, resize: null, blocked: { current: null } };
 
 function Harness({
   focusedTargetId = null,
   logicalRows = rows,
   rowHeights = logicalRows.map(() => 48),
   onToggleRow = vi.fn(),
+  onDrillDown,
+  gesture = noGesture,
 }: HarnessProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const keyboard = useTimelineKeyboardActor({
@@ -74,7 +94,10 @@ function Harness({
       rowHeights,
     ),
     scrollRef,
+    tracks,
+    gesture,
     onToggleRow,
+    onDrillDown,
   });
   return (
     <div ref={scrollRef} onFocus={keyboard.onFocus} onKeyDown={keyboard.onKeyDown}>
@@ -225,6 +248,64 @@ describe("useTimelineKeyboardActor", () => {
     if (!enter.defaultPrevented) act(() => clip.click());
     expect(nativeClick).toHaveBeenCalledOnce();
     expect(onToggleRow).toHaveBeenCalledTimes(2);
+    act(() => root.unmount());
+  });
+
+  it("opens a focused composition clip on Enter, like double-click", () => {
+    const onDrillDown = vi.fn();
+    const onToggleRow = vi.fn();
+    const { host, root } = renderHarness({ focusedTargetId: "clip-1", onDrillDown, onToggleRow });
+    const clip = host.querySelector<HTMLElement>('[data-timeline-focus-id="clip-1"]')!;
+    expect(key(clip, "Enter").defaultPrevented).toBe(true);
+    expect(onDrillDown).toHaveBeenCalledExactlyOnceWith(sectionClip);
+    expect(onToggleRow).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("does not open a section clip while a drag, trim or refused edit is in progress", () => {
+    const started = { started: true };
+    for (const gesture of [
+      { ...noGesture, drag: started },
+      { ...noGesture, resize: started },
+      { ...noGesture, blocked: { current: started } },
+    ]) {
+      const onDrillDown = vi.fn();
+      const { host, root } = renderHarness({ focusedTargetId: "clip-1", onDrillDown, gesture });
+      const clip = host.querySelector<HTMLElement>('[data-timeline-focus-id="clip-1"]')!;
+      expect(key(clip, "Enter").defaultPrevented).toBe(true);
+      expect(onDrillDown).not.toHaveBeenCalled();
+      act(() => root.unmount());
+    }
+  });
+
+  it("opens a section clip on plain Enter only, not with a modifier", () => {
+    const onDrillDown = vi.fn();
+    const { host, root } = renderHarness({ focusedTargetId: "clip-1", onDrillDown });
+    const clip = host.querySelector<HTMLElement>('[data-timeline-focus-id="clip-1"]')!;
+    for (const modifier of ["shiftKey", "metaKey", "ctrlKey", "altKey"]) {
+      expect(key(clip, "Enter", { [modifier]: true }).defaultPrevented).toBe(false);
+    }
+    expect(onDrillDown).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("leaves Enter on a plain clip to the browser", () => {
+    const onDrillDown = vi.fn();
+    const { host, root } = renderHarness({ focusedTargetId: "clip-2", onDrillDown });
+    const clip = host.querySelector<HTMLElement>('[data-timeline-focus-id="clip-2"]')!;
+    expect(key(clip, "Enter").defaultPrevented).toBe(false);
+    expect(onDrillDown).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("keeps Enter on an expandable row as expand, even when its clip is a composition", () => {
+    const onDrillDown = vi.fn();
+    const onToggleRow = vi.fn();
+    const { host, root } = renderHarness({ focusedTargetId: "track-1", onDrillDown, onToggleRow });
+    const row = host.querySelector<HTMLElement>('[data-timeline-focus-id="track-1"]')!;
+    expect(key(row, "Enter").defaultPrevented).toBe(true);
+    expect(onToggleRow).toHaveBeenCalledExactlyOnceWith(rows[0]);
+    expect(onDrillDown).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 
