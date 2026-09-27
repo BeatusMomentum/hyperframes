@@ -1,18 +1,26 @@
 import type { RuntimeDeterministicAdapter } from "../types";
 import { swallow } from "../diagnostics";
 import { isHtmlElement } from "../domRealm";
+import {
+  type AuthoredCssAnimations,
+  createAuthoredCssAnimations,
+  splitNames,
+} from "./cssAnimation";
 
 export function createCssAdapter(params?: {
   resolveStartSeconds?: (element: Element) => number;
+  authored?: AuthoredCssAnimations;
 }): RuntimeDeterministicAdapter {
   let entries: Array<{
     el: HTMLElement;
     baseDelay: string;
     basePlayState: string;
     cycleSeconds: number;
+    endSeconds: number;
     delays: number[];
-    handles?: Animation[];
+    handles: Animation[];
   }> = [];
+  const authored = params?.authored ?? createAuthoredCssAnimations();
 
   const safeGetAnimations = (
     source: Document | HTMLElement,
@@ -26,23 +34,30 @@ export function createCssAdapter(params?: {
     }
   };
 
+  const ownTarget = (animation: Animation) => {
+    const effect = animation.effect as KeyframeEffect | null;
+    return effect?.pseudoElement ? null : effect?.target;
+  };
+
   const readLiveAnimations = (pageAnimations?: () => Animation[]): Map<Element, Animation[]> => {
     const byElement = new Map<Element, Animation[]>();
     if (entries.length === 0) return byElement;
     const canTellCss = typeof CSSAnimation !== "undefined";
+    const isAuthored = (animation: Animation) =>
+      !canTellCss || authored.has(animation as CSSAnimation);
     for (const animation of safeGetAnimations(document, pageAnimations)) {
       if (canTellCss && !(animation instanceof CSSAnimation)) continue;
-      const effect = animation.effect as KeyframeEffect | null;
-      if (!effect?.target || effect.pseudoElement) continue;
-      const list = byElement.get(effect.target);
-      if (list) list.push(animation);
-      else byElement.set(effect.target, [animation]);
+      const target = ownTarget(animation);
+      if (!target) continue;
+      const list = byElement.get(target) ?? [];
+      byElement.set(target, list);
+      if (isAuthored(animation)) list.push(animation);
     }
     return byElement;
   };
 
   // A finished no-fill animation leaves the scan but stays; a write revives a cancelled (idle) one.
-  const keepHandles = (known: Animation[] = [], scanned: Animation[] = []): Animation[] => [
+  const keepHandles = (known: Animation[], scanned: Animation[] = []): Animation[] => [
     ...scanned,
     ...known.filter((animation) => !scanned.includes(animation) && animation.playState !== "idle"),
   ];
@@ -62,14 +77,25 @@ export function createCssAdapter(params?: {
         .map((v) => Number.parseFloat(v) / (v.trim().endsWith("ms") ? 1000 : 1));
     const durations = seconds(style.animationDuration);
     const delays = seconds(style.animationDelay);
-    const names = style.animationName.split(",");
+    const counts = (style.animationIterationCount || "").split(",").map(Number.parseFloat);
+    const names = splitNames(style.animationName);
     let cycleSeconds = 0;
+    let endSeconds = 0;
     names.forEach((name, i) => {
-      if (name.trim() === "none") return;
-      const cycle = delays[i % delays.length]! + durations[i % durations.length]!;
+      if (name === "none") return;
+      const delay = delays[i % delays.length]!;
+      const duration = durations[i % durations.length]!;
+      const cycle = delay + duration;
       if (cycle > cycleSeconds) cycleSeconds = cycle;
+      // `infinite` parses to NaN, which never compares greater.
+      const end = delay + duration * counts[i % counts.length]!;
+      if (end > endSeconds) endSeconds = end;
     });
-    return { cycleSeconds, delays: names.map((_, i) => delays[i % delays.length] || 0) };
+    return {
+      cycleSeconds,
+      endSeconds,
+      delays: names.map((_, i) => delays[i % delays.length] || 0),
+    };
   };
 
   /**
@@ -155,17 +181,19 @@ export function createCssAdapter(params?: {
       for (const entry of entries) restoreInlineStyles(entry);
       const known = new Map(entries.map((entry) => [entry.el, entry.handles]));
       entries = [];
+      authored.reset();
       const all = document.querySelectorAll("*");
       for (const rawEl of all) {
         if (!isHtmlElement(rawEl)) continue;
         const style = window.getComputedStyle(rawEl);
         if (!style.animationName || style.animationName === "none") continue;
+        authored.record(rawEl, style);
         entries.push({
           el: rawEl,
           baseDelay: rawEl.style.animationDelay || "",
           basePlayState: rawEl.style.animationPlayState || "",
           ...readAnimationTimes(style),
-          handles: known.get(rawEl),
+          handles: known.get(rawEl) ?? [],
         });
       }
     },
@@ -182,6 +210,8 @@ export function createCssAdapter(params?: {
       for (const entry of entries) {
         if (!entry.el.isConnected) continue;
         const start = resolveEntryStartSeconds(entry.el);
+        // The computed lists outlive display:none and the fallback pose's inline delay.
+        if (entry.endSeconds > 0) maxEndSeconds = Math.max(maxEndSeconds, start + entry.endSeconds);
         for (const animation of safeGetAnimations(entry.el)) {
           const result = inferAnimationEndSeconds(animation, start);
           // Unbounded (Infinity/NaN endTime) animations are skipped here —
@@ -202,7 +232,7 @@ export function createCssAdapter(params?: {
         if (!entry.el.isConnected) continue;
         const start = resolveEntryStartSeconds(entry.el);
         const localTimeMs = Math.max(0, time - start) * 1000;
-        if (entry.handles?.length) {
+        if (entry.handles.length || live.has(entry.el)) {
           if (entry.el.style.animationDelay !== entry.baseDelay) restoreInlineStyles(entry);
           seekAnimations(entry.handles, localTimeMs);
           continue;

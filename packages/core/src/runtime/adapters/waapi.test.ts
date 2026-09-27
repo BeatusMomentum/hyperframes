@@ -164,6 +164,21 @@ describe("waapi adapter", () => {
     expect(getAnimations).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps scanning after an empty discover while the page authors CSS animations", () => {
+    const getAnimations = setAnimations([]);
+    const adapter = createWaapiAdapter({ authored: { hasAny: () => true } });
+    adapter.discover();
+    adapter.seek({ time: 1.9 });
+    // A class adds it as the playhead enters its clip.
+    const added = makeAnimation();
+    getAnimations.mockReturnValue([added]);
+    adapter.seek({ time: 2 });
+    adapter.seek({ time: 2.5 });
+
+    expect(added.currentTime).toBe(500);
+    expect(added.pause).toHaveBeenCalled();
+  });
+
   it("seek takes new animations from the pass's shared page list instead of scanning", () => {
     const existing = makeAnimation();
     const getAnimations = setAnimations([existing]);

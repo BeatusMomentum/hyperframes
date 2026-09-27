@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { createCssAdapter } from "./css";
+import { createAuthoredCssAnimations } from "./cssAnimation";
 
 // jsdom has no Animation subclasses; the adapter tells them apart with instanceof CSSAnimation.
 class FakeAnimation {}
 class FakeCSSAnimation extends FakeAnimation {}
 class FakeCSSTransition extends FakeAnimation {}
 
+// Named as its element's computed style names it at the time, so it counts as authored.
 const makeAnimation = (target: Element, kind: typeof FakeAnimation = FakeCSSAnimation) =>
   Object.assign(new kind(), {
+    animationName: window.getComputedStyle(target).animationName,
     currentTime: 0,
     pause: vi.fn(),
     play: vi.fn(),
@@ -36,6 +39,7 @@ describe("css adapter", () => {
   afterEach(() => {
     Reflect.deleteProperty(document, "getAnimations");
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("has correct name", () => {
@@ -178,6 +182,102 @@ describe("css adapter", () => {
 
     document.body.removeChild(el);
     vi.restoreAllMocks();
+  });
+
+  describe("names each element's computed style lists at discover", () => {
+    const a = document.createElement("div");
+    const b = document.createElement("div");
+    const named = (computed: Map<Element, string>) => {
+      document.body.append(a, b);
+      vi.spyOn(window, "getComputedStyle").mockImplementation(
+        (el) => ({ animationName: computed.get(el) ?? "none" }) as CSSStyleDeclaration,
+      );
+    };
+    const seekLive = (live: Animation[]) => {
+      document.getAnimations = () => live;
+      const adapter = createCssAdapter();
+      adapter.discover();
+      adapter.seek({ time: 2 });
+    };
+
+    afterEach(() => {
+      a.remove();
+      b.remove();
+    });
+
+    it("every name, not only the first", () => {
+      named(new Map([[a, "pulse, slide"]]));
+      const slide = Object.assign(makeAnimation(a), { animationName: "slide" });
+      seekLive([slide]);
+      expect(slide.currentTime).toBe(2000);
+    });
+
+    it("on its own element: the same name a class adds to another is not authored there", () => {
+      named(
+        new Map([
+          [a, "slide"],
+          [b, "pulse"],
+        ]),
+      );
+      const onB = Object.assign(makeAnimation(b), { animationName: "slide" });
+      seekLive([makeAnimation(a), onB]);
+      expect(onB.currentTime).toBe(0);
+    });
+
+    it("a name with a comma, which computed style escapes", () => {
+      vi.stubGlobal("CSS", { escape: (name: string) => name.replace(/,/g, "\\,") });
+      named(new Map([[a, "pulse, n\\,m"]]));
+      const comma = Object.assign(makeAnimation(a), { animationName: "n,m" });
+      seekLive([comma]);
+      expect(comma.currentTime).toBe(2000);
+    });
+
+    it("a name ending in a space, which computed style escapes", () => {
+      vi.stubGlobal("CSS", { escape: (name: string) => name.replace(/ /g, "\\ ") });
+      named(new Map([[a, "nm\\ , pulse"]]));
+      const spaced = Object.assign(makeAnimation(a), { animationName: "nm " });
+      seekLive([spaced]);
+      expect(spaced.currentTime).toBe(2000);
+    });
+
+    it("a name ending in or led by a hex escape, as a leading digit is written", () => {
+      vi.stubGlobal("CSS", { escape: (name: string) => name.replace(/^5/, "\\35 ") });
+      named(new Map([[a, "\\35 , \\35 nm"]]));
+      const five = Object.assign(makeAnimation(a), { animationName: "5" });
+      const fiveNm = Object.assign(makeAnimation(a), { animationName: "5nm" });
+      seekLive([five, fiveNm]);
+      expect(five.currentTime).toBe(2000);
+      expect(fiveNm.currentTime).toBe(2000);
+    });
+
+    it("a name with a no-break space, which computed style keeps raw", () => {
+      named(new Map([[a, "fade\u00a0in, pulse"]]));
+      const fade = Object.assign(makeAnimation(a), { animationName: "fade\u00a0in" });
+      seekLive([fade]);
+      expect(fade.currentTime).toBe(2000);
+    });
+
+    it("a name that is also a keyword, which computed style quotes", () => {
+      named(new Map([[a, '"none"']]));
+      const none = Object.assign(makeAnimation(a), { animationName: "none" });
+      seekLive([none]);
+      expect(none.currentTime).toBe(2000);
+    });
+
+    it("forgets every name at the next discover", () => {
+      named(new Map([[a, "slide"]]));
+      const authored = createAuthoredCssAnimations();
+      const adapter = createCssAdapter({ authored });
+      adapter.discover();
+      const slide = makeAnimation(a) as CSSAnimation;
+      expect(authored.has(slide)).toBe(true);
+
+      named(new Map());
+      adapter.discover();
+
+      expect(authored.hasAny()).toBe(false);
+      expect(authored.has(slide)).toBe(false);
+    });
   });
 
   describe("after the browser replaces an element's CSSAnimation", () => {
@@ -356,6 +456,43 @@ describe("css adapter", () => {
       }
     });
 
+    describe("when a class changes the element's animations mid-clip", () => {
+      // The class's animation is the WAAPI adapter's: it plays from where it starts.
+      const added = () => Object.assign(makeAnimation(el), { animationName: "pulse" });
+
+      it("seeks the authored one and leaves the one the class adds alone", () => {
+        const own = makeAnimation(el);
+        const pulse = added();
+        const { adapter, replace } = setup([own]);
+
+        replace([own, pulse]);
+        adapter.seek({ time: 3 });
+        adapter.play?.();
+        adapter.pause();
+
+        expect(own.currentTime).toBe(2000);
+        expect(pulse.currentTime).toBe(0);
+        expect(pulse.pause).not.toHaveBeenCalled();
+        expect(pulse.play).not.toHaveBeenCalled();
+      });
+
+      it("leaves the one that replaces it alone, and writes no inline pose over it", () => {
+        const own = makeAnimation(el);
+        const pulse = added();
+        const { adapter, replace } = setup([own]);
+
+        adapter.seek({ time: 1.5 });
+        Object.assign(own, { playState: "idle" });
+        replace([pulse]);
+        adapter.seek({ time: 3 });
+
+        expect(pulse.currentTime).toBe(0);
+        expect(pulse.pause).not.toHaveBeenCalled();
+        expect(el.style.animationDelay).toBe("");
+        expect(el.style.animationPlayState).toBe("");
+      });
+    });
+
     it("seeks every animation where the browser has no CSSAnimation to tell them apart", () => {
       vi.stubGlobal("CSSAnimation", undefined);
       const animation = makeAnimation(el, FakeAnimation);
@@ -433,6 +570,8 @@ describe("css adapter", () => {
   });
 
   describe("getInferredDurationSeconds", () => {
+    afterEach(() => document.body.replaceChildren());
+
     it("returns null when nothing was discovered", () => {
       const adapter = createCssAdapter();
       adapter.discover();
@@ -563,6 +702,69 @@ describe("css adapter", () => {
       vi.restoreAllMocks();
     });
 
+    it("reads a hidden clip's end from its computed lists, every iteration", () => {
+      // A display:none clip has no live animation until the playhead reaches it.
+      const el = document.createElement("div");
+      el.setAttribute("data-start", "3");
+      const spin = document.createElement("div");
+      spin.setAttribute("data-start", "9");
+      document.body.append(el, spin);
+      const lists = new Map<Element, Partial<CSSStyleDeclaration>>([
+        [
+          el,
+          {
+            animationName: "a, b, c",
+            animationDuration: "1s, 2s",
+            animationDelay: "0s, 1s, 0.5s",
+            animationIterationCount: "3, infinite",
+          },
+        ],
+        [
+          spin,
+          { animationName: "spin", animationDuration: "1s", animationIterationCount: "infinite" },
+        ],
+      ]);
+      vi.spyOn(window, "getComputedStyle").mockImplementation(
+        (node) =>
+          ({
+            animationDelay: "0s",
+            ...(lists.get(node) ?? { animationName: "none" }),
+          }) as CSSStyleDeclaration,
+      );
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      // b and spin never end; c pairs its 0.5s delay with the first duration and count: 3 + 0.5 + 1 × 3.
+      expect(adapter.getInferredDurationSeconds?.()).toBe(6.5);
+    });
+
+    it("a live animation the fallback pose's delay shortened does not shorten it", () => {
+      const el = document.createElement("div");
+      el.setAttribute("data-start", "3");
+      document.body.appendChild(el);
+      vi.spyOn(window, "getComputedStyle").mockImplementation(
+        (node) =>
+          (node === el
+            ? {
+                animationName: "slide",
+                animationDuration: "4s",
+                animationDelay: "0s",
+                animationIterationCount: "1",
+              }
+            : { animationName: "none" }) as CSSStyleDeclaration,
+      );
+      // Shown after a seek to 5 s, before the next seek restores the delay: -2s.
+      el.getAnimations = () => [
+        { effect: { getComputedTiming: () => ({ endTime: 2000 }) } } as unknown as Animation,
+      ];
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      expect(adapter.getInferredDurationSeconds?.()).toBe(7);
+    });
+
     it("ignores disconnected elements", () => {
       const el = document.createElement("div");
       el.style.animationName = "fadeIn";
@@ -617,7 +819,29 @@ describe("css adapter", () => {
 
       // c pairs the 2s delay with the first duration again: 2 + 2 + 1.
       expect(adapter.getAnimationCycleEndSeconds?.()).toBe(5);
-      expect(adapter.getInferredDurationSeconds?.()).toBeNull();
+    });
+
+    it("keeps a no-break space inside its name: one timing entry, not two", () => {
+      mountAnimated({ animationName: "fade\u00a0in", animationDuration: "1s, 9s" });
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBe(3);
+    });
+
+    it("pairs the lists by name, not by every comma: an escaped one is inside a name", () => {
+      mountAnimated({
+        animationName: "n\\,m, slide",
+        animationDuration: "1s, 1s, 9s",
+        animationDelay: "0s, 1s",
+      });
+
+      const adapter = createCssAdapter();
+      adapter.discover();
+
+      // Two animations, ending 1 s and 2 s into the clip; the 9s pairs with no name.
+      expect(adapter.getAnimationCycleEndSeconds?.()).toBe(4);
     });
 
     it("skips an animation whose negative delay ends it before it starts", () => {

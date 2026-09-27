@@ -3721,10 +3721,11 @@ describe("initSandboxRuntimeModular", () => {
         animationName: target === animated ? "slide" : "none",
       } as CSSStyleDeclaration;
     });
-    // jsdom has no CSSAnimation; the CSS adapter seeks only its instances.
+    // jsdom has no CSSAnimation; the CSS adapter seeks only its instances named at discover.
     class CSSAnimation {}
     vi.stubGlobal("CSSAnimation", CSSAnimation);
     const animation = Object.assign(new CSSAnimation(), {
+      animationName: "slide",
       currentTime: 0,
       pause: vi.fn(),
       play: vi.fn(),
@@ -3759,6 +3760,50 @@ describe("initSandboxRuntimeModular", () => {
     }
   });
 
+  describe("a CSS animation a class adds mid-clip, with none live at discover", () => {
+    // `#el` authors `pulse`, but its clip is hidden at discover; the class adds `slide` later.
+    const mount = () => {
+      document.body.innerHTML = `<div data-composition-id="main" data-root="true" data-start="0" data-duration="10" data-width="1920" data-height="1080"><div id="el" data-start="1" data-duration="9" style="animation-name: pulse"></div></div>`;
+      window.__timelines = {};
+      class CSSAnimation {}
+      vi.stubGlobal("CSSAnimation", CSSAnimation);
+      const slide = Object.assign(new CSSAnimation(), {
+        animationName: "slide",
+        currentTime: 0,
+        pause: vi.fn(),
+        addEventListener: vi.fn(),
+        effect: { target: document.getElementById("el") },
+      }) as unknown as Animation;
+      const live: Animation[] = [];
+      document.getAnimations = () => live;
+      initSandboxRuntimeModular();
+      return { slide, addClass: () => live.push(slide) };
+    };
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(document, "getAnimations");
+    });
+
+    it("starts where the playhead meets it", () => {
+      const { slide, addClass } = mount();
+      window.__player!.seek(1.9);
+      addClass();
+      window.__player!.seek(2);
+      window.__player!.seek(2.5);
+      expect(slide.currentTime).toBe(500);
+      expect(slide.pause).toHaveBeenCalled();
+    });
+
+    it("starts at a render worker's first frame", () => {
+      const { slide, addClass } = mount();
+      addClass();
+      window.__player!.renderSeek(2.2);
+      window.__player!.renderSeek(2.4);
+      expect(slide.currentTime).toBeCloseTo(200);
+    });
+  });
+
   it("times a CSS animation without data-start from its clip inside a nested composition", () => {
     const root = document.createElement("div");
     root.setAttribute("data-composition-id", "main");
@@ -3787,6 +3832,7 @@ describe("initSandboxRuntimeModular", () => {
     class CSSAnimation {}
     vi.stubGlobal("CSSAnimation", CSSAnimation);
     const animation = Object.assign(new CSSAnimation(), {
+      animationName: "slide",
       currentTime: 0,
       pause: vi.fn(),
       play: vi.fn(),

@@ -1,7 +1,11 @@
 import type { RuntimeDeterministicAdapter } from "../types";
 import { swallow } from "../diagnostics";
+import { type AuthoredCssAnimations, createAuthoredCssAnimations } from "./cssAnimation";
 
-export function createWaapiAdapter(): RuntimeDeterministicAdapter {
+export function createWaapiAdapter(params?: {
+  authored?: Pick<AuthoredCssAnimations, "hasAny">;
+}): RuntimeDeterministicAdapter {
+  const authored = params?.authored ?? createAuthoredCssAnimations();
   let didDiscover = false;
   let lastSeekTimeMs = 0;
   let animateHookInstalled = false;
@@ -115,6 +119,11 @@ export function createWaapiAdapter(): RuntimeDeterministicAdapter {
     }
   };
 
+  // document.getAnimations() is surprisingly expensive in Chromium even when it returns [], and
+  // renderSeek scans once per frame. After an empty discover, skip it until Element.animate (hooked
+  // above) creates an animation, unless the page authored CSS ones: a clip shown later brings them.
+  const shouldScanOnSeek = () => !didDiscover || animations.size > 0 || authored.hasAny();
+
   /**
    * End time (seconds, relative to composition start) for one animation.
    * `endSeconds` is set only when the timing is readable AND finite;
@@ -149,11 +158,7 @@ export function createWaapiAdapter(): RuntimeDeterministicAdapter {
     seek: (ctx) => {
       const timeMs = Math.max(0, (Number(ctx.time) || 0) * 1000);
       lastSeekTimeMs = timeMs;
-      // document.getAnimations() is surprisingly expensive in Chromium even
-      // when it returns [], and renderSeek calls this adapter once per frame.
-      // After an empty discover, skip the per-frame global scan until authored
-      // code creates a WAAPI animation via Element.animate (hooked above).
-      if (!didDiscover || animations.size > 0) {
+      if (shouldScanOnSeek()) {
         trackAnimations(snapshotAnimations(ctx.pageAnimations), didDiscover ? timeMs : 0);
       }
       for (const animation of animations) {
