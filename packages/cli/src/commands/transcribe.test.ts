@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WhisperUnavailableError } from "../whisper/manager.js";
@@ -7,10 +7,11 @@ import { CliRuntimeError, consumeCommandResult } from "../utils/commandResult.js
 
 // Make the whisper core report "unavailable" so we exercise the soft-skip path.
 const transcribeMock = vi.fn();
+const prepareWavMock = vi.fn((input: string) => input);
 let audioSeconds = 1;
 vi.mock("../whisper/transcribe.js", () => ({
   transcribe: transcribeMock,
-  prepareWav: (input: string) => input,
+  prepareWav: (input: string) => prepareWavMock(input),
   getPreparedWavDurationSeconds: () => audioSeconds,
 }));
 
@@ -65,6 +66,7 @@ describe("transcribe command", () => {
     dirs = [];
     consumeCommandResult();
     transcribeMock.mockReset();
+    prepareWavMock.mockReset().mockImplementation((input: string) => input);
     trackTranscribeUnavailable.mockReset();
     trackCommandFailure.mockReset();
     mlxMock.mockReset();
@@ -110,6 +112,7 @@ describe("transcribe command", () => {
     // passes on a machine with no Parakeet and silently tests nothing on one
     // that has it.
     expect(transcribeMock).toHaveBeenCalled();
+    expect(prepareWavMock).not.toHaveBeenCalled();
     expect(consumeCommandResult().exitCode).toBe(0);
     expect(trackTranscribeUnavailable).toHaveBeenCalledWith({ optional: true });
     expect(trackCommandFailure).not.toHaveBeenCalled();
@@ -228,13 +231,59 @@ describe("transcribe command", () => {
       expect(out.error).toMatch(/^Parakeet failed: .*install parakeet.*whisper-cpp not found/);
     });
 
-    it("stops with exit 130 on Ctrl-C instead of falling back", async () => {
-      crashChild("SIGINT");
+    it.each([
+      ["during the decode", () => crashChild("SIGINT")],
+      [
+        "while ffmpeg prepares the audio",
+        () =>
+          prepareWavMock.mockImplementation(() => {
+            throw Object.assign(new Error("Command failed: ffmpeg"), { signal: "SIGINT" });
+          }),
+      ],
+    ])("stops with exit 130 on Ctrl-C %s instead of falling back", async (_when, interrupt) => {
+      interrupt();
       Object.assign(runners, { sherpa: true, mlx: false });
       const { exitCode, out } = await transcribeFails("auto");
       expect(exitCode).toBe(130);
       expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
       expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("fails an unreadable input as an input error, with no Parakeet repair and no fallback", async () => {
+      prepareWavMock.mockImplementation(() => {
+        throw new Error("Command failed: ffmpeg -i silent.mp4 -vn -ar 16000");
+      });
+      Object.assign(runners, { sherpa: true, mlx: false });
+      for (const optional of [false, true]) {
+        const { exitCode, out } = await transcribeFails("auto", { optional });
+        expect(exitCode).toBe(1);
+        expect(out).toEqual({
+          ok: false,
+          error: "Command failed: ffmpeg -i silent.mp4 -vn -ar 16000",
+        });
+      }
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("prepares the audio once, hands the same WAV to the fallback, and removes it", async () => {
+      crashChild("SIGABRT");
+      const prepared: string[] = [];
+      prepareWavMock.mockImplementation((input: string) => {
+        prepared.push(`${input}.16k.wav`);
+        writeFileSync(prepared[0]!, "wav");
+        return prepared[0]!;
+      });
+      expect(await transcribeWith("auto", { sherpa: true, mlx: false })).toMatchObject({
+        engine: "whisper",
+      });
+      expect(prepared).toHaveLength(1);
+      const sherpaInput = JSON.parse(
+        execFileMock.mock.calls[0]?.[2].env.HYPERFRAMES_PARAKEET_INPUT,
+      );
+      expect(sherpaInput.wavPath).toBe(prepared[0]);
+      expect(transcribeMock.mock.calls[0]?.[0]).toBe(prepared[0]);
+      expect(existsSync(prepared[0]!)).toBe(false);
     });
 
     it("gives the decode at least 30 minutes, and twice the audio length", async () => {

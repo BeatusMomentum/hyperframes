@@ -267,14 +267,29 @@ function decode(wavPath: string, signal: AbortSignal): Promise<SherpaWindow[]> {
   });
 }
 
-export async function transcribeWithSherpa(
+/** Prepares the audio for Parakeet and its fallback alike; ffmpeg stopped by Ctrl-C is a cancel. */
+export function prepareSherpaWav(
   inputPath: string,
+  onProgress?: (message: string) => void,
+): string {
+  try {
+    return prepareWav(inputPath, onProgress);
+  } catch (err) {
+    const { signal, code } = err as { signal?: string; code?: string };
+    if (signal === "SIGINT" || (signal === "SIGTERM" && code !== "ETIMEDOUT")) {
+      throw new DecodeCancelled("Transcription cancelled");
+    }
+    throw err;
+  }
+}
+
+export async function transcribeWithSherpa(
+  wavPath: string,
   dir: string,
   options?: { onProgress?: (message: string) => void },
 ): Promise<TranscribeResult> {
   const unsupported = sherpaUnsupportedReason();
   if (unsupported) throw new Error(unsupported);
-  const wavPath = prepareWav(inputPath, options?.onProgress);
   // Aborts on SIGINT/SIGTERM/SIGHUP, which also kills the child if only this process was signalled.
   const cancellation = createRenderCancellationScope();
   try {
@@ -283,6 +298,5 @@ export async function transcribeWithSherpa(
     return writeParakeetTranscript(dir, mergeWindowsToWords(windows));
   } finally {
     cancellation.dispose();
-    if (wavPath !== inputPath) rmSync(wavPath, { force: true });
   }
 }

@@ -3,7 +3,7 @@ import { normalizeErrorMessage } from "../utils/errorMessage.js";
 // fallow-ignore-file code-duplication
 import { defineCommand } from "citty";
 import type { Example } from "./_examples.js";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { findParakeet, PARAKEET_MODEL_LABEL, transcribeWithParakeet } from "../whisper/parakeet.js";
 
 type CaptionExportFormat = "srt" | "vtt";
@@ -297,7 +297,7 @@ async function transcribeAudio(
   const { loadTranscript, patchCaptionHtml, stripBeforeOnset } =
     await import("../whisper/normalize.js");
 
-  const { DecodeCancelled, sherpaParakeetInstalled, transcribeWithSherpa } =
+  const { DecodeCancelled, prepareSherpaWav, sherpaParakeetInstalled, transcribeWithSherpa } =
     await import("../whisper/sherpa.js");
 
   const engine = (opts.engine ?? "auto").toLowerCase();
@@ -323,12 +323,13 @@ async function transcribeAudio(
   const spin = opts.json ? null : clack.spinner();
   spin?.start(`Transcribing with ${label(runner)}...`);
   const onProgress = spin ? (msg: string) => spin.message(msg) : undefined;
+  let wavPath = inputPath;
   const run = (r: Runner) =>
     r === "sherpa"
-      ? transcribeWithSherpa(inputPath, dir, { onProgress })
+      ? transcribeWithSherpa(wavPath, dir, { onProgress })
       : r === "parakeet-mlx"
-        ? transcribeWithParakeet(inputPath, dir, { language: opts.language, onProgress })
-        : transcribe(inputPath, dir, {
+        ? transcribeWithParakeet(wavPath, dir, { language: opts.language, onProgress })
+        : transcribe(wavPath, dir, {
             model,
             language: opts.language,
             onProgress,
@@ -336,6 +337,8 @@ async function transcribeAudio(
           });
 
   try {
+    // Outside the fallback: an unreadable input is not a Parakeet failure. The fallback reuses it.
+    if (runner === "sherpa") wavPath = prepareSherpaWav(inputPath, onProgress);
     let result: Awaited<ReturnType<typeof run>>;
     try {
       result = await run(runner);
@@ -436,5 +439,7 @@ async function transcribeAudio(
       spin?.stop(c.error(`Transcription failed: ${message}`));
     }
     failCommand();
+  } finally {
+    if (wavPath !== inputPath) rmSync(wavPath, { force: true });
   }
 }
