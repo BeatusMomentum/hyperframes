@@ -268,6 +268,7 @@ export class ParentMediaManager {
         if (isRealmHtmlMediaElement(el)) el.muted = true;
       }
     }
+    for (const m of this._entries) this._repointToSource(m);
 
     // One-shot alignment — bypass jitter-coalescing gate.
     const t = this._getCurrentTime();
@@ -401,24 +402,29 @@ export class ParentMediaManager {
     }
   }
 
-  // The runtime re-points a clip (its preview copy, a new bound file); its proxy follows.
+  // The runtime re-points a clip (its preview copy, a new bound file). A proxy that is not
+  // playing keeps its file until the parent takes over, so the copy is not fetched twice.
   private _followIframeMediaSrc(iframeEl: HTMLMediaElement): void {
     const entry = this._entries.find((m) => m.source === iframeEl);
     if (!entry) return this._adoptIframeMedia(iframeEl);
-    const src = this._resolveIframeMediaSrc(iframeEl);
-    if (!src || entry.el.src === src) return;
+    if (this._audioOwner !== "parent" || !this._repointToSource(entry)) return;
+    this.mirrorTime(this._getCurrentTime(), { force: true });
+    if (!this._isPaused()) this._playEntryIfActive(entry);
+  }
+
+  private _repointToSource(entry: ProxyEntry): boolean {
+    const src = entry.source ? this._resolveIframeMediaSrc(entry.source) : null;
+    if (!src || entry.el.src === src) return false;
     entry.el.src = src;
     entry.el.load();
-    if (this._audioOwner === "parent") {
-      this.mirrorTime(this._getCurrentTime(), { force: true });
-      if (!this._isPaused()) this._playEntryIfActive(entry);
-    }
+    return true;
   }
 
   private _detachIframeMedia(iframeEl: HTMLMediaElement): void {
     const src = this._resolveIframeMediaSrc(iframeEl);
-    if (!src) return;
-    const idx = this._entries.findIndex((m) => m.el.src === src);
+    const idx = this._entries.findIndex(
+      (m) => m.source === iframeEl || (!!src && m.el.src === src),
+    );
     if (idx === -1) return;
     const entry = this._entries[idx];
     entry.el.pause();

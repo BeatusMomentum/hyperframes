@@ -218,23 +218,42 @@ describe("ParentMediaManager following its clips", () => {
     return clip;
   }
 
-  it("follows a clip the runtime re-points to its preview copy, instead of the URL it first copied", async () => {
+  const copy = "https://example.test/clip.mov?hf-proxy=h264";
+
+  it("keeps a re-pointed clip's proxy on its file while the composition owns playback", async () => {
     const mgr = makeManager();
     const clip = adoptedClip(mgr, "https://example.test/clip.mov");
-    expect(mgr.entries.map((m) => m.el.src)).toEqual(["https://example.test/clip.mov"]);
-
-    clip.setAttribute("src", "https://example.test/clip.mov?hf-proxy=h264");
+    clip.setAttribute("src", copy);
     await flushObserver();
 
-    expect(mgr.entries.map((m) => m.el.src)).toEqual([
-      "https://example.test/clip.mov?hf-proxy=h264",
-    ]);
+    expect(mgr.entries.map((m) => m.el.src)).toEqual(["https://example.test/clip.mov"]);
+  });
+
+  it("re-points each proxy to its clip's current src when the parent takes over playback", async () => {
+    const mgr = makeManager();
+    const clip = adoptedClip(mgr, "https://example.test/clip.mov");
+    clip.setAttribute("src", copy);
+    await flushObserver();
+
+    mgr.promoteToParentProxy(document);
+
+    expect(mgr.entries.map((m) => m.el.src)).toEqual([copy]);
+  });
+
+  it("follows a re-pointed clip at once while the parent owns playback", async () => {
+    const mgr = makeManager();
+    const clip = adoptedClip(mgr, "https://example.test/clip.mov");
+    mgr.promoteToParentProxy(document);
+    clip.setAttribute("src", copy);
+    await flushObserver();
+
+    expect(mgr.entries.map((m) => m.el.src)).toEqual([copy]);
   });
 
   it("drops the proxy of a re-pointed clip when the clip leaves", async () => {
     const mgr = makeManager();
     const clip = adoptedClip(mgr, "https://example.test/clip.mov");
-    clip.setAttribute("src", "https://example.test/clip.mov?hf-proxy=h264");
+    clip.setAttribute("src", copy);
     await flushObserver();
 
     clip.remove();
