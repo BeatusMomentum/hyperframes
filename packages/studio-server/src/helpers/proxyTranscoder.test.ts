@@ -1,3 +1,4 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -11,9 +12,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { findFfBinary } from "@hyperframes/parsers/ff-binaries";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const FFMPEG_PATH = "/usr/bin/ffmpeg";
+const realFfmpeg = findFfBinary("ffmpeg");
+const realFfmpegFilters = realFfmpeg
+  ? spawnSync(realFfmpeg, ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout
+  : "";
+const canToneMapForReal =
+  Boolean(findFfBinary("ffprobe")) && /\szscale\s/.test(realFfmpegFilters ?? "");
 // Mirrors MAX_CONCURRENT_TRANSCODES in proxyTranscoder.ts (not exported —
 // this test file and the module are authored together).
 const MAX_CONCURRENT = 2;
@@ -276,6 +284,39 @@ describe("resolveProxy", () => {
     await expect(result).rejects.toThrow(/zscale.*libzimg/i);
     expect(calls).toHaveLength(1);
   });
+
+  it.skipIf(!canToneMapForReal)(
+    "tone-maps real HLG footage that tags only its transfer, as renders do",
+    async () => {
+      vi.resetModules();
+      vi.doUnmock("./mediaMetadata.js");
+      const { resolveProxy } = await import("./proxyTranscoder.js");
+      const projectDir = tmpProject();
+      const sourcePath = join(projectDir, "hlg-transfer-only.mp4");
+      // Primaries and matrix "unspecified" (2), transfer HLG (18).
+      const hlgTransferOnly =
+        "h264_metadata=colour_primaries=2:transfer_characteristics=18:matrix_coefficients=2";
+      execFileSync(realFfmpeg!, [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=64x36:d=0.2",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-bsf:v",
+        hlgTransferOnly,
+        sourcePath,
+      ]);
+
+      const proxyPath = await resolveProxy(projectDir, sourcePath);
+      expect(existsSync(proxyPath)).toBe(true);
+    },
+    60_000,
+  );
 
   it("dedupes two concurrent same-key calls to one spawn", async () => {
     const { spawn, calls } = createSpawnSpy();

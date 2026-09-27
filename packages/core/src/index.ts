@@ -247,6 +247,12 @@ export {
   type ResolvedHfColorGrading,
 } from "./colorGrading";
 export { parseCubeLut, CubeLutParseError, type ParseCubeLutOptions } from "./colorLuts";
+export {
+  firstFrameColourArgs,
+  hdrToSdrToneMapFilter,
+  parseFirstFrameColour,
+  type ToneMapSourceColour,
+} from "./hdrToneMap";
 
 // Inline scripts
 export {

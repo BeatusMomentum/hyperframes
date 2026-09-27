@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { hdrToSdrToneMapFilter } from "@hyperframes/core";
 import { findFfBinary } from "@hyperframes/parsers/ff-binaries";
 import { probeMediaMetadata } from "./mediaMetadata.js";
 import { cleanupProxyCache } from "./proxyCache.js";
@@ -334,13 +335,7 @@ async function runFfmpeg(
   const pixelFormat = variant === "vp8" ? "yuva420p" : "yuv420p";
   const videoFilter =
     metadata.color.isHdr && variant !== "vp8"
-      ? [
-          "zscale=t=linear:npl=100",
-          "tonemap=hable:desat=0",
-          "zscale=p=bt709:t=bt709:m=bt709:r=tv",
-          evenScale,
-          `format=${pixelFormat}`,
-        ].join(",")
+      ? [hdrToSdrToneMapFilter(metadata.color), evenScale, `format=${pixelFormat}`].join(",")
       : [evenScale, `format=${pixelFormat}`].join(",");
 
   return new Promise((resolvePromise, reject) => {
