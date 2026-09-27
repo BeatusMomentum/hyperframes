@@ -245,12 +245,6 @@
       "import": "./src/runtime/clipTree.ts",
       "types": "./src/runtime/clipTree.ts"
     },
-    "./runtime/proxy-wait": {
-      "bun": "./src/runtime/proxyWait.ts",
-      "node": "./dist/runtime/proxyWait.js",
-      "import": "./src/runtime/proxyWait.ts",
-      "types": "./src/runtime/proxyWait.ts"
-    },
     "./runtime/custom-ease": {
       "bun": "./src/runtime/customEase.ts",
       "node": "./dist/runtime/customEase.js",
@@ -592,10 +586,6 @@
       "./runtime/clipTree": {
         "import": "./dist/runtime/clipTree.js",
         "types": "./dist/runtime/clipTree.d.ts"
-      },
-      "./runtime/proxy-wait": {
-        "import": "./dist/runtime/proxyWait.js",
-        "types": "./dist/runtime/proxyWait.d.ts"
       },
       "./runtime/custom-ease": {
         "import": "./dist/runtime/customEase.js",

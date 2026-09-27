@@ -1,4 +1,3 @@
-import { proxiedSourceReady } from "@hyperframes/core/runtime/proxy-wait";
 import { resolveMediaPreviewUrl } from "../components/thumbnailUtils";
 import { TIMELINE_VIEWPORT_BUDGETS } from "./timelineViewportBudgets";
 
@@ -51,10 +50,9 @@ function normalizeUrl(url: string): string {
   }
 }
 
-async function probeOne(url: string, live: () => boolean): Promise<MediaProbeResult | null> {
+async function probeOne(url: string): Promise<MediaProbeResult | null> {
   const mb = await loadMediabunny();
   if (!mb) return null;
-  if (!(await proxiedSourceReady(url, live))) return null;
 
   const input = new mb.Input({
     source: new mb.UrlSource(url),
@@ -195,7 +193,7 @@ function pumpProbeQueue(): void {
       continue;
     }
     activeProbes++;
-    void probeOne(queued.key, () => queued.epoch === registryEpoch)
+    void probeOne(queued.key)
       .then((result) => {
         if (queued.epoch !== registryEpoch) return null;
         inflight.delete(queued.key);

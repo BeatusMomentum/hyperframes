@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hasMediaSyncStateForTest,
   syncRuntimeMedia as syncRuntimeMediaWithDuration,
@@ -66,16 +66,15 @@ function isProxied(el: HTMLMediaElement): boolean {
   return proxyVariant(el) !== null;
 }
 
-/** Stubs the proxy route's answers to the one-byte ask, in order; 202 and 503 carry a Retry-After. */
-function stubProxyRoute(...statuses: number[]) {
-  const route = vi.fn(async () => {
-    const status = statuses.shift() ?? 404;
-    const retry = status === 202 || status === 503 ? { "Retry-After": "2" } : undefined;
-    return new Response(status === 206 ? "x" : null, { status, headers: retry });
-  });
-  vi.stubGlobal("fetch", route);
-  return route;
-}
+/** Lets a started swap ask for its copy (the default stub serves it) and finish. */
+const settle = () => new Promise((resolveSettle) => setTimeout(resolveSettle, 0));
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("x", { status: 206 })),
+  );
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -89,12 +88,13 @@ afterEach(() => {
 });
 
 describe("maybeProxyProactively", () => {
-  it("rewrites src and calls load() before first load for a hostile, undecodable asset", () => {
+  it("rewrites src and calls load() before first load for a hostile, undecodable asset", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": HEVC_ENTRY };
     const el = createVideo("/video.mp4");
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
     expect(el.load).toHaveBeenCalledTimes(1);
@@ -103,17 +103,18 @@ describe("maybeProxyProactively", () => {
     );
   });
 
-  it("matches codec-map paths across case and Unicode normalization differences", () => {
+  it("matches codec-map paths across case and Unicode normalization differences", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/assets/Caf\u00e9.MP4": HEVC_ENTRY };
     const el = createVideo("/assets/cafe\u0301.mp4");
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
   });
 
-  it("does not guess when two codec-map paths collide after normalization", () => {
+  it("does not guess when two codec-map paths collide after normalization", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {
       "/assets/CLIP.mp4": HEVC_ENTRY,
       "/assets/clip.MP4": H264_ENTRY,
@@ -122,22 +123,24 @@ describe("maybeProxyProactively", () => {
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
   });
 
-  it("does not swap when canPlayType reports probably/maybe despite a hostile map entry", () => {
+  it("does not swap when canPlayType reports probably/maybe despite a hostile map entry", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": HEVC_ENTRY };
     const el = createVideo("/video.mp4");
     stubCanPlayType(el, "probably");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
   });
 
-  it("swaps when hostile and representativeMime is null (no canPlayType check possible)", () => {
+  it("swaps when hostile and representativeMime is null (no canPlayType check possible)", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {
       "/video.mp4": {
         codecName: "prores",
@@ -149,55 +152,60 @@ describe("maybeProxyProactively", () => {
     stubCanPlayType(el, "probably"); // should not even be consulted
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
   });
 
-  it("does not swap a non-hostile (browser-safe) map entry", () => {
+  it("does not swap a non-hostile (browser-safe) map entry", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": H264_ENTRY };
     const el = createVideo("/video.mp4");
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
   });
 
-  it("is a no-op in render mode even for a hostile entry", () => {
+  it("is a no-op in render mode even for a hostile entry", async () => {
     window.__HF_EXPORT_RENDER_SEEK_CONFIG = { mode: "seek" };
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": HEVC_ENTRY };
     const el = createVideo("/video.mp4");
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("is a no-op when the codec map global is absent", () => {
+  it("is a no-op when the codec map global is absent", async () => {
     const el = createVideo("/video.mp4");
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
   });
 
-  it("never swaps an <audio> element even with a hostile-container src", () => {
+  it("never swaps an <audio> element even with a hostile-container src", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": HEVC_ENTRY };
     const el = createAudio("/video.mp4");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("swaps an alpha-bearing hostile entry to a VP8 proxy", () => {
+  it("swaps an alpha-bearing hostile entry to a VP8 proxy", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {
       "/video.mov": {
         codecName: "prores",
@@ -210,12 +218,13 @@ describe("maybeProxyProactively", () => {
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(proxyVariant(el)).toBe("vp8");
     expect(el.load).toHaveBeenCalledTimes(1);
   });
 
-  it("is a no-op when the render-frame sibling image signals render mode", () => {
+  it("is a no-op when the render-frame sibling image signals render mode", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": HEVC_ENTRY };
     const el = createVideo("/video.mp4");
     el.id = "clip-1";
@@ -225,6 +234,7 @@ describe("maybeProxyProactively", () => {
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
@@ -237,30 +247,32 @@ describe("handleMetadataForProxy (reactive trigger)", () => {
     Object.defineProperty(el, "videoWidth", { value: 0, configurable: true });
   }
 
-  it("swaps once when videoWidth is 0 for a same-origin local video absent from the (present) map — unlisted-asset rescue", () => {
+  it("swaps once when videoWidth is 0 for a same-origin local video absent from the (present) map — unlisted-asset rescue", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const el = createVideo("/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
     expect(proxyVariant(el)).toBe("auto");
     expect(el.load).toHaveBeenCalledTimes(1);
   });
 
-  it("never swaps when the codec map global is absent (opt-out surface serves no proxies)", () => {
+  it("never swaps when the codec map global is absent (opt-out surface serves no proxies)", async () => {
     const el = createVideo("/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("swaps a mapped alpha entry to a VP8 proxy", () => {
+  it("swaps a mapped alpha entry to a VP8 proxy", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {
       "/video.mov": {
         codecName: "prores",
@@ -273,17 +285,19 @@ describe("handleMetadataForProxy (reactive trigger)", () => {
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(proxyVariant(el)).toBe("vp8");
     expect(el.load).toHaveBeenCalledTimes(1);
   });
 
-  it("does not proxy a mapped browser-safe codec on the metadata path", () => {
+  it("does not proxy a mapped browser-safe codec on the metadata path", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": H264_ENTRY };
     const el = createVideo("/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
@@ -295,54 +309,60 @@ describe("handleMetadataForProxy (reactive trigger)", () => {
     );
   });
 
-  it("a second zero-width metadata event does not loop (no second swap)", () => {
+  it("a second zero-width metadata event does not loop (no second swap)", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const el = createVideo("/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
     handleMetadataForProxy(el);
+    await settle();
 
     expect(el.load).toHaveBeenCalledTimes(1);
   });
 
-  it("does nothing when videoWidth is non-zero", () => {
+  it("does nothing when videoWidth is non-zero", async () => {
     const el = createVideo("/video.mp4");
     Object.defineProperty(el, "videoWidth", { value: 640, configurable: true });
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
   });
 
-  it("is a no-op in render mode", () => {
+  it("is a no-op in render mode", async () => {
     window.__HF_EXPORT_RENDER_SEEK_CONFIG = { mode: "seek" };
     const el = createVideo("/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
   });
 
-  it("never swaps <audio>", () => {
+  it("never swaps <audio>", async () => {
     const el = createAudio("/video.mp4");
     Object.defineProperty(el, "videoWidth", { value: 0, configurable: true });
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("cross-origin src with zero videoWidth: no swap attempted, diagnostic still emitted (with its console.info line)", () => {
+  it("cross-origin src with zero videoWidth: no swap attempted, diagnostic still emitted (with its console.info line)", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const el = createVideo("https://cdn.example.com/video.mp4");
     markZeroWidth(el);
 
     handleMetadataForProxy(el);
+    await settle();
 
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).toHaveBeenCalledWith(
@@ -360,7 +380,7 @@ describe("handleMetadataForProxy (reactive trigger)", () => {
     expect(line).toContain("https://cdn.example.com/video.mp4");
   });
 
-  it("resolves a ../-traversing sub-composition src (already rewritten to an absolute, prefixed URL) via longest-suffix map matching", () => {
+  it("resolves a ../-traversing sub-composition src (already rewritten to an absolute, prefixed URL) via longest-suffix map matching", async () => {
     const base = document.createElement("base");
     base.href = `${window.location.origin}/api/projects/proj1/preview/`;
     document.head.appendChild(base);
@@ -374,37 +394,41 @@ describe("handleMetadataForProxy (reactive trigger)", () => {
     stubCanPlayType(el, "");
 
     maybeProxyProactively(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
   });
 });
 
 describe("handleErrorForProxy (tertiary trigger)", () => {
-  it("swaps once on an error event for a zero-stream (video-only hostile) file unlisted in the (present) map", () => {
+  it("swaps once on an error event for a zero-stream (video-only hostile) file unlisted in the (present) map", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const el = createVideo("/video.mp4");
 
     handleErrorForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(true);
     expect(el.load).toHaveBeenCalledTimes(1);
   });
 
-  it("never swaps when the codec map global is absent (opt-out surface serves no proxies)", () => {
+  it("never swaps when the codec map global is absent (opt-out surface serves no proxies)", async () => {
     const el = createVideo("/video.mp4");
 
     handleErrorForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("does not swap a mapped browser-SAFE entry that errors (corrupt file — proxying can't help); diagnoses instead", () => {
+  it("does not swap a mapped browser-SAFE entry that errors (corrupt file — proxying can't help); diagnoses instead", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = { "/video.mp4": H264_ENTRY };
     const el = createVideo("/video.mp4");
 
     handleErrorForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
@@ -416,27 +440,27 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
     );
   });
 
-  it("never swaps <audio> on error", () => {
+  it("never swaps <audio> on error", async () => {
     window.__HF_MEDIA_CODEC_MAP__ = {};
     const el = createAudio("/video.mp4");
 
     handleErrorForProxy(el);
+    await settle();
 
     expect(isProxied(el)).toBe(false);
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
   });
 
   it("the proxy URL itself erroring: no second swap, diagnostic reports the failure instead", async () => {
-    const route = stubProxyRoute(502);
     const el = createVideo("/video.mp4");
     swapToProxy(el, HEVC_ENTRY, "proactive");
+    await settle();
     expect(el.load).toHaveBeenCalledTimes(1);
     postRuntimeMessageMock.mockClear();
 
     handleErrorForProxy(el);
-    await vi.waitFor(() => expect(postRuntimeMessageMock).toHaveBeenCalled());
+    await settle();
 
-    expect(route).toHaveBeenCalledTimes(1);
     expect(el.load).toHaveBeenCalledTimes(1); // no second load()/swap
     expect(postRuntimeMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -445,61 +469,10 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
       }),
     );
   });
-
-  it("a proxy still being made is asked again after each Retry-After, and the video reloads once it is served", async () => {
-    vi.useFakeTimers();
-    const route = stubProxyRoute(202, 503, 202, 206);
-    const el = createVideo("/video.mp4");
-    swapToProxy(el, HEVC_ENTRY, "proactive");
-    postRuntimeMessageMock.mockClear();
-
-    handleErrorForProxy(el);
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(route).toHaveBeenCalledTimes(4);
-    expect(route).toHaveBeenCalledWith(
-      el.src,
-      expect.objectContaining({ headers: { Range: "bytes=0-0" } }),
-    );
-    expect(el.load).toHaveBeenCalledTimes(2);
-    expect(isProxied(el)).toBe(true);
-    expect(postRuntimeMessageMock).not.toHaveBeenCalled();
-  });
-
-  it("a served proxy that errors is reloaded once, then diagnosed", async () => {
-    stubProxyRoute(206, 206);
-    const el = createVideo("/video.mp4");
-    swapToProxy(el, HEVC_ENTRY, "proactive");
-    postRuntimeMessageMock.mockClear();
-
-    handleErrorForProxy(el);
-    await vi.waitFor(() => expect(el.load).toHaveBeenCalledTimes(2));
-    handleErrorForProxy(el);
-    await vi.waitFor(() => expect(postRuntimeMessageMock).toHaveBeenCalled());
-
-    expect(el.load).toHaveBeenCalledTimes(2);
-  });
-
-  it("stops asking once the element leaves the document", async () => {
-    vi.useFakeTimers();
-    const route = stubProxyRoute(202, 206);
-    const el = createVideo("/video.mp4");
-    swapToProxy(el, HEVC_ENTRY, "proactive");
-    postRuntimeMessageMock.mockClear();
-
-    handleErrorForProxy(el);
-    await vi.advanceTimersByTimeAsync(0);
-    el.remove();
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(route).toHaveBeenCalledTimes(1);
-    expect(el.load).toHaveBeenCalledTimes(1);
-    expect(postRuntimeMessageMock, "a detached element is not diagnosed").not.toHaveBeenCalled();
-  });
 });
 
 describe("swapToProxy", () => {
-  it("does not poison swap state when the source URL is malformed", () => {
+  it("does not poison swap state when the source URL is malformed", async () => {
     const el = createVideo("/video.mp4");
     Object.defineProperty(el, "currentSrc", {
       value: "http://[",
@@ -507,6 +480,7 @@ describe("swapToProxy", () => {
     });
 
     swapToProxy(el, HEVC_ENTRY, "reactive");
+    await settle();
 
     expect(el.load).not.toHaveBeenCalled();
     expect(postRuntimeMessageMock).toHaveBeenCalledWith(
@@ -516,7 +490,7 @@ describe("swapToProxy", () => {
       }),
     );
   });
-  it("evicts per-source sync state so the swapped element is treated as a first tick", () => {
+  it("evicts per-source sync state so the swapped element is treated as a first tick", async () => {
     const el = createVideo("/video.mp4");
     // Populate sync state as a real active-clip tick would.
     syncRuntimeMedia({
@@ -540,26 +514,30 @@ describe("swapToProxy", () => {
     expect(hasMediaSyncStateForTest(el)).toBe(true);
 
     swapToProxy(el, HEVC_ENTRY, "reactive");
+    await settle();
 
     expect(hasMediaSyncStateForTest(el)).toBe(false);
   });
 
-  it("preserves existing query strings when appending hf-proxy", () => {
+  it("preserves existing query strings when appending hf-proxy", async () => {
     const el = createVideo("/video.mp4?v=2");
 
     swapToProxy(el, HEVC_ENTRY, "proactive");
+    await settle();
 
     const url = new URL(el.src, document.baseURI);
     expect(url.searchParams.get("v")).toBe("2");
     expect(url.searchParams.get("hf-proxy")).toBe("h264");
   });
 
-  it("emits the diagnostic and a single console.info line exactly once per element", () => {
+  it("emits the diagnostic and a single console.info line exactly once per element", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const el = createVideo("/video.mp4");
 
     swapToProxy(el, HEVC_ENTRY, "proactive");
+    await settle();
     swapToProxy(el, HEVC_ENTRY, "proactive"); // idempotent re-call, e.g. from another trigger
+    await settle();
 
     const fallbackCalls = postRuntimeMessageMock.mock.calls.filter(
       ([msg]) => (msg as { code?: string }).code === "runtime_media_proxy_fallback",
@@ -568,15 +546,123 @@ describe("swapToProxy", () => {
     expect(infoSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("is idempotent: a second call for an already-swapped element does not re-swap", () => {
+  it("is idempotent: a second call for an already-swapped element does not re-swap", async () => {
     const el = createVideo("/video.mp4");
 
     swapToProxy(el, HEVC_ENTRY, "proactive");
+    await settle();
     const srcAfterFirstSwap = el.src;
     swapToProxy(el, HEVC_ENTRY, "reactive");
+    await settle();
 
     expect(el.src).toBe(srcAfterFirstSwap);
     expect(el.load).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("waiting for the proxy copy", () => {
+  function stubProxyRoute(...statuses: number[]) {
+    const route = vi.fn(async () => {
+      const status = statuses.length > 1 ? statuses.shift()! : statuses[0]!;
+      const retry = status === 202 || status === 503 ? { "Retry-After": "2" } : undefined;
+      return new Response(status === 206 ? "x" : null, { status, headers: retry });
+    });
+    vi.stubGlobal("fetch", route);
+    return route;
+  }
+
+  it("keeps the original src until the copy is served, so no reader of src gets a copy still being made", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(202, 503, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(el.getAttribute("src")).toBe("/video.mp4");
+    expect(el.load).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(route).toHaveBeenCalledTimes(3);
+    expect(route).toHaveBeenCalledWith(
+      expect.stringContaining("hf-proxy=h264"),
+      expect.objectContaining({ headers: { Range: "bytes=0-0" } }),
+    );
+    expect(proxyVariant(el)).toBe("h264");
+    expect(el.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the original's own metadata and error while the copy is being made", async () => {
+    vi.useFakeTimers();
+    window.__HF_MEDIA_CODEC_MAP__ = {};
+    const route = stubProxyRoute(202, 206);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
+    Object.defineProperty(el, "videoWidth", { value: 0 });
+
+    handleMetadataForProxy(el);
+    handleErrorForProxy(el);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postRuntimeMessageMock).not.toHaveBeenCalled();
+    expect(route).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(isProxied(el)).toBe(true);
+  });
+
+  it("diagnoses a copy that cannot be made once, and the element keeps its original", async () => {
+    window.__HF_MEDIA_CODEC_MAP__ = {};
+    const route = stubProxyRoute(502);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
+    await settle();
+    Object.defineProperty(el, "videoWidth", { value: 0 });
+    handleMetadataForProxy(el);
+    await settle();
+
+    expect(isProxied(el)).toBe(false);
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(postRuntimeMessageMock).toHaveBeenCalledTimes(1);
+    expect(postRuntimeMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "runtime_media_proxy_unavailable",
+        details: expect.objectContaining({ reason: "proxy_playback_failed" }),
+      }),
+    );
+  });
+
+  it("stops waiting when the element leaves the document", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(202);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
+    await vi.advanceTimersByTimeAsync(0);
+    el.remove();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(el.load).not.toHaveBeenCalled();
+    expect(postRuntimeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a wait whose element was pointed at another file, and can proxy the new one", async () => {
+    vi.useFakeTimers();
+    const route = stubProxyRoute(202);
+    const el = createVideo("/video.mp4");
+    swapToProxy(el, HEVC_ENTRY, "proactive");
+    await vi.advanceTimersByTimeAsync(0);
+    el.setAttribute("src", "/other.mp4");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(el.getAttribute("src")).toBe("/other.mp4");
+
+    stubProxyRoute(206);
+    swapToProxy(el, HEVC_ENTRY, "reactive");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(new URL(el.src).pathname).toBe("/other.mp4");
+    expect(isProxied(el)).toBe(true);
   });
 });
 

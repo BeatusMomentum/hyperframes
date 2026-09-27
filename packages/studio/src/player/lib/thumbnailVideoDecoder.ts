@@ -1,4 +1,3 @@
-import { proxiedSourceReady } from "@hyperframes/core/runtime/proxy-wait";
 import { TIMELINE_VIEWPORT_BUDGETS, type TimelineViewportBudgets } from "./timelineViewportBudgets";
 import type { ThumbnailLoadedResult, ThumbnailValue } from "./thumbnailScheduler";
 
@@ -120,9 +119,6 @@ export async function decodeVideoThumbnail(
 ): Promise<ThumbnailLoadedResult> {
   const mediabunny = await import("mediabunny");
   throwIfAborted(signal);
-  const ready = await proxiedSourceReady(request.source, () => !signal.aborted);
-  throwIfAborted(signal);
-  if (!ready) throw new Error("Video proxy is unavailable");
 
   const input = new mediabunny.Input({
     source: new mediabunny.UrlSource(request.source),

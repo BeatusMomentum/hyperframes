@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeVideoThumbnail, videoThumbnailTimestamps } from "./thumbnailVideoDecoder";
 
 const dispose = vi.fn();
@@ -54,11 +54,6 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
-
 describe("videoThumbnailTimestamps", () => {
   it("uses the midpoint for a poster and sorted sparse points for a strip", () => {
     expect(videoThumbnailTimestamps(2, 6, 1)).toEqual([5]);
@@ -90,46 +85,6 @@ describe("decodeVideoThumbnail", () => {
     result.dispose?.();
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
     expect(dispose).toHaveBeenCalledTimes(1);
-  });
-
-  it("waits for a proxied clip's copy to be served before decoding it", async () => {
-    vi.useFakeTimers();
-    const statuses = [202, 503, 206];
-    const route = vi.fn(async () => {
-      const status = statuses.shift() ?? 404;
-      return new Response(status === 206 ? "x" : null, {
-        status,
-        headers: status === 206 ? undefined : { "Retry-After": "2" },
-      });
-    });
-    vi.stubGlobal("fetch", route);
-    const decoded: number[][] = [];
-    recordDecodes(decoded);
-    const pending = decodeVideoThumbnail(
-      { source: "/clip.mov?hf-proxy=h264", frameCount: 1 },
-      new AbortController().signal,
-    );
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(input.getPrimaryVideoTrack).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(10_000);
-    await pending;
-
-    expect(route).toHaveBeenCalledTimes(3);
-    expect(decoded).toEqual([[5]]);
-  });
-
-  it("gives up on a proxied clip whose copy failed, without decoding the failure", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("ffmpeg exited", { status: 502 })),
-    );
-    await expect(
-      decodeVideoThumbnail(
-        { source: "/clip.mov?hf-proxy=h264", frameCount: 1 },
-        new AbortController().signal,
-      ),
-    ).rejects.toThrow("Video proxy is unavailable");
-    expect(input.getPrimaryVideoTrack).not.toHaveBeenCalled();
   });
 
   it("decodes each strip frame at its keyframe unless that keyframe is before the clip's range", async () => {

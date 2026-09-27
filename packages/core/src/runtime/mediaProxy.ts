@@ -48,9 +48,9 @@ type ProxyTrigger = "proactive" | "reactive" | "tertiary";
 // still gets its own single diagnostic.
 const unavailableDiagnosedElements = new WeakSet<HTMLMediaElement>();
 
-// Swapped elements reloaded once without having waited for their proxy, so a
-// proxy that is served but will not decode is diagnosed instead of reloaded again.
-const reloadedWithoutWait = new WeakSet<HTMLMediaElement>();
+// Elements whose swap has started. Until the copy is served they keep their original src,
+// so nothing that reads it (timeline, player mirror) loads a copy still being made.
+const proxyRequested = new WeakSet<HTMLMediaElement>();
 
 function currentSrcValue(el: HTMLMediaElement): string {
   return el.currentSrc || el.src;
@@ -219,7 +219,7 @@ export function swapToProxy(
   entry: MediaCodecMapEntry | null = null,
   trigger: ProxyTrigger = "reactive",
 ): void {
-  if (swappedElements.has(el)) return;
+  if (swappedElements.has(el) || proxyRequested.has(el)) return;
   const originalSrc = currentSrcValue(el);
   let proxiedSrc: string;
   try {
@@ -229,15 +229,28 @@ export function swapToProxy(
     emitUnavailableDiagnostic(el, "invalid_source_url", originalSrc);
     return;
   }
-  swappedElements.set(el, el.getAttribute("src"));
-  // The swapped src points at a different file — sync state (drift offsets,
-  // seek-retry latches, volume tracking) computed against the original
-  // source must not carry over, or the next tick misreads a fresh file's
-  // buffering as drift. Evict before `load()` so the very next sync tick
-  // treats this element as a first tick.
-  evictMediaSyncState(el);
-  el.src = proxiedSrc;
-  el.load();
+  proxyRequested.add(el);
+  const originalAttr = el.getAttribute("src");
+  const live = () => el.isConnected && el.getAttribute("src") === originalAttr;
+  void waitForServedProxy(proxiedSrc, live).then((served) => {
+    if (!live()) {
+      proxyRequested.delete(el);
+      return;
+    }
+    if (!served) {
+      emitUnavailableDiagnostic(el, "proxy_playback_failed", originalSrc);
+      return;
+    }
+    swappedElements.set(el, originalAttr);
+    // The swapped src points at a different file — sync state (drift offsets,
+    // seek-retry latches, volume tracking) computed against the original
+    // source must not carry over, or the next tick misreads a fresh file's
+    // buffering as drift. Evict before `load()` so the very next sync tick
+    // treats this element as a first tick.
+    evictMediaSyncState(el);
+    el.src = proxiedSrc;
+    el.load();
+  });
   const codecName = entry?.codecName ?? null;
   const details: Record<string, RuntimeJson> = {
     asset: originalSrc,
@@ -257,21 +270,6 @@ export function swapToProxy(
     `[hyperframes] ${DIAGNOSTIC_FALLBACK_CODE}: "${originalSrc}" uses a codec (${codecName ?? "unknown"}) this browser can't decode; ` +
       "auto-swapped to an authoring proxy for this preview only. Render output is unaffected.",
   );
-}
-
-/** A swapped element that errored: reload it once its proxy is served, or diagnose. */
-function reloadWhenProxyServed(el: HTMLMediaElement, src: string): void {
-  const live = () => el.isConnected && currentSrcValue(el) === src;
-  void waitForServedProxy(src, live).then(({ served, waited }) => {
-    if (!live()) return;
-    if (served && (waited || !reloadedWithoutWait.has(el))) {
-      if (!waited) reloadedWithoutWait.add(el);
-      evictMediaSyncState(el);
-      el.load();
-      return;
-    }
-    emitUnavailableDiagnostic(el, "proxy_playback_failed", src);
-  });
 }
 
 /**
@@ -340,15 +338,14 @@ export function handleMetadataForProxy(el: HTMLMediaElement): void {
  * it and `loadedmetadata` never fires. Same guards and once-per-element
  * behavior as the reactive path, plus one extra skip: an entry the scan
  * mapped as browser-SAFE that still errors is a corrupt-but-safe file — an
- * proxy of a broken source can't help, so only diagnose. An already-swapped
- * element's error is usually its proxy still being made (202), so it waits.
+ * proxy of a broken source can't help, so only diagnose.
  */
 export function handleErrorForProxy(el: HTMLMediaElement): void {
   if (isRenderMode(el)) return;
   if (!isVideoElement(el)) return;
   const src = currentSrcValue(el);
   if (swappedElements.has(el)) {
-    reloadWhenProxyServed(el, src);
+    emitUnavailableDiagnostic(el, "proxy_playback_failed", src);
     return;
   }
   const map = window.__HF_MEDIA_CODEC_MAP__;

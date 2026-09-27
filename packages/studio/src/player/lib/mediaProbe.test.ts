@@ -37,7 +37,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 describe("media probe registry", () => {
@@ -76,41 +75,6 @@ describe("media probe registry", () => {
     for (const resolve of resolvers.slice(1)) resolve(5);
     await expect(Promise.all(probes)).resolves.toHaveLength(5);
     expect(getMediaProbeDiagnostics()).toEqual({ cached: 5, failed: 0, inflight: 0 });
-  });
-
-  it("waits for a proxied clip's copy to be served before probing it", async () => {
-    vi.useFakeTimers();
-    const statuses = [202, 206];
-    const route = vi.fn(async () => {
-      const status = statuses.shift() ?? 404;
-      return new Response(status === 206 ? "x" : null, {
-        status,
-        headers: status === 202 ? { "Retry-After": "2" } : undefined,
-      });
-    });
-    vi.stubGlobal("fetch", route);
-    const probed = probeMediaUrl("/clip.mov?hf-proxy=h264");
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(requestedSources).toEqual([]);
-    await vi.advanceTimersByTimeAsync(2_000);
-
-    expect(await probed).toMatchObject({ duration: 5 });
-    expect(route).toHaveBeenCalledTimes(2);
-  });
-
-  it("stops waiting for a proxied clip once the registry is reset", async () => {
-    vi.useFakeTimers();
-    const route = vi.fn(
-      async () => new Response(null, { status: 202, headers: { "Retry-After": "2" } }),
-    );
-    vi.stubGlobal("fetch", route);
-    const probed = probeMediaUrl("/clip.mov?hf-proxy=h264");
-    await vi.advanceTimersByTimeAsync(1_000);
-    resetMediaProbeRegistry();
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(await probed).toBeNull();
-    expect(route).toHaveBeenCalledTimes(1);
   });
 
   it("retries failures only after the failure TTL", async () => {
