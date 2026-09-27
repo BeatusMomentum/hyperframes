@@ -3051,6 +3051,16 @@ describe.skipIf(!HAS_FFMPEG)("extractAllVideoFrames on a VFR source", () => {
   }, 60_000);
 });
 
+// Release builds print "version 8.1.3" or "n8.1.3"; master builds print "N-<number>" and are newer.
+const FFPROBE_VERSION = spawnSync("ffprobe", ["-version"]).stdout?.toString() ?? "";
+const FFPROBE_RELEASE = FFPROBE_VERSION.match(/version n?(\d+)\.(\d+)/)
+  ?.slice(1)
+  .map(Number);
+const FFPROBE_READS_CONTAINER_TRANSFER =
+  /version N-/.test(FFPROBE_VERSION) ||
+  (FFPROBE_RELEASE !== undefined &&
+    (FFPROBE_RELEASE[0]! > 8 || (FFPROBE_RELEASE[0] === 8 && FFPROBE_RELEASE[1]! >= 1)));
+
 describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
   let fixtureDir = "";
 
@@ -3090,8 +3100,6 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "bt2020nc",
       "-bsf:v",
       `h264_metadata=${vui}`,
-      "-movflags",
-      "+write_colr",
       path,
     ]);
     if (!synthesized.success) {
@@ -3151,10 +3159,13 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
           toneMapHdrToSdr: true,
         });
 
-      // ffprobe before 8.1 reads the stream's unspecified transfer, so the clip is SDR there, as on main.
-      if ((await extractVideoMetadata(untagged)).colorSpace?.colorTransfer !== transfer) {
-        await expect(extract(untagged, slug)).resolves.toBeDefined();
-        return;
+      if (missing === "transfer") {
+        // ffprobe before 8.1 reads the stream's unspecified transfer, so the clip is SDR there, as on main.
+        if (!FFPROBE_READS_CONTAINER_TRANSFER) {
+          await expect(extract(untagged, slug)).resolves.toBeDefined();
+          return;
+        }
+        expect((await extractVideoMetadata(untagged)).colorSpace?.colorTransfer).toBe(transfer);
       }
       const reference = await extract(tagged, `ref-${slug}`);
       const result = await extract(untagged, slug);
