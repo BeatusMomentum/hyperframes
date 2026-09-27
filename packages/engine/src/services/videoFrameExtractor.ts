@@ -781,7 +781,8 @@ function hdrFrameColourTags(metadata: VideoMetadata): string {
     value && value !== "unknown" && value !== "reserved" ? value : undefined;
   const matrix = known(metadata.colorSpace?.colorSpace) ?? "bt2020nc";
   const primaries = known(metadata.colorSpace?.colorPrimaries) ?? "bt2020";
-  return `setparams=colorspace=${matrix}:color_primaries=${primaries}`;
+  const transfer = metadata.colorSpace?.colorTransfer;
+  return `setparams=colorspace=${matrix}:color_primaries=${primaries}:color_trc=${transfer}`;
 }
 
 /** Chrome plays untagged VP9 and AV1 as BT.601, H.264 and VP8 as BT.709 from 720 coded lines (assumed for the rest). */

@@ -3090,6 +3090,8 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "bt2020nc",
       "-bsf:v",
       `h264_metadata=${vui}`,
+      "-movflags",
+      "+write_colr",
       path,
     ]);
     if (!synthesized.success) {
@@ -3122,13 +3124,24 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "smpte2084",
       "colour_primaries=2:transfer_characteristics=16:matrix_coefficients=2",
     ],
+    [
+      "HLG",
+      "transfer",
+      "arib-std-b67",
+      "colour_primaries=9:transfer_characteristics=2:matrix_coefficients=9",
+    ],
   ])(
-    "tone-maps %s footage whose video stream has no %s tag as the BT.2020 it is",
+    "tone-maps %s footage whose video stream has no %s tag like the fully tagged clip",
     async (name, missing, transfer, vui) => {
       const slug = `${name}-no-${missing}`.replace(/\W+/g, "-");
       const tagged = join(fixtureDir, `${name}-fully-tagged.mp4`);
       const untagged = join(fixtureDir, `${slug}.mp4`);
-      await synthesizeHlgClip(tagged, vui.replace(/=2(?=:|$)/g, "=9"), transfer);
+      const vuiTransfer = transfer === "smpte2084" ? 16 : 18;
+      await synthesizeHlgClip(
+        tagged,
+        `colour_primaries=9:transfer_characteristics=${vuiTransfer}:matrix_coefficients=9`,
+        transfer,
+      );
       await synthesizeHlgClip(untagged, vui, transfer);
       const extract = (source: string, id: string) =>
         extractVideoFramesRange(source, id, 0, 1, {
@@ -3138,6 +3151,11 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
           toneMapHdrToSdr: true,
         });
 
+      // ffprobe before 8.1 reads the stream's unspecified transfer, so the clip is SDR there, as on main.
+      if ((await extractVideoMetadata(untagged)).colorSpace?.colorTransfer !== transfer) {
+        await expect(extract(untagged, slug)).resolves.toBeDefined();
+        return;
+      }
       const reference = await extract(tagged, `ref-${slug}`);
       const result = await extract(untagged, slug);
 
