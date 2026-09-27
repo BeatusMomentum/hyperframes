@@ -14,8 +14,8 @@
   "studio-playback": {
     "browser": "153",
     "counts": {
-      "playing.catalogElements": 6878,
-      "paused.compositedLayers": 171,
+      "playing.catalogElements": 176,
+      "paused.compositedLayers": 71,
       "playing.maxSeeksPerFrame": 3
     }
   }
