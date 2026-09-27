@@ -34,11 +34,13 @@ describe("installSherpaRuntime", () => {
     ["linux", "x64", "sherpa-onnx-linux-x64@1.13.8"],
     ["win32", "ia32", "sherpa-onnx-win-ia32@1.13.8"],
   ])("pins the %s-%s native package", (platform, arch, spec) => {
-    expect(sherpaPlatformPackage(platform as NodeJS.Platform, arch)).toBe(spec);
+    expect(sherpaPlatformPackage(platform as NodeJS.Platform, arch as NodeJS.Architecture)).toBe(
+      spec,
+    );
   });
 
   it("asks npm for the runtime and its native package at the same exact version", async () => {
-    const run = vi.fn(async () => {
+    const run = vi.fn(async (_args: string[]) => {
       throw new Error("stop before touching the cache");
     });
     await installSherpaRuntime(run).catch(() => undefined);
