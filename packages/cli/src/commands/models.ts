@@ -3,7 +3,7 @@ import * as clack from "@clack/prompts";
 import type { Example } from "./_examples.js";
 import { c } from "../ui/colors.js";
 import { formatBytes } from "../ui/format.js";
-import { failCommand } from "../utils/commandResult.js";
+import { failCommand, setCommandExitCode } from "../utils/commandResult.js";
 import { createRenderCancellationScope } from "../utils/renderCancellation.js";
 import { PARAKEET_MODEL_LABEL } from "../whisper/parakeet.js";
 
@@ -14,10 +14,18 @@ export const examples: Example[] = [
   ],
 ];
 
-function fail(message: string, json: boolean, exitCode = 1): never {
+function fail(message: string, json: boolean): never {
   if (json) console.log(JSON.stringify({ ok: false, error: message }));
   else console.error(c.error(message));
-  failCommand(exitCode);
+  failCommand();
+}
+
+/** A cancel is the user's choice, not a command failure: exit 130 without a cli_error. */
+function reportCancel(json: boolean): void {
+  const message = "Parakeet install cancelled; nothing partial was kept.";
+  if (json) console.log(JSON.stringify({ ok: false, error: message }));
+  else console.error(c.warn(message));
+  setCommandExitCode(130);
 }
 
 function downloadProgress(spin: Spinner) {
@@ -73,7 +81,7 @@ async function installParakeet(json: boolean): Promise<void> {
     spin?.stop(
       cancelled ? c.warn("Parakeet install cancelled") : c.error("Parakeet install failed"),
     );
-    if (cancelled) fail("Parakeet install cancelled; nothing partial was kept.", json, 130);
+    if (cancelled) return reportCancel(json);
     fail(err instanceof Error ? err.message : String(err), json);
   } finally {
     cancellation.dispose();

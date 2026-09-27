@@ -308,7 +308,8 @@ async function transcribeAudio(
     sherpaUnsupportedReason,
     transcribeWithSherpa,
   } = await import("../whisper/sherpa.js");
-  const { createRenderCancellationScope } = await import("../utils/renderCancellation.js");
+  const { createRenderCancellationScope, stoppedByCancelSignal } =
+    await import("../utils/renderCancellation.js");
 
   const engine = (opts.engine ?? "auto").toLowerCase();
   if (engine !== "auto" && engine !== "parakeet" && engine !== "whisper") {
@@ -373,8 +374,7 @@ async function transcribeAudio(
         result = await run(runner);
       } catch (fallbackErr) {
         // Whisper runs synchronously, so Ctrl-C shows as its child's signal before any listener runs.
-        const { code, signal } = fallbackErr as { code?: string; signal?: string };
-        if (!code && (signal === "SIGINT" || signal === "SIGTERM")) {
+        if (stoppedByCancelSignal(fallbackErr as { signal?: string })) {
           throw new DecodeCancelled("Transcription cancelled");
         }
         const why = normalizeErrorMessage(fallbackErr);
