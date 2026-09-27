@@ -775,6 +775,26 @@ export function trackInitTemplate(templateId: string, props?: { tailwind?: boole
 }
 
 /**
+ * `hyperframes catalog --installed` ran. Shares render_complete's catalog properties so the two compare; item names
+ * are public registry names, never paths or content.
+ */
+export function trackCatalogInstalledView(props: {
+  view: ProjectCatalogItems;
+  json: boolean;
+}): void {
+  const count = (keep: (item: ProjectCatalogItem) => boolean) =>
+    props.view.items.filter(keep).length;
+  trackEvent("cli_catalog_installed_view", {
+    ...catalogEventProperties(props.view.usage),
+    registry_items_found_by_file_count: count((item) => item.foundBy === "file"),
+    registry_items_file_missing_count: count((item) => item.status === "file-missing"),
+    registry_blocks_unused_count: count((item) => item.status === "not-used"),
+    scanned_files: props.view.scannedFiles,
+    json: props.json,
+  });
+}
+
+/**
  * One event per registry item written into a project.
  *
  * `cli_command` records that `add` ran, never what it installed, so the
@@ -793,30 +813,6 @@ export function trackInitTemplate(templateId: string, props?: { tailwind?: boole
  * (`hyperframes telemetry disable`, `HYPERFRAMES_NO_TELEMETRY`, `DO_NOT_TRACK`)
  * emits nothing.
  */
-/**
- * `hyperframes catalog --installed` ran: which catalog items a project holds.
- *
- * Item properties reuse the render event's shape and names, so a query can
- * compare what a project holds with what reached its videos. The view also
- * finds items by file path, which render does not, so it counts those apart.
- * No project name, path or content: item names are public registry names.
- */
-export function trackCatalogInstalledView(props: {
-  view: ProjectCatalogItems;
-  json: boolean;
-}): void {
-  const count = (keep: (item: ProjectCatalogItem) => boolean) =>
-    props.view.items.filter(keep).length;
-  trackEvent("cli_catalog_installed_view", {
-    ...catalogEventProperties(props.view.usage),
-    registry_items_found_by_file_count: count((item) => item.foundBy === "file"),
-    registry_items_file_missing_count: count((item) => item.status === "file-missing"),
-    registry_blocks_unused_count: count((item) => item.status === "not-used"),
-    scanned_files: props.view.scannedFiles,
-    json: props.json,
-  });
-}
-
 export function trackRegistryItemAdded(props: {
   item: string;
   itemType: string;
