@@ -172,6 +172,7 @@ describe("openProjectHistory", () => {
     expect(await history.undo(first.id, { who: you })).toEqual({
       ok: false,
       conflict: { files: ["index.html"], newer: [newer.id] },
+      changedSince: { id: newer.id, label: "Retitle", paths: ["index.html"] },
     });
     expect([read("index.html"), read("notes.txt")]).toEqual(["C", "n2"]);
 

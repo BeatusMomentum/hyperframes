@@ -60,9 +60,8 @@ export function useEditHistoryActions({
   activeCompPath,
   forceReloadSdkSession,
 }: UseEditHistoryActionsOptions) {
-  // Offers run long after the render that showed them; read the composition open at click time.
-  const activeCompPathRef = useRef(activeCompPath);
-  activeCompPathRef.current = activeCompPath;
+  const compOpenAtClickRef = useRef(activeCompPath);
+  compOpenAtClickRef.current = activeCompPath;
   const readHistoryFile = useCallback(
     (path: string): Promise<string> =>
       path === STUDIO_MOTION_PATH ? readOptionalProjectFile(path) : readProjectFile(path),
@@ -107,7 +106,7 @@ export function useEditHistoryActions({
       if (result.ok && result.label) {
         const restore = { paths: result.paths, files: result.files };
         onAfterUndoRedo?.(restore);
-        const openPath = activeCompPathRef.current;
+        const openPath = compOpenAtClickRef.current;
         if (openPath && result.paths?.includes(openPath)) {
           forceReloadSdkSession?.();
         }
