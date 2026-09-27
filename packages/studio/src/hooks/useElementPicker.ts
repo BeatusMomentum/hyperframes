@@ -348,26 +348,33 @@ function patchByIdentity(
   ownFile: string,
   op: PatchOperation,
 ): SourcePatch | null {
+  const path = identityFile(files, hfId, id, ownFile);
+  const before = path ? files[path] : undefined;
+  const target = before ? identityTarget(before, hfId, id) : null;
+  return path && before && target
+    ? { path, before, after: applyPatchByTarget(before, target, op) }
+    : null;
+}
+
+function identityFile(
+  files: Record<string, string>,
+  hfId: string,
+  id: string | null | undefined,
+  ownFile: string,
+): string | undefined {
   const holding = (attr: string, value: string) =>
     Object.keys(files).filter((file) => countTagsWithAttr(files[file] ?? "", attr, value) > 0);
   const withHfId = holding("data-hf-id", hfId);
+  if (withHfId.includes(ownFile)) return ownFile;
+  if (withHfId.length === 1) return withHfId[0];
   const withId = id ? holding("id", id) : [];
-  const path = withHfId.includes(ownFile)
-    ? ownFile
-    : withHfId.length === 1
-      ? withHfId[0]
-      : withId.length === 1
-        ? withId[0]
-        : undefined;
-  const before = path ? files[path] : undefined;
-  if (!path || !before) return null;
-  const target =
-    countTagsWithAttr(before, "data-hf-id", hfId) === 1
-      ? { hfId }
-      : id && countTagsWithAttr(before, "id", id) === 1
-        ? { id }
-        : null;
-  return target ? { path, before, after: applyPatchByTarget(before, target, op) } : null;
+  return withId.length === 1 ? withId[0] : undefined;
+}
+
+function identityTarget(html: string, hfId: string, id: string | null | undefined) {
+  if (countTagsWithAttr(html, "data-hf-id", hfId) === 1) return { hfId };
+  if (id && countTagsWithAttr(html, "id", id) === 1) return { id };
+  return null;
 }
 
 /** Read a subset of computed styles from an element in the iframe */

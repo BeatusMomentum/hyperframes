@@ -208,10 +208,16 @@ describe("an edit to a picked element whose id another scene shares", () => {
     const saved =
       '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-x">a</span>' +
       '<span id="dupe" data-hf-id="hf-x">b</span></div>';
-    const { picker, synced } = mountPicker({ "index.html": saved }, "span:nth-of-type(2)", "", true, {
-      page: `<!doctype html><html><body>${saved}</body></html>`,
-      id: "dupe",
-    });
+    const { picker, synced } = mountPicker(
+      { "index.html": saved },
+      "span:nth-of-type(2)",
+      "",
+      true,
+      {
+        page: `<!doctype html><html><body>${saved}</body></html>`,
+        id: "dupe",
+      },
+    );
     act(() => picker().setStyle("color", "red"));
     expect(synced).toEqual([]);
   });
