@@ -1746,7 +1746,8 @@ describe("buildConcatArgs", () => {
 });
 
 describe.skipIf(!HAS_FFMPEG)("buildEncoderArgs SDR colour", () => {
-  // Chrome captures are BT.601 JPEGs; a BT.709-tagged mp4 must hold the BT.709 matrix.
+  // Chrome captures are BT.601 JPEGs. A direct YUV-to-YUV scale keeps that matrix under the BT.709
+  // tag (ffmpeg 7 and older) or tints greys (8 and newer), so the encode goes through RGB.
   it("delivers Chrome's JPEG colours in the BT.709 the mp4 is tagged with", () => {
     const ffmpeg = getFfmpegBinary();
     const dir = mkdtempSync(join(tmpdir(), "hf-sdr-colour-"));
