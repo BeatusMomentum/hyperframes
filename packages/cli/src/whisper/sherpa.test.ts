@@ -17,7 +17,8 @@ import {
   installSherpaRuntime,
   SHERPA_RUNTIME_DIR,
   sherpaPlatformPackage,
-  sherpaRuntimeLoads,
+  DecodeCancelled,
+  sherpaRuntimeLoadError,
   sherpaUnsupportedReason,
   type ModelFile,
 } from "./sherpa.js";
@@ -66,28 +67,27 @@ describe("installSherpaRuntime", () => {
   });
 
   /** A stand-in runtime in `root` whose entry point loads, or throws as a missing library does. */
-  function fakeRuntime(root: string, loads: boolean) {
+  const LOADS = "module.exports = {};";
+  const BROKEN = 'throw new Error("libonnxruntime.so: cannot open\\n  shared object");';
+  function fakeRuntime(root: string, body: string) {
     const pkg = join(root, "node_modules", "sherpa-onnx-node");
     mkdirSync(pkg, { recursive: true });
     writeFileSync(join(pkg, "package.json"), '{"name":"sherpa-onnx-node","main":"index.js"}');
-    const body = loads
-      ? "module.exports = {};"
-      : 'throw new Error("libonnxruntime.so: cannot open");';
     writeFileSync(join(pkg, "index.js"), body);
   }
 
   it("reinstalls a runtime that is present but does not load", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
     try {
-      fakeRuntime(dir, false);
-      expect(sherpaRuntimeLoads(dir)).toBe(false);
+      fakeRuntime(dir, BROKEN);
+      expect(sherpaRuntimeLoadError(dir)).toBe("libonnxruntime.so: cannot open shared object");
       const run = vi.fn(async (args: string[]) =>
-        fakeRuntime(args[args.indexOf("--prefix") + 1]!, true),
+        fakeRuntime(args[args.indexOf("--prefix") + 1]!, LOADS),
       );
 
       expect(await installSherpaRuntime({ run, dir })).toBe(true);
       expect(run).toHaveBeenCalledTimes(1);
-      expect(sherpaRuntimeLoads(dir)).toBe(true);
+      expect(sherpaRuntimeLoadError(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -96,7 +96,7 @@ describe("installSherpaRuntime", () => {
   it("leaves a runtime that loads alone", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
     try {
-      fakeRuntime(dir, true);
+      fakeRuntime(dir, LOADS);
       const run = vi.fn();
       expect(await installSherpaRuntime({ run, dir })).toBe(false);
       expect(run).not.toHaveBeenCalled();
@@ -104,6 +104,36 @@ describe("installSherpaRuntime", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("fails with the loader's error when the reinstalled runtime still does not load", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+    try {
+      const run = vi.fn(async (args: string[]) =>
+        fakeRuntime(args[args.indexOf("--prefix") + 1]!, BROKEN),
+      );
+      await expect(installSherpaRuntime({ run, dir })).rejects.toThrow(
+        "The sherpa-onnx runtime installed but does not load: libonnxruntime.so: cannot open shared object",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "treats a probe stopped by Ctrl-C as a cancel and keeps the runtime",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "hf-sherpa-runtime-"));
+      try {
+        fakeRuntime(dir, 'process.kill(process.pid, "SIGINT");');
+        const run = vi.fn();
+        await expect(installSherpaRuntime({ run, dir })).rejects.toBeInstanceOf(DecodeCancelled);
+        expect(run).not.toHaveBeenCalled();
+        expect(existsSync(join(dir, "node_modules", "sherpa-onnx-node", "index.js"))).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps each platform and arch in its own runtime dir", () => {
     expect(SHERPA_RUNTIME_DIR).toMatch(
@@ -132,7 +162,7 @@ describe("sherpaParakeetInstalled", () => {
         writeFileSync(join(sherpa.PARAKEET_MODEL_DIR, name), "");
         truncateSync(join(sherpa.PARAKEET_MODEL_DIR, name), bytes);
       }
-      expect(sherpa.sherpaRuntimeLoads()).toBe(false);
+      expect(sherpa.sherpaRuntimeLoadError()).not.toBeNull();
       expect(sherpa.sherpaParakeetInstalled()).toBe(true);
     } finally {
       vi.unstubAllEnvs();

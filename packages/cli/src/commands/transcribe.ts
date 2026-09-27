@@ -371,6 +371,11 @@ async function transcribeAudio(
       try {
         result = await run(runner);
       } catch (fallbackErr) {
+        // Whisper runs synchronously, so Ctrl-C shows as its child's signal before any listener runs.
+        const { code, signal } = fallbackErr as { code?: string; signal?: string };
+        if (!code && (signal === "SIGINT" || signal === "SIGTERM")) {
+          throw new DecodeCancelled("Transcription cancelled");
+        }
         const why = normalizeErrorMessage(fallbackErr);
         throw new Error(`${parakeetError}. The ${runner} fallback failed too: ${why}`);
       }
@@ -416,8 +421,6 @@ async function transcribeAudio(
       );
     }
   } catch (err) {
-    // A signal that landed during a synchronous whisper run is only handled once the loop turns.
-    if (cancellation) await new Promise((resolve) => setImmediate(resolve));
     if (err instanceof DecodeCancelled || cancellation?.signal.aborted) {
       const message = "Transcription cancelled";
       if (opts.json) console.log(JSON.stringify({ ok: false, error: message }));

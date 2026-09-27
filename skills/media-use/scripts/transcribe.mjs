@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
-import { parseArgs } from "node:util";
+import { parseArgs, stripVTControlCharacters } from "node:util";
 import { mergeTokensToWords } from "./lib/parakeet-words.mjs";
 import { track } from "./lib/telemetry.mjs";
 import { resolveNpxInvocation } from "./lib/npx-sync.mjs";
@@ -137,7 +137,21 @@ function runCli(cliEngine) {
       ["hyperframes", "transcribe", inputPath, "--dir", workDir, "--engine", cliEngine, "--json"],
       { stdio: ["ignore", "pipe", "pipe"], timeout: 1_800_000 },
     );
-    const stdout = String(execFileSync(resolved.cmd, resolved.args, resolved.opts));
+    let stdout;
+    try {
+      stdout = String(execFileSync(resolved.cmd, resolved.args, resolved.opts));
+    } catch (e) {
+      // stderr holds spinner redraws and --json prints the reason on stdout, so keep the last lines.
+      const tail = stripVTControlCharacters(`${e.stderr ?? ""}\n${e.stdout ?? ""}`)
+        .split(/[\r\n]+/)
+        .map((l) => l.trim())
+        .filter((l) => l && l !== "│")
+        .slice(-3)
+        .join("\n");
+      throw new Error(
+        `hyperframes transcribe failed (exit ${e.status ?? e.code})${tail ? `:\n${tail}` : ""}`,
+      );
+    }
     const produced = join(workDir, "transcript.json");
     if (!existsSync(produced))
       throw new Error("hyperframes transcribe produced no transcript.json");

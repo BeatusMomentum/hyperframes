@@ -46,6 +46,10 @@ async function installMissing(sherpa: Sherpa, spin: Spinner, signal: AbortSignal
   return runtimeInstalled || modelFetched;
 }
 
+/** A synchronous child's Ctrl-C shows as its error before the scope's listener runs. */
+const wasCancelled = (err: unknown, signal: AbortSignal, sherpa: Sherpa) =>
+  signal.aborted || err instanceof sherpa.DecodeCancelled;
+
 async function installParakeet(json: boolean): Promise<void> {
   const sherpa = await import("../whisper/sherpa.js");
   const unsupported = sherpa.sherpaUnsupportedReason();
@@ -65,7 +69,7 @@ async function installParakeet(json: boolean): Promise<void> {
       );
     }
   } catch (err) {
-    const cancelled = cancellation.signal.aborted;
+    const cancelled = wasCancelled(err, cancellation.signal, sherpa);
     spin?.stop(
       cancelled ? c.warn("Parakeet install cancelled") : c.error("Parakeet install failed"),
     );

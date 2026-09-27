@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,5 +67,45 @@ test(
     const { result, args } = runScript("parakeet", "parakeet");
     assert.match(args, /--engine parakeet --json/);
     assert.equal(result.engine, "parakeet");
+  },
+);
+
+test(
+  "a failed --engine parakeet run reports the reason the CLI printed on stdout",
+  { skip: process.platform === "win32" },
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "media-use-transcribe-"));
+    try {
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      const reason =
+        "Parakeet is not installed. Install it with: hyperframes models install parakeet";
+      writeFileSync(
+        join(bin, "npx"),
+        `#!/bin/sh\necho '{"ok":false,"error":"${reason}"}'\nexit 1\n`,
+      );
+      chmodSync(join(bin, "npx"), 0o755);
+      const input = join(root, "in.wav");
+      writeFileSync(input, "");
+      const script = fileURLToPath(new URL("./transcribe.mjs", import.meta.url));
+      const res = spawnSync(
+        process.execPath,
+        [script, "--input", input, "--engine", "parakeet", "--json"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            HOME: root,
+            HYPERFRAMES_MEDIA_HOME: join(root, "home"),
+            HYPERFRAMES_NO_TELEMETRY: "1",
+          },
+        },
+      );
+      assert.equal(res.status, 1);
+      assert.match(JSON.parse(res.stdout.trim()).error, /hyperframes models install parakeet/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   },
 );
