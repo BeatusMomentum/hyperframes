@@ -5,6 +5,7 @@ import { findInjectedRenderFrame } from "./renderFrameSibling";
 import type { RuntimeJson } from "./types";
 import { isVideoElement } from "./domRealm";
 import { swappedElements } from "./proxySrc";
+import { holdMediaLoad, preloadMedia, releaseMediaLoad } from "./preloadMedia";
 import { waitForServedProxy } from "./proxyWait";
 
 /**
@@ -232,19 +233,25 @@ export function swapToProxy(
   }
   const originalAttr = el.getAttribute("src");
   proxyRequested.set(el, originalAttr);
+  holdMediaLoad(el);
   const live = () => el.isConnected && el.getAttribute("src") === originalAttr;
   void waitForServedProxy(proxiedSrc, live).then((served) => {
     if (!live()) {
-      if (proxyRequested.get(el) === originalAttr) proxyRequested.delete(el);
+      if (proxyRequested.get(el) !== originalAttr) return;
+      proxyRequested.delete(el);
+      releaseMediaLoad(el);
       return;
     }
+    releaseMediaLoad(el);
     if (!served) {
       emitUnavailableDiagnostic(el, "proxy_playback_failed", originalSrc);
+      preloadMedia(el);
       return;
     }
     swappedElements.set(el, originalAttr);
     // Sync state measured on the original would read the new file's buffering as drift.
     evictMediaSyncState(el);
+    el.preload = "auto";
     el.src = proxiedSrc;
     el.load();
   });

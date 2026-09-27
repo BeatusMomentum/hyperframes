@@ -10,6 +10,7 @@ import { clampAudioGain } from "../audioGain.js";
 import { isMemberGroupHidden } from "../audioGroups.js";
 import { findInjectedRenderFrame } from "./renderFrameSibling.js";
 import { registerSeekCompletion } from "./adapters/seek-dispatch.js";
+import { promotePreload } from "./preloadMedia.js";
 export {
   readElementPlaybackRate,
   readElementRateSpec,
@@ -453,7 +454,7 @@ export function syncRuntimeMedia(params: {
       // past the buffered range. Setting this on every tick is cheap
       // (no-op when already "auto") and catches elements whose preload
       // was overridden after init.ts set it.
-      if (el.preload !== "auto") el.preload = "auto";
+      promotePreload(el);
       // Per-element rate × global transport rate
       const baseRate = rateAt(clipRate, params.timeSeconds - clip.start) * params.playbackRate;
       // Drift correction — three tiers:
