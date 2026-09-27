@@ -126,6 +126,7 @@ async function loadModule(
       kind: "video",
       color: { isHdr, hdrTransfer },
     }),
+    probeFirstFrameColour: async () => ({}),
   }));
   return import("./proxyTranscoder.js");
 }
@@ -362,6 +363,49 @@ describe("resolveProxy", () => {
         `${hdrToSdrToneMapFilter({ colorTransfer: "arib-std-b67" })},format=gbrp,scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,`,
       );
       expect(Math.abs(meanLuma(proxyPath) - reference)).toBeLessThan(1);
+    },
+    60_000,
+  );
+
+  it.skipIf(!canToneMapForReal)(
+    "tone-maps each frame of a real mixed HLG and PQ stream with its own transfer",
+    async () => {
+      vi.resetModules();
+      vi.doUnmock("./mediaMetadata.js");
+      const { resolveProxy } = await import("./proxyTranscoder.js");
+      const projectDir = tmpProject();
+      const segment = (transfer: number) =>
+        execFileSync(realFfmpeg!, [
+          ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=0.2"],
+          ...["-c:v", "libx264", "-pix_fmt", "yuv420p", "-bsf:v"],
+          `h264_metadata=colour_primaries=9:transfer_characteristics=${transfer}:matrix_coefficients=9`,
+          ...["-f", "h264", "-"],
+        ]);
+      const mux = (name: string, stream: Buffer) => {
+        const raw = join(projectDir, `${name}.h264`);
+        const path = join(projectDir, `${name}.mp4`);
+        writeFileSync(raw, stream);
+        execFileSync(realFfmpeg!, [
+          ...["-v", "error", "-fflags", "+genpts", "-r", "25", "-f", "h264", "-i", raw],
+          ...["-c", "copy", path],
+        ]);
+        return path;
+      };
+      const pq = segment(16);
+      const mixedProxy = await resolveProxy(projectDir, mux("hlg-then-pq", Buffer.concat([segment(18), pq])));
+      const pqProxy = await resolveProxy(projectDir, mux("pq-only", pq));
+
+      // Frame 5 is the first PQ frame; read as HLG it lands near 30 dB, encoder noise near 42.
+      const psnr = spawnSync(
+        realFfmpeg!,
+        [
+          ...["-i", mixedProxy, "-i", pqProxy, "-lavfi"],
+          "[0:v]select=eq(n\\,5),setpts=PTS-STARTPTS[a];[1:v]select=eq(n\\,0),setpts=PTS-STARTPTS[b];[a][b]psnr",
+          ...["-frames:v", "1", "-f", "null", "-"],
+        ],
+        { encoding: "utf8" },
+      ).stderr;
+      expect(Number(/average:([\d.]+)/.exec(psnr)?.[1])).toBeGreaterThan(36);
     },
     60_000,
   );

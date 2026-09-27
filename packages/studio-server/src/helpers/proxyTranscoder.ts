@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync } f
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { hdrToSdrToneMapFilter } from "@hyperframes/core";
 import { findFfBinary } from "@hyperframes/parsers/ff-binaries";
-import { probeMediaMetadata } from "./mediaMetadata.js";
+import { probeFirstFrameColour, probeMediaMetadata } from "./mediaMetadata.js";
 import { cleanupProxyCache } from "./proxyCache.js";
 import { PROXY_VARIANT_CONFIG, type ProxyVariant } from "./mediaCodecMap.js";
 import { realpath } from "./safePath.js";
@@ -332,12 +332,13 @@ async function runFfmpeg(
   const { hdrTransfer } = metadata.color;
   const toneMap = (hdrTransfer === "pq" || hdrTransfer === "hlg") && !keepsAlpha;
   if (toneMap) await ensureHdrFilters(ffmpegPath);
+  const firstFrame = toneMap ? await probeFirstFrameColour(sourcePath) : {};
   const evenScale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
   const pixelFormat = keepsAlpha ? "yuva420p" : "yuv420p";
   // The tone map ends in RGB; older ffmpeg (seen on 5.1) converts it with BT.601 unless the matrix is named.
   const videoFilter = toneMap
     ? [
-        hdrToSdrToneMapFilter(metadata.color),
+        hdrToSdrToneMapFilter(metadata.color, firstFrame),
         `${evenScale}:out_color_matrix=bt709:out_range=tv`,
         `format=${pixelFormat}`,
       ].join(",")
