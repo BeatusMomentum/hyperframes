@@ -167,7 +167,10 @@ function patchInlineStyle(
   value: string | null,
 ): string {
   // Find the element tag with this id
-  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(
+    `(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`,
+    "i",
+  );
   const match = idPattern.exec(html);
   if (!match) return html;
 
@@ -184,7 +187,7 @@ function patchInlineStyleInTag(
   if (!tag) return html;
 
   // Check if there's an existing style attribute
-  const styleMatch = /\bstyle=(")([^"]*)"|\bstyle=(')([^']*)'/.exec(tag);
+  const styleMatch = /(?<![\w-])style=(")([^"]*)"|(?<![\w-])style=(')([^']*)'/.exec(tag);
   if (styleMatch) {
     const existingStyle = styleMatch[2] ?? styleMatch[4];
     const quote = styleMatch[1] ?? styleMatch[3];
@@ -207,7 +210,10 @@ function patchInlineStyleInTag(
     const newStyle = Array.from(props.entries())
       .map(([k, v]) => `${k}: ${escapeStyleAttributeValue(v, quote)}`)
       .join("; ");
-    const newTag = tag.replace(styleMatch[0], `style=${quote}${newStyle}${quote}`);
+    const newTag =
+      tag.slice(0, styleMatch.index) +
+      `style=${quote}${newStyle}${quote}` +
+      tag.slice(styleMatch.index + styleMatch[0].length);
     return html.replace(tag, newTag);
   } else {
     // No existing style attribute
@@ -242,7 +248,10 @@ function replaceTagAtMatch(html: string, match: TagMatch, newTag: string): strin
 }
 
 function execDataAttrPattern(html: string, attr: string, value: string): TagMatch | null {
-  const pattern = new RegExp(`(<[^>]*(?<![\\w-])${attr}=(["'])${escapeRegex(value)}\\2[^>]*)>`, "i");
+  const pattern = new RegExp(
+    `(<[^>]*(?<![\\w-])${attr}=(["'])${escapeRegex(value)}\\2[^>]*)>`,
+    "i",
+  );
   const match = pattern.exec(html);
   if (match?.index == null) return null;
   return { tag: match[1], start: match.index, end: match.index + match[1].length };
@@ -358,7 +367,10 @@ function patchAttribute(
   attr: string,
   value: string | null,
 ): string {
-  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(
+    `(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`,
+    "i",
+  );
   const match = idPattern.exec(html);
   if (!match) return html;
 
@@ -492,7 +504,10 @@ function patchHtmlAttribute(
   attr: string,
   value: string | null,
 ): string {
-  const idPattern = new RegExp(`(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`, "i");
+  const idPattern = new RegExp(
+    `(<[^>]*(?<![\\w-])id=(["'])${escapeRegex(elementId)}\\2[^>]*)>`,
+    "i",
+  );
   const match = idPattern.exec(html);
   if (!match) return html;
   return patchHtmlAttributeInTag(html, match[1], attr, value);

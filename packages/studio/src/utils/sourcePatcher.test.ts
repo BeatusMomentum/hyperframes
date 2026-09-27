@@ -664,6 +664,34 @@ describe("attribute names inside longer ones", () => {
 
   it("counts and reads an attribute by its own name only", () => {
     expect(countTagsWithAttr(html, "id", "intro")).toBe(1);
+    expect(countTagsWithAttr('<p data-id="x">', "id", "x")).toBe(0);
     expect(readAttributeByTarget(html, { id: "intro" }, "src")).toBe("a.png");
+  });
+
+  it("patches src, class and style by their own names, not data-src, data-class or data-style", () => {
+    const tag =
+      '<span data-class="c" style="color: blue">s</span>' +
+      '<img class="c" data-src="a.png" src="b.png" data-style="color: blue" style="color: blue">';
+    const src = applyPatchByTarget(
+      tag,
+      { selector: ".c" },
+      {
+        type: "html-attribute",
+        property: "src",
+        value: "z.png",
+      },
+    );
+    expect(src).toContain('data-src="a.png" src="z.png"');
+    const style = applyPatchByTarget(
+      tag,
+      { selector: ".c" },
+      {
+        type: "inline-style",
+        property: "color",
+        value: "red",
+      },
+    );
+    expect(style).toContain('data-style="color: blue" style="color: red"');
+    expect(style).toContain('<span data-class="c" style="color: blue">');
   });
 });
