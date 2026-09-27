@@ -76,15 +76,29 @@ const decodeTimeoutMs = (audioSeconds: number) => Math.max(1_800_000, audioSecon
 const nativePackageName = (platform: string, arch: string) =>
   `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
 
-/** Loads it in a child as the decode worker does: only a load shows a missing library or bad binary. */
-export function sherpaRuntimeLoads(dir = SHERPA_RUNTIME_DIR): boolean {
-  if (!isInstalled(dir, RUNTIME)) return false;
-  const load = `require("node:module").createRequire(process.env.HF_SHERPA_MANIFEST)("${RUNTIME}")`;
+const LOAD_RUNTIME = `try {
+  require("node:module").createRequire(process.env.HF_SHERPA_MANIFEST)("${RUNTIME}");
+} catch (e) {
+  process.stderr.write(String(e && e.message).replace(/\\s+/g, " "));
+  process.exitCode = 1;
+}`;
+
+/** Loads it in a child as the decode worker does: null when it loads, else the loader's error. */
+export function sherpaRuntimeLoadError(dir = SHERPA_RUNTIME_DIR): string | null {
+  if (!isInstalled(dir, RUNTIME)) return `${RUNTIME} is not installed in ${dir}`;
   const env = { ...process.env, HF_SHERPA_MANIFEST: join(dir, "package.json") };
-  return (
-    spawnSync(process.execPath, ["-e", load], { env, stdio: "ignore", timeout: 60_000 }).status ===
-    0
-  );
+  const probe = spawnSync(process.execPath, ["-e", LOAD_RUNTIME], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 60_000,
+  });
+  if (probe.status === 0) return null;
+  // Ctrl-C reaches the probe too: a cancel, never proof that a working runtime is broken.
+  if (!probe.error && (probe.signal === "SIGINT" || probe.signal === "SIGTERM")) {
+    throw new DecodeCancelled("Parakeet install cancelled");
+  }
+  return bounded(probe.stderr?.trim() || probe.error?.message || `exited with ${probe.status}`);
 }
 
 /** The native package, pinned too: the runtime's own optionalDependencies accept any 1.13.x. */
@@ -98,11 +112,14 @@ export async function installSherpaRuntime({
   signal,
   dir = SHERPA_RUNTIME_DIR,
 }: { run?: typeof runNpm; signal?: AbortSignal; dir?: string } = {}): Promise<boolean> {
-  if (sherpaRuntimeLoads(dir)) return false;
+  if (sherpaRuntimeLoadError(dir) === null) return false;
   // install() keeps any dir holding the runtime manifest, so a broken one goes first.
   rmSync(dir, { recursive: true, force: true });
   const native = sherpaPlatformPackage();
   await install(dir, RUNTIME, RUNTIME_VERSION, (args) => run([...args, native], signal));
+  const stillBroken = sherpaRuntimeLoadError(dir);
+  if (stillBroken)
+    throw new Error(`The sherpa-onnx runtime installed but does not load: ${stillBroken}`);
   return true;
 }
 
@@ -207,10 +224,12 @@ function recognizerConfig(): object {
   };
 }
 
-/** Ctrl-C or a SIGTERM stopped the decode: the user's cancel, never a reason to fall back. */
+/** Ctrl-C or a SIGTERM stopped a Parakeet child: the user's cancel, never a reason to fall back. */
 export class DecodeCancelled extends Error {}
 
 const MAX_REASON_CHARS = 600;
+const bounded = (why: string) =>
+  why.length > MAX_REASON_CHARS ? `${why.slice(0, MAX_REASON_CHARS)}…` : why;
 
 function failureReason(err: ExecFileException | null, stderr: string): string {
   const how = !err
@@ -228,7 +247,7 @@ function failureReason(err: ExecFileException | null, stderr: string): string {
     lines.find((line) => line.startsWith(SHERPA_ERROR_PREFIX))?.slice(SHERPA_ERROR_PREFIX.length) ??
     lines.at(-1);
   if (!why) return how;
-  return `${how}: ${why.length > MAX_REASON_CHARS ? `${why.slice(0, MAX_REASON_CHARS)}…` : why}`;
+  return `${how}: ${bounded(why)}`;
 }
 
 /** Decodes in a child process: onnxruntime aborts the whole process on some inputs, uncatchably. */

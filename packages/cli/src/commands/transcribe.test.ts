@@ -227,9 +227,8 @@ describe("transcribe command", () => {
 
     it("exits 130 when Ctrl-C stops the whisper fallback too", async () => {
       crashChild("SIGABRT");
-      // A real signal reaches the listener only when the loop turns after the synchronous whisper run.
+      // No signal reaches the listener in time: the synchronous whisper child's own signal decides.
       transcribeMock.mockImplementation(async () => {
-        setImmediate(() => process.emit("SIGINT"));
         throw Object.assign(new Error("Command failed: whisper-cli"), { signal: "SIGINT" });
       });
       Object.assign(runners, { sherpa: true, mlx: false });

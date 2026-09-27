@@ -7,6 +7,7 @@ const sherpa = {
   sherpaUnsupportedReason: vi.fn(),
   installSherpaRuntime: vi.fn(),
   ensureParakeetModel: vi.fn(),
+  DecodeCancelled: class extends Error {},
 };
 vi.mock("../whisper/sherpa.js", () => sherpa);
 
@@ -77,6 +78,13 @@ describe("models install parakeet --json", () => {
     });
     expect(sherpa.installSherpaRuntime).not.toHaveBeenCalled();
     expect(sherpa.ensureParakeetModel).not.toHaveBeenCalled();
+  });
+
+  it("stops with exit 130 when Ctrl-C stops the runtime check before any listener runs", async () => {
+    sherpa.installSherpaRuntime.mockRejectedValue(new sherpa.DecodeCancelled("cancelled"));
+    const { exitCode, out } = await install();
+    expect(exitCode).toBe(130);
+    expect(out).toMatchObject({ ok: false, error: expect.stringMatching(/cancelled/) });
   });
 
   it("stops with exit 130 when cancelled mid-download", async () => {
