@@ -41,6 +41,10 @@ const STORYBOARD_VIEW_REASON =
 
 export const ALLOWED_DELETIONS = new Map([
   [
+    "packages/studio/src/utils/compositionPatterns.ts",
+    "the composition root-tag pattern moved into utils/rootDuration.ts, the one place that finds the root tag",
+  ],
+  [
     "packages/studio/src/player/components/automationGestureKeys.ts",
     "automation-lane saves now persist once per gesture through the timeline save, so no caller needs a gesture undo key",
   ],

@@ -146,10 +146,7 @@
     },
     {
       "file": "packages/studio/src/utils/timelineAssetDrop.ts",
-      "exports": [
-        "fitTimelineAssetGeometry",
-        "resolveTimelineAssetCompositionSize",
-      ],
+      "exports": ["fitTimelineAssetGeometry", "resolveTimelineAssetCompositionSize"],
     },
     {
       "file": "packages/studio/src/components/sidebar/assetHelpers.ts",
