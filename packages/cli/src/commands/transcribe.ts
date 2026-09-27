@@ -39,7 +39,7 @@ import { DEFAULT_MODEL, isWhisperUnavailable } from "../whisper/manager.js";
 // entering the sync-import graph. Below this floor the whisper spawn has no
 // realistic chance of completing even on the fastest hardware for the shortest clip.
 const CLI_TIMEOUT_MIN_MS = 5000;
-import { trackCommandFailure, trackTranscribeUnavailable } from "../telemetry/events.js";
+import { trackTranscribeUnavailable } from "../telemetry/events.js";
 
 export default defineCommand({
   meta: {
@@ -116,9 +116,8 @@ export default defineCommand({
     const inputPath = resolve(args.input);
     if (!existsSync(inputPath)) {
       const message = `File not found: ${args.input}`;
-      trackCommandFailure("transcribe", message);
       console.error(c.error(message));
-      failCommand();
+      failCommand(1, message);
     }
 
     // Default to the directory containing the input file so transcript.json
@@ -183,13 +182,12 @@ function parseTimeoutMs(raw: string | undefined, json: boolean): number | undefi
 }
 
 function failWith(message: string, json: boolean): never {
-  trackCommandFailure("transcribe", message);
   if (json) {
     console.log(JSON.stringify({ ok: false, error: message }));
   } else {
     console.error(c.error(message));
   }
-  failCommand();
+  failCommand(1, message);
 }
 
 function parseExportFormat(
@@ -424,7 +422,8 @@ async function transcribeAudio(
       const message = "Transcription cancelled";
       if (opts.json) console.log(JSON.stringify({ ok: false, error: message }));
       else spin?.stop(c.warn(message));
-      failCommand(130);
+      setCommandExitCode(130);
+      return;
     }
     // Surface the last few lines of the ASR subprocess's stderr, which
     // execFileSync captures but otherwise drops on the floor — that's where
@@ -459,13 +458,12 @@ async function transcribeAudio(
       return;
     }
 
-    trackCommandFailure("transcribe", err);
     if (opts.json) {
       console.log(JSON.stringify({ ok: false, error: message }));
     } else {
       spin?.stop(c.error(`Transcription failed: ${message}`));
     }
-    failCommand();
+    failCommand(1, err);
   } finally {
     cancellation?.dispose();
     if (wavPath !== inputPath) rmSync(wavPath, { force: true });
