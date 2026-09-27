@@ -127,7 +127,7 @@ export function readTimelineDurationFromDocument(doc: Document | null | undefine
   return furthestClipEndFromDocument(doc);
 }
 
-/** Furthest clip end of a composition SOURCE STRING (the HTML being saved), never the store's. */
+/** Furthest clip end read from the composition HTML being saved, not from the store. */
 export function furthestClipEndFromSource(source: string): number {
   if (!source) return 0;
   return furthestClipEndFromDocument(parseCompositionSource(source));

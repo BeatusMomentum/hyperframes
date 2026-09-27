@@ -50,11 +50,8 @@ export interface LengthSync {
   activeCompPath: string | null;
 }
 
-/**
- * Re-decide the previewed file's length from the converged animation end and write it, folded
- * into the gesture's undo step. Unconverged, or when another writer changed the length since the
- * gesture's own write, the readout only takes the file's length. Failures log.
- */
+// Re-decides the previewed file's length once the preview has converged, in the gesture's undo step.
+// Unconverged, or if another writer changed the length since, the readout takes the file's length.
 export async function syncEditLength(input: {
   converged: boolean;
   iframe: HTMLIFrameElement | null;
