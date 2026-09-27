@@ -17,3 +17,14 @@ export async function waitForServedProxy(
   }
   return { served: false, waited };
 }
+
+/** Whether `src` can be read now: at once for a plain URL, once the copy is served for a proxy URL. */
+export async function proxiedSourceReady(src: string, live: () => boolean): Promise<boolean> {
+  let url: URL;
+  try {
+    url = new URL(src, window.location.href);
+  } catch {
+    return true;
+  }
+  return !url.searchParams.has("hf-proxy") || (await waitForServedProxy(src, live)).served;
+}

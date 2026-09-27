@@ -1,4 +1,4 @@
-import { waitForServedProxy } from "@hyperframes/core/runtime/proxy-wait";
+import { proxiedSourceReady } from "@hyperframes/core/runtime/proxy-wait";
 import { TIMELINE_VIEWPORT_BUDGETS, type TimelineViewportBudgets } from "./timelineViewportBudgets";
 import type { ThumbnailLoadedResult, ThumbnailValue } from "./thumbnailScheduler";
 
@@ -121,11 +121,9 @@ export async function decodeVideoThumbnail(
   const mediabunny = await import("mediabunny");
   throwIfAborted(signal);
   // A clip the preview swapped to its proxy reports the proxy URL, which answers 202 until the copy lands.
-  if (new URL(request.source, window.location.href).searchParams.has("hf-proxy")) {
-    const { served } = await waitForServedProxy(request.source, () => !signal.aborted);
-    throwIfAborted(signal);
-    if (!served) throw new Error("Video proxy is unavailable");
-  }
+  const ready = await proxiedSourceReady(request.source, () => !signal.aborted);
+  throwIfAborted(signal);
+  if (!ready) throw new Error("Video proxy is unavailable");
 
   const input = new mediabunny.Input({
     source: new mediabunny.UrlSource(request.source),

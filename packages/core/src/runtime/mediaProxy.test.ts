@@ -78,6 +78,7 @@ function stubProxyRoute(...statuses: number[]) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -463,7 +464,6 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
     expect(el.load).toHaveBeenCalledTimes(2);
     expect(isProxied(el)).toBe(true);
     expect(postRuntimeMessageMock).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it("a served proxy that errors is reloaded once, then diagnosed", async () => {
@@ -485,6 +485,7 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
     const route = stubProxyRoute(202, 206);
     const el = createVideo("/video.mp4");
     swapToProxy(el, HEVC_ENTRY, "proactive");
+    postRuntimeMessageMock.mockClear();
 
     handleErrorForProxy(el);
     await vi.advanceTimersByTimeAsync(0);
@@ -493,7 +494,7 @@ describe("handleErrorForProxy (tertiary trigger)", () => {
 
     expect(route).toHaveBeenCalledTimes(1);
     expect(el.load).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
+    expect(postRuntimeMessageMock, "a detached element is not diagnosed").not.toHaveBeenCalled();
   });
 });
 

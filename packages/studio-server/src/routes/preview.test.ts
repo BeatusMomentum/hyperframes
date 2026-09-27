@@ -956,13 +956,15 @@ describe("hf-proxy negotiation and media codec map injection (U3)", () => {
           "",
         );
       });
-    const { waitForProxy, ProxyWaitTimeoutError } = await vi.importActual<
-      typeof import("../helpers/proxyTranscoder.js")
-    >("../helpers/proxyTranscoder.js");
+    const { waitForProxy, ProxyWaitTimeoutError, PROXY_PENDING_RETRY_AFTER_SECONDS } =
+      await vi.importActual<typeof import("../helpers/proxyTranscoder.js")>(
+        "../helpers/proxyTranscoder.js",
+      );
     vi.doMock("../helpers/proxyTranscoder.js", () => ({
       resolveProxy,
       waitForProxy,
       ProxyWaitTimeoutError,
+      PROXY_PENDING_RETRY_AFTER_SECONDS,
       ProxyTranscodeError: FakeProxyTranscodeError,
       ProxyCapacityError: FakeProxyCapacityError,
       PROXY_PARAMS_VERSION: "v1",

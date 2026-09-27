@@ -33,6 +33,7 @@ import {
   ProxyCapacityError,
   ProxyTranscodeError,
   ProxyWaitTimeoutError,
+  PROXY_PENDING_RETRY_AFTER_SECONDS,
 } from "../helpers/proxyTranscoder.js";
 import {
   decideMediaProxyEligibility,
@@ -604,7 +605,7 @@ export function registerPreviewRoutes(api: Hono, adapter: PreviewApiAdapter): vo
       } catch (err) {
         if (err instanceof ProxyWaitTimeoutError) {
           return c.text("media proxy is being made", 202, {
-            "Retry-After": "2",
+            "Retry-After": String(PROXY_PENDING_RETRY_AFTER_SECONDS),
             "Cache-Control": "no-store",
           });
         }
@@ -614,8 +615,8 @@ export function registerPreviewRoutes(api: Hono, adapter: PreviewApiAdapter): vo
         const message = err instanceof ProxyTranscodeError ? err.message : "proxy transcode failed";
         return c.text(message, 502);
       }
-      // After the wait, not at the eligibility gate: one count per resolved proxy
-      // shares a unit with `prewarmsRequested`; a 304 or a 202 is not fresh demand.
+      // After the wait, not at the eligibility gate: one count per served proxy shares
+      // a unit with `prewarmsRequested`; a 304, a 202 or a failure serves none.
       recordProxyRequest();
       servedContentType = PROXY_VARIANT_CONFIG[proxyVariant].contentType;
     }

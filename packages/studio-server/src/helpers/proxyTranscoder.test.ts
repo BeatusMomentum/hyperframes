@@ -487,6 +487,48 @@ describe("resolveProxy", () => {
     await expect(retry).resolves.toBeTruthy();
   });
 
+  it("keeps an environment failure briefly, so an ask that stopped waiting hears it next", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const { spawn, calls } = createSpawnSpy();
+    let ffmpegPath: string | undefined;
+    vi.resetModules();
+    vi.doMock("node:child_process", () => {
+      const mocked = { spawn };
+      return { ...mocked, default: mocked };
+    });
+    vi.doMock("@hyperframes/parsers/ff-binaries", () => ({ findFfBinary: () => ffmpegPath }));
+    // A real ffprobe answers after a macrotask, so the failure lands after a zero wait gave up.
+    vi.doMock("./mediaMetadata.js", () => ({
+      probeMediaMetadata: () =>
+        new Promise((resolveProbe) =>
+          setTimeout(resolveProbe, 5, { kind: "video", color: { isHdr: false } }),
+        ),
+    }));
+    const { resolveProxy, waitForProxy, ProxyWaitTimeoutError } =
+      await import("./proxyTranscoder.js");
+    const projectDir = tmpProject();
+    const sourcePath = join(projectDir, "video.mov");
+    writeFileSync(sourcePath, "source-bytes");
+    const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+
+    await expect(waitForProxy(resolveProxy(projectDir, sourcePath), 0)).rejects.toBeInstanceOf(
+      ProxyWaitTimeoutError,
+    );
+    await sleep(30);
+    await expect(waitForProxy(resolveProxy(projectDir, sourcePath), 0)).rejects.toThrow(
+      "ffmpeg binary not found",
+    );
+
+    ffmpegPath = FFMPEG_PATH;
+    now.mockReturnValue(1_000 + 10_001);
+    const retry = resolveProxy(projectDir, sourcePath);
+    await sleep(30);
+    expect(calls).toHaveLength(1);
+    succeed(calls[0]!);
+    await expect(retry).resolves.toBeTruthy();
+    now.mockRestore();
+  });
+
   it("rejects sources outside the project before probing or spawning", async () => {
     const { spawn, calls } = createSpawnSpy();
     const { resolveProxy, ProxySourceOutsideProjectError } = await loadModule(spawn, FFMPEG_PATH);

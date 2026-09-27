@@ -52,6 +52,11 @@ const MAX_QUEUED_TRANSCODES = boundedEnvInteger("HYPERFRAMES_PROXY_MAX_QUEUE", 8
 const STDERR_TAIL_MAX_CHARS = 4000;
 export const TRANSCODE_TIMEOUT_MS = 15 * 60 * 1000;
 const FAILURE_CACHE_TTL_MS = 60 * 1000;
+/** What a route tells a client to wait before asking again for a copy still being made. */
+export const PROXY_PENDING_RETRY_AFTER_SECONDS = 2;
+// Outlives a few pending retries, so an ask that got "still being made" hears the failure,
+// yet installing ffmpeg or its filters recovers within seconds.
+const ENVIRONMENT_FAILURE_TTL_MS = 5 * PROXY_PENDING_RETRY_AFTER_SECONDS * 1000;
 const MAX_FAILURE_CACHE_ENTRIES = 128;
 export const DEFAULT_PROXY_WAIT_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -68,7 +73,7 @@ export class ProxyTranscodeError extends Error {
 }
 
 /** "ffmpeg isn't installed" — an environment condition, not a per-source
- * failure, so it is deliberately NOT remembered by the negative cache below
+ * failure, so the negative cache below keeps it only briefly
  * (installing ffmpeg mid-session must recover without a server restart). */
 class FfmpegUnavailableError extends ProxyTranscodeError {
   constructor() {
@@ -276,7 +281,7 @@ function markCacheEntryUsed(cachePath: string): void {
 // requests for a broken asset rethrow instantly instead of respawning ffmpeg
 // on every retry the browser makes.
 interface RememberedFailure {
-  error: ProxyTranscodeError;
+  error: unknown;
   expiresAt: number;
 }
 
@@ -308,9 +313,15 @@ function ensureHdrFilters(ffmpegPath: string): Promise<void> {
   return promise;
 }
 
-function rememberFailure(cachePath: string, error: ProxyTranscodeError): void {
+function rememberFailure(cachePath: string, error: unknown): void {
+  const ttlMs =
+    error instanceof FfmpegUnavailableError ||
+    error instanceof FfmpegMissingFilterError ||
+    error instanceof ProxySourceOutsideProjectError
+      ? ENVIRONMENT_FAILURE_TTL_MS
+      : FAILURE_CACHE_TTL_MS;
   failedTranscodes.delete(cachePath);
-  failedTranscodes.set(cachePath, { error, expiresAt: Date.now() + FAILURE_CACHE_TTL_MS });
+  failedTranscodes.set(cachePath, { error, expiresAt: Date.now() + ttlMs });
   while (failedTranscodes.size > MAX_FAILURE_CACHE_ENTRIES) {
     const oldest = failedTranscodes.keys().next().value;
     if (oldest === undefined) break;
@@ -499,15 +510,9 @@ export async function resolveProxy(
 
   const promise = transcodeToCache(source.sourcePath, cachePath, variant)
     .catch((err: unknown) => {
-      if (
-        err instanceof ProxyTranscodeError &&
-        !(err instanceof FfmpegUnavailableError) &&
-        !(err instanceof FfmpegMissingFilterError) &&
-        !(err instanceof ProxyCapacityError) &&
-        !(err instanceof ProxySourceOutsideProjectError)
-      ) {
-        rememberFailure(cachePath, err);
-      }
+      // Every failure but a full queue is remembered: a caller that stopped waiting
+      // (a 202) hears it on its next ask instead of starting the same failure again.
+      if (!(err instanceof ProxyCapacityError)) rememberFailure(cachePath, err);
       throw err;
     })
     .finally(() => {

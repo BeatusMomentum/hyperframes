@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeVideoThumbnail, videoThumbnailTimestamps } from "./thumbnailVideoDecoder";
 
 const dispose = vi.fn();
@@ -52,6 +52,11 @@ beforeEach(() => {
     getDisplayHeight: vi.fn(async () => 1920),
     getDurationFromMetadata: vi.fn(async () => 10),
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("videoThumbnailTimestamps", () => {
@@ -111,8 +116,6 @@ describe("decodeVideoThumbnail", () => {
 
     expect(route).toHaveBeenCalledTimes(3);
     expect(decoded).toEqual([[5]]);
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
   it("gives up on a proxied clip whose copy failed, without decoding the failure", async () => {
@@ -127,7 +130,6 @@ describe("decodeVideoThumbnail", () => {
       ),
     ).rejects.toThrow("Video proxy is unavailable");
     expect(input.getPrimaryVideoTrack).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 
   it("decodes each strip frame at its keyframe unless that keyframe is before the clip's range", async () => {
