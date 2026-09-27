@@ -1447,6 +1447,45 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
     60_000,
   );
 
+  it("extracts jpg frames of a BT.709 source as the BT.601 full range JPEG readers assume", async () => {
+    const fixture = join(FIXTURE_DIR, "bt709-patch.mp4");
+    const synth = await runFfmpeg([
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=0xC83C28:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=1:r=1,format=rgb24`,
+      "-vf",
+      "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-crf",
+      "0",
+      fixture,
+    ]);
+    if (!synth.success) throw new Error(`fixture synthesis failed: ${synth.stderr.slice(-400)}`);
+    const outputDir = join(FIXTURE_DIR, "out-jpg-matrix");
+    mkdirSync(outputDir, { recursive: true });
+
+    const result = await extractAllVideoFrames(
+      [{ ...fixtureVideo(), id: "bt709-jpg", src: fixture }],
+      FIXTURE_DIR,
+      { fps: 1, outputDir, format: "jpg" },
+    );
+
+    expect(result.errors).toEqual([]);
+    const frame = result.extracted[0]!.framePaths.get(0)!;
+    const source = readFirstFramePixel(fixture, 10, 10);
+    const shown = readFirstFramePixel(frame, 10, 10);
+    const worst = Math.max(...shown.map((v, i) => Math.abs(v - source[i]!)));
+    expect(worst, `source ${source} jpg ${shown}`).toBeLessThanOrEqual(3);
+  }, 60_000);
+
   it("keeps jpg and png extraction caches separate", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "hf-extract-format-cache-"));
     try {
