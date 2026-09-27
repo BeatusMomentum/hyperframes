@@ -8,11 +8,13 @@ import { SHERPA_ERROR_PREFIX, SHERPA_RESULT_PREFIX } from "./parakeet.js";
 
 const WORKER = fileURLToPath(new URL("./sherpaWorker.ts", import.meta.url));
 
-// A stand-in sherpa-onnx-node: 3 s of steady sound. Unpadded, the recognizer "drops" the first
-// 2 s the way the real model did on a 61.91 s window; with leading silence it hears everything.
+// A stand-in sherpa-onnx-node: 3 s of steady sound. The whole window drops the first 2 s, as the real
+// model did on a 61.91 s window; a padded window, or the gap alone for speech.wav, hears it all.
 const FAKE_SHERPA = `
+let path;
 module.exports = {
-  readWave(path) {
+  readWave(p) {
+    path = p;
     if (path.endsWith("broken.wav")) throw new Error("Failed to read " + path);
     return { sampleRate: 100, samples: new Float32Array(300).fill(0.5) };
   },
@@ -20,10 +22,14 @@ module.exports = {
     createStream() { return { acceptWaveform(w) { this.w = w; } }; }
     decode() {}
     getResult(stream) {
-      const padded = stream.w.samples[0] === 0;
-      return padded
-        ? { tokens: [" ask", " not"], timestamps: [0.75, 1.5], durations: [0.4, 0.4] }
-        : { tokens: [" not"], timestamps: [2.08], durations: [0.4] };
+      const samples = stream.w.samples;
+      if (samples[0] === 0) {
+        return { tokens: [" ask", " not"], timestamps: [0.75, 1.5], durations: [0.4, 0.4] };
+      }
+      if (samples.length === 300) return { tokens: [" not"], timestamps: [2.08], durations: [0.4] };
+      return path.endsWith("speech.wav")
+        ? { tokens: [" ask", " not"], timestamps: [0.5, 2.08], durations: [0.4, 0.4] }
+        : { tokens: [], timestamps: [], durations: [] };
     }
   },
 };
@@ -54,11 +60,23 @@ describe("sherpaWorker", () => {
     return root;
   }
 
-  it("re-decodes a window that skipped loud audio, with leading silence", async () => {
+  function windowsOf(stdout: string) {
+    const line = stdout.split("\n").find((l) => l.startsWith(SHERPA_RESULT_PREFIX))!;
+    return JSON.parse(line.slice(SHERPA_RESULT_PREFIX.length));
+  }
+
+  it("decodes a gap that skipped loud audio on its own and splices in its new tokens", async () => {
     const { code, stdout } = await runWorker(fakeRuntime(), "speech.wav");
     expect(code).toBe(0);
-    const line = stdout.split("\n").find((l) => l.startsWith(SHERPA_RESULT_PREFIX))!;
-    expect(JSON.parse(line.slice(SHERPA_RESULT_PREFIX.length))).toEqual([
+    expect(windowsOf(stdout)).toEqual([
+      { offset: 0, tokens: [" ask", " not"], timestamps: [0.5, 2.08], durations: [0.4, 0.4] },
+    ]);
+  });
+
+  it("re-decodes the window with leading silence when the gap alone gives nothing", async () => {
+    const { code, stdout } = await runWorker(fakeRuntime(), "hum.wav");
+    expect(code).toBe(0);
+    expect(windowsOf(stdout)).toEqual([
       { offset: 0, tokens: [" ask", " not"], timestamps: [0.25, 1], durations: [0.4, 0.4] },
     ]);
   });

@@ -137,23 +137,68 @@ function meanEnergy(samples: Float32Array, from: number, to: number): number {
 }
 
 /**
- * True when a stretch of at least 1 s without tokens is about as loud as the window: the model
+ * Stretches (s) of at least 1 s without tokens that are about as loud as the window: the model
  * skipped speech there. Measured: a 61.91 s window lost its first 9 words this way (ratio 0.94).
+ * A window with no tokens at all is music or noise, not a skip.
  */
-export function hasDroppedSpeech(
+export function droppedSpeechGaps(
   samples: Float32Array,
   sampleRate: number,
   decoded: Omit<SherpaWindow, "offset">,
-): boolean {
+): [number, number][] {
+  if (decoded.tokens.length === 0) return [];
   const loud = 0.3 * meanEnergy(samples, 0, samples.length);
   const { timestamps, durations } = decoded;
   const gapStarts = [0, ...timestamps.map((t, i) => t + (durations?.[i] ?? 0))];
   const gapEnds = [...timestamps, samples.length / sampleRate];
-  return gapStarts.some((from, i) => {
-    const to = gapEnds[i]!;
-    const at = (seconds: number) => Math.round(seconds * sampleRate);
-    return to - from >= 1 && meanEnergy(samples, at(from), at(to)) > loud;
+  const at = (seconds: number) => Math.round(seconds * sampleRate);
+  return gapStarts
+    .map((from, i): [number, number] => [from, gapEnds[i]!])
+    .filter(([from, to]) => to - from >= 1 && meanEnergy(samples, at(from), at(to)) > loud);
+}
+
+/** Number of trailing `a` entries that equal the leading `b` entries. */
+function overlap(a: string[], b: string[]): number {
+  for (let n = Math.min(a.length, b.length); n > 0; n--) {
+    if (a.slice(-n).every((text, i) => text === b[i])) return n;
+  }
+  return 0;
+}
+
+/**
+ * Adds the `patch` tokens, decoded from `offset` s into the window, that start inside the gap.
+ * The patch re-hears the gap's neighbours up to 0.3 s off, so those go by letters (not case).
+ */
+export function spliceGap(
+  decoded: Omit<SherpaWindow, "offset">,
+  patch: Omit<SherpaWindow, "offset">,
+  offset: number,
+  [from, to]: [number, number],
+): Omit<SherpaWindow, "offset"> {
+  const token = (w: Omit<SherpaWindow, "offset">, i: number, shift: number) => ({
+    text: w.tokens[i]!,
+    start: shift + w.timestamps[i]!,
+    duration: w.durations?.[i] ?? 0,
   });
+  const kept = decoded.tokens.map((_, i) => token(decoded, i, 0));
+  const texts = (tokens: typeof kept) => tokens.map((t) => t.text);
+  const letters = (tokens: typeof kept) =>
+    tokens.map((t) => t.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ""));
+  const added = patch.tokens
+    .map((_, i) => token(patch, i, offset))
+    .filter(({ start }) => start >= from && start < to);
+  const before = letters(kept.filter((t) => t.start < from));
+  const after = letters(kept.filter((t) => t.start >= to));
+  const fresh = added.slice(
+    overlap(before, letters(added)),
+    added.length - overlap(letters(added), after),
+  );
+  const merged = [...kept, ...fresh].sort((a, b) => a.start - b.start);
+  return {
+    tokens: texts(merged),
+    timestamps: merged.map((t) => t.start),
+    durations: merged.map((t) => t.duration),
+  };
 }
 
 function quietestBlockCenter(samples: Float32Array, lo: number, hi: number, block: number): number {

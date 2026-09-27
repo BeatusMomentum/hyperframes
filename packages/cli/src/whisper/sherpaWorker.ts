@@ -1,7 +1,8 @@
 import { loadInstalled } from "../utils/optionalPackages.js";
 import {
-  hasDroppedSpeech,
+  droppedSpeechGaps,
   silenceCuts,
+  spliceGap,
   SHERPA_ERROR_PREFIX,
   SHERPA_RESULT_PREFIX,
   type SherpaWindow,
@@ -25,6 +26,8 @@ const { wavPath, runtimeDir, config } = JSON.parse(process.env.HYPERFRAMES_PARAK
 
 /** Leading silence moves the frame grid; 0.5 s recovered the dropped clause at every length tried. */
 const RETRY_PAD_SECONDS = 0.5;
+/** Audio kept on each side of a skipped gap when it is decoded on its own. */
+const GAP_MARGIN_SECONDS = 0.5;
 
 function decodeWindow(
   recognizer: InstanceType<SherpaOnnx["OfflineRecognizer"]>,
@@ -54,7 +57,17 @@ try {
       samples: wave.samples.subarray(cuts[k], cuts[k + 1]),
     };
     let decoded = decodeWindow(recognizer, slice);
-    if (hasDroppedSpeech(slice.samples, slice.sampleRate, decoded)) {
+    const gaps = droppedSpeechGaps(slice.samples, slice.sampleRate, decoded);
+    let spliced = decoded;
+    for (const [from, to] of gaps) {
+      const lo = Math.max(0, from - GAP_MARGIN_SECONDS);
+      const at = (seconds: number) => Math.round(seconds * slice.sampleRate);
+      const samples = slice.samples.subarray(at(lo), at(to + GAP_MARGIN_SECONDS));
+      const patch = decodeWindow(recognizer, { sampleRate: slice.sampleRate, samples });
+      spliced = spliceGap(spliced, patch, lo, [from, to]);
+    }
+    if (spliced.tokens.length > decoded.tokens.length) decoded = spliced;
+    else if (gaps.length > 0) {
       const retry = decodeWindow(recognizer, slice, RETRY_PAD_SECONDS);
       if (retry.tokens.length > decoded.tokens.length) decoded = retry;
     }

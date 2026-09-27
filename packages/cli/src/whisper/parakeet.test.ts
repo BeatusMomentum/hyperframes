@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  hasDroppedSpeech,
+  droppedSpeechGaps,
   mergeTokensToWords,
   mergeWindowsToWords,
   silenceCuts,
+  spliceGap,
 } from "./parakeet.js";
 
 describe("mergeTokensToWords", () => {
@@ -75,7 +76,7 @@ describe("silenceCuts", () => {
   });
 });
 
-describe("hasDroppedSpeech", () => {
+describe("droppedSpeechGaps", () => {
   const rate = 100;
   const tokens = (timestamps: number[]) => ({
     tokens: timestamps.map(() => " w"),
@@ -83,20 +84,46 @@ describe("hasDroppedSpeech", () => {
     durations: timestamps.map(() => 0.2),
   });
 
-  it("flags a second of loud audio before the first token", () => {
+  it("finds a second of loud audio before the first token and between tokens", () => {
     const speech = new Float32Array(6 * rate).fill(0.5);
-    expect(hasDroppedSpeech(speech, rate, tokens([2.08, 2.5, 3, 3.5, 4, 4.5, 5, 5.5]))).toBe(true);
+    expect(droppedSpeechGaps(speech, rate, tokens([2.08, 2.5, 3, 3.5, 4, 4.5, 5, 5.5]))).toEqual([
+      [0, 2.08],
+    ]);
+    expect(droppedSpeechGaps(speech, rate, tokens([0, 0.5, 1, 3.5, 4, 4.5, 5, 5.5]))).toEqual([
+      [1.2, 3.5],
+    ]);
     expect(
-      hasDroppedSpeech(speech, rate, tokens([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5])),
-    ).toBe(false);
+      droppedSpeechGaps(speech, rate, tokens([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5])),
+    ).toEqual([]);
   });
 
-  it("ignores a quiet pause and silence with no tokens", () => {
+  it("ignores a quiet pause, silence, and a loud window with no tokens at all", () => {
     const pause = new Float32Array(6 * rate).fill(0.5);
     pause.fill(0, 2 * rate, 4 * rate);
-    expect(hasDroppedSpeech(pause, rate, tokens([0.1, 0.6, 1.1, 1.6, 4.1, 4.6, 5.1, 5.6]))).toBe(
-      false,
-    );
-    expect(hasDroppedSpeech(new Float32Array(3 * rate), rate, tokens([]))).toBe(false);
+    expect(
+      droppedSpeechGaps(pause, rate, tokens([0.1, 0.6, 1.1, 1.6, 4.1, 4.6, 5.1, 5.6])),
+    ).toEqual([]);
+    expect(droppedSpeechGaps(new Float32Array(3 * rate), rate, tokens([]))).toEqual([]);
+    expect(droppedSpeechGaps(new Float32Array(3 * rate).fill(0.5), rate, tokens([]))).toEqual([]);
+  });
+});
+
+describe("spliceGap", () => {
+  it("adds, in order, the re-decoded tokens inside the gap, minus its re-heard neighbours", () => {
+    const decoded = {
+      tokens: [" so", " A", "sk"],
+      timestamps: [9.5, 13, 13.25],
+      durations: [0.25, 0.25, 0.25],
+    };
+    const patch = {
+      tokens: [" so", " ask", " not", ",", " a", "sk"],
+      timestamps: [0.5, 0.75, 2.75, 3.25, 3.5, 3.75],
+      durations: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
+    };
+    expect(spliceGap(decoded, patch, 9.25, [9.75, 13])).toEqual({
+      tokens: [" so", " ask", " not", ",", " A", "sk"],
+      timestamps: [9.5, 10, 12, 12.5, 13, 13.25],
+      durations: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
+    });
   });
 });
