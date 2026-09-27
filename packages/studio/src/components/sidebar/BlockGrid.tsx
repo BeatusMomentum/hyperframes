@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useState, type ReactNode, type RefObject } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import type { useBlockCatalog } from "../../hooks/useBlockCatalog";
 
@@ -16,10 +16,16 @@ export function gridColumns(width: number): { columns: number; cardWidth: number
   return { columns, cardWidth: (width - (columns - 1) * CARD_GAP) / columns };
 }
 
-/** The rows to mount, plus the row holding keyboard focus, or scrolling it away would drop focus to <body>. */
+/**
+ * The rows to mount, plus the focused row and its neighbours: scrolling focus away must not drop it to <body>,
+ * and Tab or Shift+Tab must find the next card already mounted, however fast it is pressed.
+ */
 export function withFocusedRow(rows: number[], focusedRow: number | null, count: number): number[] {
-  if (focusedRow === null || rows.includes(focusedRow) || focusedRow >= count) return rows;
-  return [...rows, focusedRow].sort((a, b) => a - b);
+  if (focusedRow === null || focusedRow >= count) return rows;
+  const pinned = [focusedRow - 1, focusedRow, focusedRow + 1].filter(
+    (row) => row >= 0 && row < count,
+  );
+  return [...new Set([...rows, ...pinned])].sort((a, b) => a - b);
 }
 
 /** Row heights are cached by key, so a new column count or card width must not reuse the old ones. */
@@ -101,22 +107,52 @@ export function BlockGrid({
           }}
         >
           {gridWidth > 0 &&
-            virtualizer.getVirtualItems().map((row) => (
-              <div
-                key={row.key}
-                data-index={row.index}
-                ref={virtualizer.measureElement}
-                className="absolute inset-x-0 top-0 grid gap-1.5 pb-1.5"
-                style={{
-                  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                  transform: `translateY(${row.start - gridTop}px)`,
-                }}
-              >
-                {blocks.slice(row.index * columns, (row.index + 1) * columns).map(renderCard)}
-              </div>
-            ))}
+            virtualizer
+              .getVirtualItems()
+              .map((row) => (
+                <GridRow
+                  key={row.key}
+                  index={row.index}
+                  top={row.start - gridTop}
+                  columns={columns}
+                  blocks={blocks}
+                  renderCard={renderCard}
+                  measureElement={virtualizer.measureElement}
+                />
+              ))}
         </div>
       )}
     </div>
   );
 }
+
+/** Memoised, so a scroll re-renders only the rows entering or leaving, not every visible card. */
+const GridRow = memo(function GridRow({
+  index,
+  top,
+  columns,
+  blocks,
+  renderCard,
+  measureElement,
+}: {
+  index: number;
+  top: number;
+  columns: number;
+  blocks: CatalogBlock[];
+  renderCard: (block: CatalogBlock) => ReactNode;
+  measureElement: (node: Element | null) => void;
+}) {
+  return (
+    <div
+      data-index={index}
+      ref={measureElement}
+      className="absolute inset-x-0 top-0 grid gap-1.5 pb-1.5"
+      style={{
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        transform: `translateY(${top}px)`,
+      }}
+    >
+      {blocks.slice(index * columns, (index + 1) * columns).map(renderCard)}
+    </div>
+  );
+});

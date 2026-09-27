@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
-import { act, createRef } from "react";
+import { act, createRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BlockGrid, gridColumns, gridRowKey, withFocusedRow } from "./BlockGrid";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,9 +16,10 @@ describe("gridColumns", () => {
 });
 
 describe("withFocusedRow", () => {
-  it("keeps the focused row mounted when it scrolls out of range", () => {
-    expect(withFocusedRow([5, 6, 7], 1, 100)).toEqual([1, 5, 6, 7]);
-    expect(withFocusedRow([5, 6, 7], 6, 100)).toEqual([5, 6, 7]);
+  it("keeps the focused row and its neighbours mounted, in range or not", () => {
+    expect(withFocusedRow([5, 6, 7], 1, 100)).toEqual([0, 1, 2, 5, 6, 7]);
+    expect(withFocusedRow([5, 6, 7], 7, 100)).toEqual([5, 6, 7, 8]);
+    expect(withFocusedRow([0, 1], 0, 2)).toEqual([0, 1]);
     expect(withFocusedRow([5, 6, 7], null, 100)).toEqual([5, 6, 7]);
     expect(withFocusedRow([0, 1], 9, 4)).toEqual([0, 1]);
   });
@@ -69,9 +70,14 @@ describe("BlockGrid layout", () => {
     }
   });
 
-  const blocks = Array.from({ length: 12 }, (_, i) => ({ name: `b${i}`, title: `B${i}` }));
+  const blocks = Array.from({ length: 80 }, (_, i) => ({ name: `b${i}`, title: `B${i}` }));
+  const cardButton = (block: { name: string }) => (
+    <button key={block.name} type="button" data-card={block.name} />
+  );
 
-  function renderGrid(): HTMLElement {
+  function renderGrid(
+    renderCard: (block: { name: string }) => ReactNode = cardButton,
+  ): HTMLElement {
     const host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -81,7 +87,7 @@ describe("BlockGrid layout", () => {
           scrollRef={createRef<HTMLDivElement>()}
           blocks={blocks as never}
           notice={<p>notice</p>}
-          renderCard={(block) => <div key={block.name} data-card={block.name} />}
+          renderCard={renderCard as never}
         />,
       ),
     );
@@ -111,5 +117,29 @@ describe("BlockGrid layout", () => {
     resize(host, 360, 40);
     resize(host, 0, 0);
     expect(firstRow(host)?.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+  });
+
+  it("has the next card mounted for every Tab, past the first mounted window", () => {
+    const host = renderGrid();
+    resize(host, 360, 0);
+    let current = host.querySelector<HTMLButtonElement>("[data-card='b0']");
+    act(() => current?.focus());
+    for (let step = 0; step < 40; step += 1) {
+      const cards = [...host.querySelectorAll<HTMLButtonElement>("[data-card]")];
+      const next = cards[cards.indexOf(current as HTMLButtonElement) + 1];
+      if (!next) break;
+      act(() => next.focus());
+      current = next;
+    }
+    expect(current?.dataset.card).toBe("b40");
+  });
+
+  it("re-renders no mounted card when only the grid's own state changes", () => {
+    const renderCard = vi.fn(cardButton);
+    const host = renderGrid(renderCard);
+    resize(host, 360, 0);
+    const calls = renderCard.mock.calls.length;
+    act(() => host.querySelector<HTMLButtonElement>("[data-card='b0']")?.focus());
+    expect(renderCard.mock.calls.length).toBe(calls);
   });
 });
