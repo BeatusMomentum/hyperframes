@@ -10,5 +10,13 @@
     "raised": {
       "total.requests.thumbnail": "#4401 shows a cached frame-0 poster while the preview boots: a cache-only ask that misses on a fresh open, then a render of that poster for the next open (+2 requests)"
     }
+  },
+  "studio-playback": {
+    "browser": "154",
+    "counts": {
+      "playing.catalogElements": 6878,
+      "playing.compositedLayers": 172,
+      "playing.maxSeeksPerFrame": 1
+    }
   }
 }

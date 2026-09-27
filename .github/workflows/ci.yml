@@ -144,6 +144,7 @@ jobs:
               - "packages/studio/**"
               - "packages/core/**"
               - "packages/studio-server/**"
+              - "packages/player/**"
               - "bun.lock"
               - ".github/workflows/ci.yml"
             gcp_beginframe:
@@ -763,7 +764,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.studio == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -786,6 +787,8 @@ jobs:
             packages/studio/data/projects/timeline-virtualization
           cp -R packages/studio/tests/e2e/fixtures/studio-open \
             packages/studio/data/projects/studio-open
+          cp -R packages/studio/tests/e2e/fixtures/studio-playback \
+            packages/studio/data/projects/studio-playback
       - name: Read the base branch's work-count ceilings
         # A ceiling may not disappear, or rise without a new reason, against the branch this PR merges into.
         if: github.event_name == 'pull_request'
@@ -797,6 +800,21 @@ jobs:
             rm -f /tmp/base-perf-ceilings.json
             echo "The base branch has no perf-ceilings.json yet"
           fi
+      - name: Build the base branch's Studio for the playback timing
+        # The playback gate times this Studio against its base on the same runner, in
+        # alternating runs, so the runner's speed cancels out of the ratio.
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/hf-base FETCH_HEAD
+          cd /tmp/hf-base
+          bash scripts/ci/install-workspace-dependencies.sh
+          bun run --filter '@hyperframes/{parsers,lint,studio-server}' build
+          bun run --cwd packages/core build
+          bun run --cwd packages/core build:hyperframes-runtime
+          mkdir -p packages/studio/data/projects
+          cp -R "$GITHUB_WORKSPACE/packages/studio/tests/e2e/fixtures/studio-playback" \
+            packages/studio/data/projects/studio-playback
       - name: Run both arms of the timeline viewport gate
         run: |
           set -euo pipefail
@@ -893,6 +911,48 @@ jobs:
           node packages/studio/tests/e2e/perf-ratchet.mjs check \
             packages/studio/tests/e2e/perf-ceilings.json studio-open /tmp/studio-open-counts.json \
             /tmp/base-perf-ceilings.json
+      - name: Count and time playback with the Catalog open
+        # Counts go through perf-ceilings.json like studio-open. Time is only ever a ratio
+        # against the base branch's Studio on this runner, so a slow runner cannot fail it.
+        # Both servers stay up; they sit idle while the other one is measured.
+        if: success() || failure()
+        run: |
+          set -uo pipefail
+          PIDS=()
+          trap 'kill "${PIDS[@]}" 2>/dev/null || true' EXIT
+          NODE_ENV=production bun run --cwd packages/studio dev -- --port 5316 --strictPort &
+          PIDS+=($!)
+          PORTS=(5316)
+          BASE_URL=""
+          if [[ -d /tmp/hf-base ]]; then
+            (cd /tmp/hf-base && NODE_ENV=production bun run --cwd packages/studio dev -- --port 5317 --strictPort) &
+            PIDS+=($!)
+            PORTS+=(5317)
+            BASE_URL="http://localhost:5317/#project/studio-playback"
+          fi
+          for port in "${PORTS[@]}"; do
+            for i in $(seq 1 60); do
+              if curl -sf "http://localhost:${port}/" >/dev/null 2>&1; then break; fi
+              sleep 1
+            done
+            if ! curl -sf "http://localhost:${port}/" >/dev/null 2>&1; then
+              echo "FAIL: studio dev server did not start on port ${port}"
+              exit 1
+            fi
+          done
+          STUDIO_URL="http://localhost:5316/#project/studio-playback" \
+            STUDIO_BASE_URL="$BASE_URL" \
+            node packages/studio/tests/e2e/studio-playback.mjs \
+            | tee /tmp/studio-playback.json
+          TIMING_STATUS=$?
+          node packages/studio/tests/e2e/perf-ratchet.mjs check \
+            packages/studio/tests/e2e/perf-ceilings.json studio-playback /tmp/studio-playback.json \
+            /tmp/base-perf-ceilings.json
+          COUNTS_STATUS=$?
+          if (( TIMING_STATUS != 0 || COUNTS_STATUS != 0 )); then
+            echo "FAIL: playback timing=${TIMING_STATUS}, counts=${COUNTS_STATUS}"
+            exit 1
+          fi
       - name: Upload gate evidence
         # The gate's whole output is machine-readable evidence, and a red run is
         # exactly when someone needs to read it. Keep it on failure too.
@@ -903,6 +963,7 @@ jobs:
           path: |
             /tmp/timeline-gate-*.json
             /tmp/studio-open-counts.json
+            /tmp/studio-playback.json
           if-no-files-found: error
 
   smoke-global-install:
