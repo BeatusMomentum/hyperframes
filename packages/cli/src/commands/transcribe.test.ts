@@ -7,10 +7,11 @@ import { CliRuntimeError, consumeCommandResult } from "../utils/commandResult.js
 
 // Make the whisper core report "unavailable" so we exercise the soft-skip path.
 const transcribeMock = vi.fn();
+let audioSeconds = 1;
 vi.mock("../whisper/transcribe.js", () => ({
   transcribe: transcribeMock,
   prepareWav: (input: string) => input,
-  getPreparedWavDurationSeconds: () => 1,
+  getPreparedWavDurationSeconds: () => audioSeconds,
 }));
 
 // Engine selection: which runners look installed, and the sherpa decode child it spawns.
@@ -207,12 +208,12 @@ describe("transcribe command", () => {
     });
 
     it("an explicit --engine parakeet fails with the Parakeet error instead of falling back", async () => {
-      crashChild("SIGABRT", "Protobuf parsing failed\n");
+      crashChild("SIGABRT", "Protobuf parsing failed.\n");
       Object.assign(runners, { sherpa: true, mlx: false });
       const { exitCode, out } = await transcribeFails("parakeet");
       expect(exitCode).toBe(1);
       expect(out.error).toMatch(
-        /^Parakeet failed: .*Protobuf.*hyperframes models install parakeet$/,
+        /^Parakeet failed: .*Protobuf parsing failed\. To repair it, run: hyperframes models install parakeet$/,
       );
       expect(transcribeMock).not.toHaveBeenCalled();
     });
@@ -234,6 +235,21 @@ describe("transcribe command", () => {
       expect(exitCode).toBe(130);
       expect(out).toEqual({ ok: false, error: "Transcription cancelled" });
       expect(transcribeMock).not.toHaveBeenCalled();
+    });
+
+    it("gives the decode at least 30 minutes, and twice the audio length", async () => {
+      Object.assign(runners, { sherpa: true, mlx: false });
+      for (const [seconds, timeout] of [
+        [60, 1_800_000],
+        [3600, 7_200_000],
+      ]) {
+        audioSeconds = seconds!;
+        const { dir, input } = dummyAudio();
+        dirs.push(dir);
+        await transcribeCmd.run!({ args: { input, json: true, engine: "auto" } } as never);
+        expect(execFileMock.mock.calls.at(-1)?.[2]).toMatchObject({ timeout });
+      }
+      audioSeconds = 1;
     });
 
     it("succeeds with 0 words when the audio has no speech", async () => {

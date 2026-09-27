@@ -45,7 +45,9 @@ describe("installSherpaRuntime", () => {
     const run = vi.fn(async (_args: string[]) => {
       throw new Error("stop before touching the cache");
     });
-    await installSherpaRuntime({ run }).catch(() => undefined);
+    const cancel = new AbortController();
+    await installSherpaRuntime({ run, signal: cancel.signal }).catch(() => undefined);
+    expect((run.mock.calls[0] as unknown[] | undefined)?.[1]).toBe(cancel.signal);
     const args = run.mock.calls[0]?.[0] as string[] | undefined;
     expect(args).toContain("sherpa-onnx-node@1.13.8");
     expect(args).toContain(sherpaPlatformPackage());

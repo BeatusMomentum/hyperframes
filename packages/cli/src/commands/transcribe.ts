@@ -341,7 +341,8 @@ async function transcribeAudio(
       result = await run(runner);
     } catch (err) {
       if (runner !== "sherpa" || err instanceof DecodeCancelled) throw err;
-      const parakeetError = `Parakeet failed: ${normalizeErrorMessage(err)}. To repair it, run: hyperframes models install parakeet`;
+      const reason = normalizeErrorMessage(err).replace(/\.+$/, "");
+      const parakeetError = `Parakeet failed: ${reason}. To repair it, run: hyperframes models install parakeet`;
       if (!parakeetFallsBack(engine)) throw new Error(parakeetError);
       runner = pickRunner(engine, () => false);
       spin?.clear();
