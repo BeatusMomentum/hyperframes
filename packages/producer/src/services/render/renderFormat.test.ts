@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   outputNeedsAlpha,
+  outputRequiresPageSideShaderCompositing,
   outputSupportsPageSideShaderCompositing,
   outputUsesH264Pipeline,
 } from "./renderFormat.js";
@@ -36,10 +37,27 @@ describe("outputSupportsPageSideShaderCompositing", () => {
     expect(outputSupportsPageSideShaderCompositing("hls")).toBe(true);
   });
 
-  it("keeps the alpha video and PNG sequence formats on their existing paths", () => {
+  it("supports PNG sequences, which capture RGBA disk frames like GIF", () => {
+    expect(outputSupportsPageSideShaderCompositing("png-sequence")).toBe(true);
+  });
+
+  it("keeps the alpha video formats on the layered path", () => {
     expect(outputSupportsPageSideShaderCompositing("webm")).toBe(false);
     expect(outputSupportsPageSideShaderCompositing("mov")).toBe(false);
-    expect(outputSupportsPageSideShaderCompositing("png-sequence")).toBe(false);
+  });
+});
+
+describe("outputRequiresPageSideShaderCompositing", () => {
+  // The layered compositor excludes both, so turning page-side off would drop their transitions.
+  it("requires the page-side blend for the disk-frame formats", () => {
+    expect(outputRequiresPageSideShaderCompositing("gif")).toBe(true);
+    expect(outputRequiresPageSideShaderCompositing("png-sequence")).toBe(true);
+  });
+
+  it("leaves formats with a layered route to the page-side setting", () => {
+    for (const format of ["mp4", "hls", "webm", "mov"] as const) {
+      expect(outputRequiresPageSideShaderCompositing(format)).toBe(false);
+    }
   });
 });
 

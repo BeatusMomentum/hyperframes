@@ -120,6 +120,7 @@ import {
 import { defaultLogger, type ProducerLogger } from "../logger.js";
 import {
   outputNeedsAlpha,
+  outputRequiresPageSideShaderCompositing,
   outputSupportsPageSideShaderCompositing,
   outputUsesH264Pipeline,
   type RenderOutputFormat,
@@ -4213,12 +4214,12 @@ async function executeRenderPipeline(input: {
     // shader blend inside Chrome via a page-side WebGL canvas, the layered
     // Node-side composite path is unnecessary for SDR shader transitions.
     // MP4's streaming path takes one opaque RGB screenshot per output frame.
-    // GIF takes the same page-side composite through its RGBA PNG disk-frame
-    // path so the palette encoder can preserve transparency. HDR content still
+    // GIF and PNG sequences take the same page-side composite through their RGBA
+    // PNG disk-frame path so transparency survives. HDR content still
     // forces the layered path (HDR layers need per-layer alpha + native HDR raw
     // frame compositing in Node; that's out of scope for this opt-in).
     const usePageSideCompositingForTransitions =
-      (cfg.enablePageSideCompositing || isGif) &&
+      (cfg.enablePageSideCompositing || outputRequiresPageSideShaderCompositing(outputFormat)) &&
       compiled.hasShaderTransitions &&
       !hasHdrContent &&
       outputSupportsPageSideShaderCompositing(outputFormat);

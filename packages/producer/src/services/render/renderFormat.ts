@@ -5,7 +5,12 @@ export function outputNeedsAlpha(format: RenderOutputFormat): boolean {
 }
 
 export function outputSupportsPageSideShaderCompositing(format: RenderOutputFormat): boolean {
-  return format === "mp4" || format === "gif" || format === "hls";
+  return format === "mp4" || format === "gif" || format === "hls" || format === "png-sequence";
+}
+
+/** The layered compositor streams into a video encoder, so disk-frame formats blend page-side. */
+export function outputRequiresPageSideShaderCompositing(format: RenderOutputFormat): boolean {
+  return format === "gif" || format === "png-sequence";
 }
 
 /**
