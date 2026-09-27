@@ -1251,6 +1251,15 @@ const RED_SAMPLE_PIXELS = [
   [178, 92],
 ] as const;
 
+function pngChunkTypes(path: string): string[] {
+  const bytes = readFileSync(path);
+  const types: string[] = [];
+  for (let offset = 8; offset + 8 <= bytes.length; offset += 12 + bytes.readUInt32BE(offset)) {
+    types.push(bytes.toString("latin1", offset + 4, offset + 8));
+  }
+  return types;
+}
+
 function readFirstFramePixel(mediaPath: string, x: number, y: number): Rgb {
   const result = spawnSync(
     "ffmpeg",
@@ -1385,49 +1394,58 @@ describe.skipIf(!HAS_FFMPEG)("video frame extraction format", () => {
   // Chrome runs with --force-color-profile=srgb and colour-manages a frame tagged with the
   // source's BT.709 transfer (BT.1886 -> sRGB); the SDR encoder never converts back, so a
   // rendered BT.709 clip's 0x10 shadows came out as 0x04.
-  it("declares png frames of a BT.709 source as sRGB so Chrome shows their code values", async () => {
-    const bt709Fixture = join(FIXTURE_DIR, "bt709-shadow.mp4");
-    const synth = await runFfmpeg([
-      "-y",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      `color=c=0x101010:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=1:r=1`,
-      "-vf",
-      "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "ultrafast",
-      "-crf",
-      "0",
-      "-pix_fmt",
-      "yuv420p",
-      bt709Fixture,
-    ]);
-    if (!synth.success) {
-      throw new Error(`BT.709 fixture synthesis failed: ${synth.stderr.slice(-400)}`);
-    }
-    expect((await extractVideoMetadata(bt709Fixture)).colorSpace?.colorTransfer).toBe("bt709");
-    const outputDir = join(FIXTURE_DIR, "out-png-transfer");
-    mkdirSync(outputDir, { recursive: true });
+  it.each([
+    ["BT.709", "bt709"],
+    ["BT.601", "smpte170m"],
+  ])(
+    "declares png frames of a %s source as sRGB so Chrome shows their code values",
+    async (name, tag) => {
+      const fixture = join(FIXTURE_DIR, `${tag}-shadow.mp4`);
+      const synth = await runFfmpeg([
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        `color=c=0x101010:s=${UI_FIXTURE_WIDTH}x${UI_FIXTURE_HEIGHT}:d=1:r=1`,
+        "-vf",
+        `setparams=color_primaries=${tag}:color_trc=${tag}:colorspace=${tag}:range=tv`,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        fixture,
+      ]);
+      if (!synth.success) {
+        throw new Error(`${name} fixture synthesis failed: ${synth.stderr.slice(-400)}`);
+      }
+      expect((await extractVideoMetadata(fixture)).colorSpace?.colorTransfer).toBe(tag);
+      const outputDir = join(FIXTURE_DIR, `out-png-transfer-${tag}`);
+      mkdirSync(outputDir, { recursive: true });
 
-    const result = await extractAllVideoFrames(
-      [{ ...fixtureVideo(), id: "bt709", src: bt709Fixture }],
-      FIXTURE_DIR,
-      { fps: 1, outputDir, format: "png" },
-    );
+      const result = await extractAllVideoFrames(
+        [{ ...fixtureVideo(), id: tag, src: fixture }],
+        FIXTURE_DIR,
+        { fps: 1, outputDir, format: "png" },
+      );
 
-    expect(result.errors).toEqual([]);
-    const frame = result.extracted[0]!.framePaths.get(0)!;
-    const frameColor = (await extractVideoMetadata(frame)).colorSpace;
-    expect(frameColor?.colorTransfer).toBe("iec61966-2-1");
-    expect(frameColor?.colorPrimaries).toBe("bt709");
-    expect(readFirstFramePixel(frame, 10, 10)).toEqual(readFirstFramePixel(bt709Fixture, 10, 10));
-  }, 60_000);
+      expect(result.errors).toEqual([]);
+      const frame = result.extracted[0]!.framePaths.get(0)!;
+      // Chrome reads cICP before sRGB, and ffmpeg < 6.1 writes no cICP, so only an sRGB chunk
+      // without cICP means "these are sRGB code values" on every ffmpeg.
+      const chunks = pngChunkTypes(frame);
+      expect(chunks).toContain("sRGB");
+      expect(chunks).not.toContain("cICP");
+      expect(readFirstFramePixel(frame, 10, 10)).toEqual(readFirstFramePixel(fixture, 10, 10));
+    },
+    60_000,
+  );
 
   it("keeps jpg and png extraction caches separate", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "hf-extract-format-cache-"));
