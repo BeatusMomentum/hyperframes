@@ -162,11 +162,7 @@ export function summarizeCatalogUsage(projectDir: string, entryPath: string): Ca
   return { installed, usedBlocks, manifestUnreadable: false };
 }
 
-/**
- * Whether the project's video uses an item. A component is pasted into the
- * user's own markup rather than mounted by file, so its use leaves no trace to
- * check: "pasted-inline" says that instead of guessing.
- */
+/** Whether the video uses an item; a pasted component leaves no trace, so it reads "pasted-inline". */
 export type CatalogItemStatus = "in-use" | "not-used" | "file-missing" | "pasted-inline";
 
 /** One catalog item found in a project. */
@@ -176,11 +172,7 @@ export interface ProjectCatalogItem {
   /** Project-relative file the item installed. */
   file: string;
   status: CatalogItemStatus;
-  /**
-   * "recorded": `hyperframes add` listed it in hyperframes.json. "file": found
-   * only by its install path, as for items added before recording existed or
-   * copied in by hand.
-   */
+  /** "recorded": listed in hyperframes.json by `add`; "file": found only at its install path. */
   foundBy: "recorded" | "file";
 }
 
