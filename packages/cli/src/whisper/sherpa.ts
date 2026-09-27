@@ -157,9 +157,8 @@ interface EnsureModelOptions {
 }
 
 /**
- * Fetches every file that does not verify into a sibling staging dir, checks size and sha256, then
- * renames it into place, so a file under its real name is always complete. The staging dir carries
- * the pid, so a killed install is swept by the next one. False when all already verified.
+ * Fetches each file that does not verify into a pid-named staging dir, checks size and sha256, then
+ * renames it into place. False when all already verified.
  */
 export async function ensureParakeetModel({
   dir = PARAKEET_MODEL_DIR,

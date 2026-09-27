@@ -137,8 +137,7 @@ function meanEnergy(samples: Float32Array, from: number, to: number): number {
 }
 
 /**
- * Stretches (s) of at least 1 s without tokens that are about as loud as the window: the model
- * skipped speech there. Measured: a 61.91 s window lost its first 9 words this way (ratio 0.94).
+ * Stretches (s) of at least 1 s without tokens that are about as loud as the window: skipped speech.
  * A window with no tokens at all is music or noise, not a skip.
  */
 export function droppedSpeechGaps(
@@ -241,8 +240,7 @@ function quietestBlockCenter(samples: Float32Array, lo: number, hi: number, bloc
 
 /**
  * Window boundaries (sample indices, first 0, last samples.length) about every `windowSeconds`,
- * each moved to the quietest 100 ms within ±5 s. The encoder aborts past 400 s, and fixed cuts
- * split words: measured 6.6% WER at fixed 60 s cuts, 1.5% snapped.
+ * each moved to the quietest 100 ms within ±5 s, so no cut lands inside a word.
  */
 export function silenceCuts(
   samples: Float32Array,
