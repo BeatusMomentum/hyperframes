@@ -9,11 +9,13 @@ import {
   type HistoryListItem,
   type HistoryResult,
   type HistoryWho,
+  type UndoMode,
 } from "@hyperframes/studio-server";
+
 import { resolveProject } from "./project.js";
 import { findPreviewServerForProject, studioApiUrl } from "./studioSelectionClient.js";
 
-export type UndoMode = "just-this" | "back-to-before";
+export type { UndoMode };
 
 /** An agent's turn: its writes until `end`, or until the idle limit passes without one, are one entry of its own. */
 export interface Turn {
@@ -208,8 +210,12 @@ export async function withOwner<T>(
   } finally {
     // This open filed the turn so far under its id; the turn goes on under a fresh one, from its last write.
     const direct = owner.via === "direct" && turn;
-    const kept = direct && (await owner.list()).find((entry) => entry.id === turn.id);
-    await owner.close();
+    let kept: HistoryListItem | undefined;
+    try {
+      kept = direct ? (await owner.list()).find((entry) => entry.id === turn.id) : undefined;
+    } finally {
+      await owner.close();
+    }
     if (direct && readTurn(projectDir)?.id === turn.id) {
       const lastWriteAt = kept ? kept.endedAt : turn.lastWriteAt;
       const parts = kept ? [...turn.parts, kept.id] : turn.parts;
