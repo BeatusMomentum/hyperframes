@@ -213,8 +213,10 @@ describe("an edit that cannot be saved, put back exactly", () => {
       id: "dupe",
     });
     const live = iframe.contentDocument?.querySelector("p") as HTMLElement;
+    const shownBefore = picker().pickedElement?.computedStyles;
     act(() => picker().setStyle("color", "red"));
     act(() => picker().setTextContent("flat"));
+    expect(picker().pickedElement?.computedStyles).toEqual(shownBefore);
     expect(live.getAttribute("style")).toBe("color: blue !important");
     expect(live.innerHTML).toBe("<b>bold</b> text");
   });

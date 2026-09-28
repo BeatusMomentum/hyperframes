@@ -725,7 +725,7 @@ describe("values with $ replacement codes", () => {
     );
     expect(patched).toBe('<p data-hf-id="h" alt="R$&amp;D $$ $`">x</p>');
     const labelled = applyPatchByTarget(
-      tagged,
+      '<p data-hf-id="h" data-label="old">x</p>',
       { hfId: "h" },
       {
         type: "attribute",
@@ -733,7 +733,7 @@ describe("values with $ replacement codes", () => {
         value: "a$'b",
       },
     );
-    expect(labelled).toBe(`<p data-hf-id="h" alt="old" data-label="a$'b">x</p>`);
+    expect(labelled).toBe(`<p data-hf-id="h" data-label="a$'b">x</p>`);
     const styled = applyPatchByTarget(
       tagged,
       { hfId: "h" },
