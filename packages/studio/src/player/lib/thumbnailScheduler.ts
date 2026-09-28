@@ -23,7 +23,6 @@ export interface ThumbnailRequest {
   priority: ThumbnailPriority;
   /** Rich work is paused while the timeline is fast-scrolling. */
   rich?: boolean;
-  /** Start the load timeout when the loader calls `loadStarted`, not when the job starts. */
   timeoutFromLoadStart?: boolean;
   load: (signal: AbortSignal, loadStarted: () => void) => Promise<ThumbnailLoadedResult>;
 }
@@ -69,7 +68,6 @@ interface ThumbnailEntry {
   snapshot: ThumbnailSnapshot;
   /** Aborted by the preview-reload hold, to run again once the hold lifts. */
   preempted: boolean;
-  /** A failed load is retried once while the entry stays leased. */
   retried: boolean;
 }
 
@@ -86,6 +84,8 @@ function concurrencyBucket(kind: ThumbnailJobKind): "video" | "composition" | "g
   if (kind === "composition") return "composition";
   return "general";
 }
+
+class ThumbnailTimeoutError extends Error {}
 
 function errorFrom(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(String(reason));
@@ -310,7 +310,11 @@ export class ThumbnailScheduler {
           return;
         }
         if (this.requeuePreempted(entry)) return;
-        if (!entry.retried) {
+        if (
+          !entry.retried &&
+          entry.request.timeoutFromLoadStart &&
+          reason instanceof ThumbnailTimeoutError
+        ) {
           entry.retried = true;
           entry.lastAccess = this.nextSequence++;
           this.requeue(entry);
@@ -457,24 +461,26 @@ export class ThumbnailScheduler {
     return new Promise((resolve, reject) => {
       let settled = false;
       let timeout: ReturnType<typeof setTimeout> | undefined;
-      const startTimeout = () => {
-        if (settled || timeout !== undefined) return;
-        timeout = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          controller.abort();
-          reject(
-            new Error(`Thumbnail load timed out after ${this.budgets.thumbnailLoadTimeoutMs}ms`),
-          );
-        }, this.budgets.thumbnailLoadTimeoutMs);
-      };
-      // A loader still waiting for its first byte may never settle; abort must free the slot anyway.
-      controller.signal.addEventListener("abort", () => {
-        if (settled) return;
+      let cap: ReturnType<typeof setTimeout> | undefined;
+      const settle = () => {
+        if (settled) return false;
         settled = true;
         clearTimeout(timeout);
-        reject(controller.signal.reason);
-      });
+        clearTimeout(cap);
+        return true;
+      };
+      const failAfter = (ms: number) =>
+        setTimeout(() => {
+          if (!settle()) return;
+          controller.abort();
+          reject(new ThumbnailTimeoutError(`Thumbnail load timed out after ${ms}ms`));
+        }, ms);
+      cap = failAfter(this.budgets.thumbnailLoadCapMs);
+      const startTimeout = () => {
+        if (!settled && timeout === undefined) {
+          timeout = failAfter(this.budgets.thumbnailLoadTimeoutMs);
+        }
+      };
 
       let load: Promise<ThumbnailLoadedResult>;
       try {
@@ -486,19 +492,11 @@ export class ThumbnailScheduler {
 
       load.then(
         (result) => {
-          if (settled) {
-            this.safeDispose(result.dispose);
-            return;
-          }
-          settled = true;
-          clearTimeout(timeout);
-          resolve(result);
+          if (settle()) resolve(result);
+          else this.safeDispose(result.dispose);
         },
         (reason: unknown) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          reject(reason);
+          if (settle()) reject(reason);
         },
       );
     });

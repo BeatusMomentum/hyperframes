@@ -121,16 +121,19 @@ export async function decodeVideoThumbnail(
   const mediabunny = await import("mediabunny");
   throwIfAborted(signal);
 
-  // A response means the request left the browser's per-host connection queue.
-  const fetchFn: typeof fetch = (url, init) =>
-    fetch(url, init).then((response) => {
+  const fetchReportingResponse: typeof fetch = (url, init) =>
+    fetch(url, {
+      ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+    }).then((response) => {
       loadStarted();
       return response;
     });
   const input = new mediabunny.Input({
-    source: new mediabunny.UrlSource(request.source, { fetchFn }),
+    source: new mediabunny.UrlSource(request.source, { fetchFn: fetchReportingResponse }),
     formats: mediabunny.ALL_FORMATS,
   });
+  signal.addEventListener("abort", () => input.dispose(), { once: true });
   const resources: DecodedResources = { urls: [], canvases: new Set() };
   try {
     const track = await input.getPrimaryVideoTrack();

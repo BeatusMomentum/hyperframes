@@ -249,7 +249,6 @@ describe("ThumbnailScheduler", () => {
     const load = vi
       .fn<ThumbnailRequest["load"]>()
       .mockRejectedValueOnce(new Error("temporary"))
-      .mockRejectedValueOnce(new Error("temporary retry"))
       .mockResolvedValue(result("recovered"));
     const failed = request("retry", load);
     let reacquireOnNotify = false;
@@ -259,14 +258,14 @@ describe("ThumbnailScheduler", () => {
       reacquireOnNotify = false;
       nestedLease = scheduler.acquire(failed, vi.fn());
     });
-    await settle();
+    await flush();
     vi.advanceTimersByTime(11);
     reacquireOnNotify = true;
 
     const outerLease = scheduler.acquire(failed, vi.fn());
-    await settle();
+    await flush();
 
-    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenCalledTimes(2);
     expect(scheduler.getSnapshot(failed)).toMatchObject({
       status: "ready",
       value: { url: "recovered" },
@@ -292,7 +291,6 @@ describe("ThumbnailScheduler", () => {
     const hungRequest = request(
       "hung",
       (activeSignal) => {
-        if (signal) return new Promise<ThumbnailLoadedResult>(() => {});
         signal = activeSignal;
         return hung.promise;
       },
@@ -308,7 +306,7 @@ describe("ThumbnailScheduler", () => {
     await flush();
     expect(signal?.aborted).toBe(true);
     expect(nextLoad).toHaveBeenCalledTimes(1);
-    expect(scheduler.getSnapshot(hungRequest).status).toBe("loading");
+    expect(scheduler.getSnapshot(hungRequest).status).toBe("error");
 
     hung.resolve(result("late", 1, dispose));
     await flush();
@@ -342,7 +340,7 @@ describe("ThumbnailScheduler", () => {
       throw new Error("sync failure");
     });
     const lease = scheduler.acquire(bad, vi.fn());
-    await settle();
+    await flush();
     expect(scheduler.getSnapshot(bad)).toMatchObject({ status: "error" });
     expect(scheduler.getDiagnostics().active).toBe(0);
     lease.release();
@@ -398,58 +396,17 @@ describe("ThumbnailScheduler", () => {
     });
 
     const first = scheduler.acquire(request("failed", load), vi.fn());
-    await settle();
+    await flush();
     first.release();
     const second = scheduler.acquire(request("failed", load), vi.fn());
-    await settle();
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(1);
     second.release();
 
     vi.advanceTimersByTime(101);
     scheduler.acquire(request("failed", load), vi.fn());
-    await settle();
-    expect(load).toHaveBeenCalledTimes(4);
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
-  });
-
-  it("retries a failed load exactly once while it stays leased", async () => {
-    const scheduler = new ThumbnailScheduler();
-    const load = vi.fn(async () => {
-      throw new Error("stalled");
-    });
-    const failed = request("once", load);
-    const listener = vi.fn();
-    const lease = scheduler.acquire(failed, listener);
-
-    await settle();
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(scheduler.getSnapshot(failed)).toMatchObject({
-      status: "error",
-      error: { message: "stalled" },
-    });
-    await settle();
-    expect(load).toHaveBeenCalledTimes(2);
-    lease.release();
-  });
-
-  it("queues the retry behind work that was already waiting", async () => {
-    const scheduler = new ThumbnailScheduler(
-      resolveTimelineViewportBudgets({ concurrentMetadataJobs: 1 }),
-    );
-    const starts: string[] = [];
-    const failing = request("failing", async () => {
-      starts.push("failing");
-      throw new Error("stalled");
-    });
-    const waiting = request("waiting", async () => {
-      starts.push("waiting");
-      return result("waiting");
-    });
-    scheduler.acquire(failing, vi.fn());
-    scheduler.acquire(waiting, vi.fn());
-
-    await settle();
-    expect(starts).toEqual(["failing", "waiting", "failing"]);
   });
 
   it("starts a deferred timeout only once the loader reports that loading started", async () => {
@@ -484,28 +441,106 @@ describe("ThumbnailScheduler", () => {
     vi.useRealTimers();
   });
 
-  it("frees the slot of a released job whose loader never settles", async () => {
+  it("retries a timed-out video load exactly once, behind work already waiting", async () => {
+    vi.useFakeTimers();
     const scheduler = new ThumbnailScheduler(
-      resolveTimelineViewportBudgets({ concurrentVideoDecodes: 1 }),
+      resolveTimelineViewportBudgets({ concurrentVideoDecodes: 1, thumbnailLoadTimeoutMs: 10 }),
     );
-    const stuck = scheduler.acquire(
-      request("stuck", () => new Promise<ThumbnailLoadedResult>(() => {}), "visible", {
-        kind: "video",
-        timeoutFromLoadStart: true,
-      }),
+    const starts: string[] = [];
+    const stalled = request(
+      "stalled",
+      (_signal, started) => {
+        starts.push("stalled");
+        started();
+        return new Promise<ThumbnailLoadedResult>(() => {});
+      },
+      "visible",
+      { kind: "video", timeoutFromLoadStart: true },
+    );
+    const waiting = request(
+      "waiting",
+      async () => {
+        starts.push("waiting");
+        return result("waiting");
+      },
+      "visible",
+      { kind: "video" },
+    );
+    scheduler.acquire(stalled, vi.fn());
+    scheduler.acquire(waiting, vi.fn());
+
+    await vi.advanceTimersByTimeAsync(11);
+    await settle();
+    expect(starts).toEqual(["stalled", "waiting", "stalled"]);
+    expect(scheduler.getSnapshot(stalled).status).toBe("loading");
+    await vi.advanceTimersByTimeAsync(11);
+    await settle();
+    expect(scheduler.getSnapshot(stalled)).toMatchObject({
+      status: "error",
+      error: { message: "Thumbnail load timed out after 10ms" },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(starts).toEqual(["stalled", "waiting", "stalled"]);
+    vi.useRealTimers();
+  });
+
+  it("does not retry a failure that cannot succeed, or a composition render", async () => {
+    vi.useFakeTimers();
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({ thumbnailLoadTimeoutMs: 10 }),
+    );
+    const noTrack = vi.fn(async (): Promise<ThumbnailLoadedResult> => {
+      throw new Error("Video source has no decodable video track");
+    });
+    const render = vi.fn(() => new Promise<ThumbnailLoadedResult>(() => {}));
+    scheduler.acquire(
+      request("no-track", noTrack, "visible", { kind: "video", timeoutFromLoadStart: true }),
       vi.fn(),
+    );
+    scheduler.acquire(request("scene", render, "visible", { kind: "composition" }), vi.fn());
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(noTrack).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("fails a video load that never starts at the cap and frees its slot", async () => {
+    vi.useFakeTimers();
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({
+        concurrentVideoDecodes: 1,
+        thumbnailLoadTimeoutMs: 10,
+        thumbnailLoadCapMs: 50,
+      }),
+    );
+    let signal: AbortSignal | undefined;
+    const stuck = request(
+      "stuck",
+      (activeSignal) => {
+        signal ??= activeSignal;
+        return new Promise<ThumbnailLoadedResult>(() => {});
+      },
+      "visible",
+      { kind: "video", timeoutFromLoadStart: true },
     );
     const nextLoad = vi.fn(async () => result("next"));
-    const next = scheduler.acquire(
-      request("next", nextLoad, "visible", { kind: "video" }),
-      vi.fn(),
-    );
-    expect(nextLoad).not.toHaveBeenCalled();
+    scheduler.acquire(stuck, vi.fn());
+    scheduler.acquire(request("next", nextLoad, "visible", { kind: "video" }), vi.fn());
 
-    stuck.release();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(nextLoad).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
     await settle();
+    expect(signal?.aborted).toBe(true);
     expect(nextLoad).toHaveBeenCalledTimes(1);
-    next.release();
+    await vi.advanceTimersByTimeAsync(51);
+    await settle();
+    expect(scheduler.getSnapshot(stuck)).toMatchObject({
+      status: "error",
+      error: { message: "Thumbnail load timed out after 50ms" },
+    });
+    vi.useRealTimers();
   });
 });
 

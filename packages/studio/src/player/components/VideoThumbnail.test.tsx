@@ -84,7 +84,7 @@ describe("VideoThumbnail", () => {
     expect(host.querySelectorAll("img").length).toBeGreaterThan(0);
   });
 
-  it("starts each decode's timeout from its first response, not from when it is scheduled", async () => {
+  it("asks the scheduler to time each decode from its first response", async () => {
     vi.mocked(decodeVideoThumbnail).mockResolvedValue({
       value: { kind: "image", url: "blob:poster", aspect: 16 / 9 },
       weight: 128,

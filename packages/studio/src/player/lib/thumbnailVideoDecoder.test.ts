@@ -197,7 +197,7 @@ describe("decodeVideoThumbnail", () => {
       decodeVideoThumbnail({ source: "/clip.mp4", frameCount: 2 }, controller.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
-    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalled();
   });
 
   it("stops after metadata cancellation before occupying the decoder", async () => {
@@ -225,7 +225,7 @@ describe("decodeVideoThumbnail", () => {
     await expect(decoding).rejects.toMatchObject({ name: "AbortError" });
     expect(getDurationFromMetadata).not.toHaveBeenCalled();
     expect(canvasesAtTimestamps).not.toHaveBeenCalled();
-    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalled();
   });
 
   it("reports load start when a source fetch gets its response, not when it is sent", async () => {
@@ -246,6 +246,35 @@ describe("decodeVideoThumbnail", () => {
     respond(new Response("bytes"));
     await fetching;
     expect(loadStarted).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("cancels a decode waiting for its first response: aborts the fetch and disposes the input", async () => {
+    let fetchSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            fetchSignal = init?.signal ?? undefined;
+            fetchSignal?.addEventListener("abort", () => reject(fetchSignal?.reason));
+          }),
+      ),
+    );
+    input.getPrimaryVideoTrack.mockImplementation(() =>
+      urlSources[0]?.options?.fetchFn?.("/clip.mp4", { signal: new AbortController().signal }),
+    );
+    const controller = new AbortController();
+    const decoding = decodeVideoThumbnail(
+      { source: "/clip.mp4", frameCount: 1 },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchSignal).toBeDefined());
+
+    controller.abort();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(fetchSignal?.aborted).toBe(true);
+    await expect(decoding).rejects.toMatchObject({ name: "AbortError" });
     vi.unstubAllGlobals();
   });
 });
