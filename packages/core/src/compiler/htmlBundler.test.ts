@@ -1357,8 +1357,9 @@ describe("bundleToSingleHtml", () => {
   });
 
   describe("head style coalescing", () => {
-    async function bundledHeadStyles(head: string) {
+    async function bundledHeadStyles(head: string, files: Record<string, string> = {}) {
       const dir = makeTempProject({
+        ...files,
         "index.html": `<!doctype html>
 <html><head>${head}</head><body>
   <div data-composition-id="root" data-width="320" data-height="180"></div>
@@ -1408,6 +1409,28 @@ describe("bundleToSingleHtml", () => {
         { media: null, type: null, css: "a{color:red}\n\nb{color:red}\n\ni{color:red}" },
         { media: "print", type: null, css: "a{color:blue}\n\nb{color:blue}" },
       ]);
+    });
+
+    it("inlines each linked sheet at its link's place with the link's media", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><link rel="stylesheet" href="print.css" media="print">` +
+            `<style>p{color:green}</style><link rel="stylesheet" href="late.css">`,
+          { "print.css": "p{color:blue}", "late.css": "p{color:black}" },
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: "print", type: null, css: "p{color:blue}" },
+        { media: null, type: null, css: "p{color:green}\n\np{color:black}" },
+      ]);
+    });
+
+    it("does not inline a linked sheet of a non-CSS type as CSS", async () => {
+      expect(
+        await bundledHeadStyles(`<link rel="stylesheet" type="text/x-scss" href="a.scss">`, {
+          "a.scss": "p{color:blue}",
+        }),
+      ).toEqual([]);
     });
 
     it("keeps rule order across a conditional style", async () => {

@@ -999,36 +999,19 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
     rebaseEntryAuthoredAssetPaths(document, sourceDir, projectDir);
   }
 
-  // Inline local CSS
-  const localCssChunks: string[] = [];
-  let cssAnchorPlaced = false;
+  // Inline local CSS: each sheet takes its <link>'s place and condition, so cascade order holds.
   for (const el of [...document.querySelectorAll('link[rel="stylesheet"]')]) {
     const href = el.getAttribute("href");
-    if (!href || !isRelativeUrl(href)) continue;
+    if (!href || !isRelativeUrl(href) || cssStyleMergeKey(el) === undefined) continue;
     const cssPath = resolveEntryPath(href);
     if (!cssPath) continue;
     const css = safeReadFile(cssPath);
     if (css == null) continue;
-    localCssChunks.push(inlineCssFile(css, dirname(cssPath), projectDir));
-    if (!cssAnchorPlaced) {
-      const anchor = document.createElement("style");
-      anchor.setAttribute("data-hf-bundled-local-css", "1");
-      el.replaceWith(anchor);
-      cssAnchorPlaced = true;
-    } else {
-      el.remove();
-    }
-  }
-  if (localCssChunks.length > 0) {
-    const anchor = document.querySelector('style[data-hf-bundled-local-css="1"]');
-    if (anchor) {
-      anchor.removeAttribute("data-hf-bundled-local-css");
-      anchor.textContent = localCssChunks.join("\n\n");
-    } else {
-      const style = document.createElement("style");
-      style.textContent = localCssChunks.join("\n\n");
-      document.head.appendChild(style);
-    }
+    const style = document.createElement("style");
+    const media = el.getAttribute("media");
+    if (media !== null) style.setAttribute("media", media);
+    style.textContent = inlineCssFile(css, dirname(cssPath), projectDir);
+    el.replaceWith(style);
   }
 
   // Read before sub-compositions add theirs: only the root's own scripts can reach into scenes.
