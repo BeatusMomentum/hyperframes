@@ -46,15 +46,17 @@ export function cssStyleMergeKey(el: Element): string | undefined {
   return JSON.stringify([media === "all" ? "" : media, el.getAttribute("title") ?? ""]);
 }
 
-/** Groups head styles into runs of adjacent styles with one merge key, so merging a run never reorders rules. */
+/** Groups head styles into runs of adjacent same-key styles; a stylesheet link or pinned style ends a run. */
 export function headStyleRuns(
-  styles: readonly Element[],
+  elements: readonly Element[],
   isPinned: (el: Element) => boolean = () => false,
 ): Element[][] {
   const runs: Element[][] = [];
   let previousKey: string | undefined;
-  for (const el of styles) {
-    const key = isPinned(el) ? undefined : cssStyleMergeKey(el);
+  for (const el of elements) {
+    if (el.tagName === "LINK" && !/(^|\s)stylesheet(\s|$)/i.test(el.getAttribute("rel") ?? ""))
+      continue;
+    const key = el.tagName === "STYLE" && !isPinned(el) ? cssStyleMergeKey(el) : undefined;
     if (key !== undefined && key === previousKey) runs.at(-1)!.push(el);
     else if (key !== undefined) runs.push([el]);
     previousKey = key;
