@@ -1356,6 +1356,73 @@ describe("bundleToSingleHtml", () => {
     expect(styleText(bundled)).not.toContain("@import");
   });
 
+  describe("head style coalescing", () => {
+    async function bundledHeadStyles(head: string) {
+      const dir = makeTempProject({
+        "index.html": `<!doctype html>
+<html><head>${head}</head><body>
+  <div data-composition-id="root" data-width="320" data-height="180"></div>
+  <script>window.__timelines = window.__timelines || {}; window.__timelines.root = {}</script>
+</body></html>`,
+      });
+      const { document } = parseHTML(await bundleToSingleHtml(dir));
+      return [
+        ...document.querySelectorAll("head style:not([data-hyperframes-text-rendering])"),
+      ].map((el) => ({
+        media: el.getAttribute("media"),
+        type: el.getAttribute("type"),
+        css: el.textContent,
+      }));
+    }
+
+    it("keeps a print-media style print-only", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><style media="print">p{color:blue}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: "print", type: null, css: "p{color:blue}" },
+      ]);
+    });
+
+    it("does not merge a non-CSS style into CSS", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><style type="text/x-tpl">{{ a }}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: null, type: "text/x-tpl", css: "{{ a }}" },
+      ]);
+    });
+
+    it("still merges styles the browser applies under the same condition", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>a{color:red}</style><style type="text/css">b{color:red}</style>` +
+            `<style media="all">i{color:red}</style>` +
+            `<style media="print">a{color:blue}</style><style media="print">b{color:blue}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "a{color:red}\n\nb{color:red}\n\ni{color:red}" },
+        { media: "print", type: null, css: "a{color:blue}\n\nb{color:blue}" },
+      ]);
+    });
+
+    it("keeps rule order across a conditional style", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><style media="print">p{color:blue}</style><style>p{color:green}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: "print", type: null, css: "p{color:blue}" },
+        { media: null, type: null, css: "p{color:green}" },
+      ]);
+    });
+  });
+
   it("preserves @import for absolute URLs", async () => {
     const dir = makeTempProject({
       "index.html": `<!doctype html>

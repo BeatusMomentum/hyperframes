@@ -710,20 +710,33 @@ function pushRun<T>(runs: PartRun<T>[], scene: string | undefined, chunk: T): vo
   else runs.push({ scene, chunks: [chunk] });
 }
 
+// Styles merge only with neighbours the browser applies under the same condition; undefined = never merge.
+function cssStyleMergeKey(el: Element): string | undefined {
+  const type = el.getAttribute("type") ?? "";
+  if (type !== "" && type.toLowerCase() !== "text/css") return undefined;
+  const media = (el.getAttribute("media") ?? "").trim().toLowerCase();
+  return media === "all" ? "" : media;
+}
+
 function coalesceHeadStylesAndBodyScripts(document: Document): void {
   const allHeadStyles = [...document.querySelectorAll("head style")];
-  const untaggedRuns: Element[][] = [[]];
+  const runs: Element[][] = [];
+  let previousKey: string | undefined;
   for (const el of allHeadStyles) {
-    if (el.hasAttribute(SCENE_PART_ATTR)) untaggedRuns.push([]);
-    else untaggedRuns.at(-1)!.push(el);
+    const key = el.hasAttribute(SCENE_PART_ATTR) ? undefined : cssStyleMergeKey(el);
+    if (key !== undefined && key === previousKey) runs.at(-1)!.push(el);
+    else if (key !== undefined) runs.push([el]);
+    previousKey = key;
   }
-  for (const run of allHeadStyles.length > 1 ? untaggedRuns : []) {
+  for (const run of allHeadStyles.length > 1 ? runs : []) {
     const merged = joinCssHoistingImports(run.map((el) => el.textContent || ""));
     if (!merged) continue;
     run[0]!.textContent = merged;
     for (const el of run.slice(1)) el.remove();
   }
-  if (untaggedRuns.length > 1) placeSceneStylesLikeRender(document);
+  if (allHeadStyles.some((el) => el.hasAttribute(SCENE_PART_ATTR))) {
+    placeSceneStylesLikeRender(document);
+  }
 
   const isPinned = (el: Element) =>
     el.hasAttribute(RUNTIME_BOOTSTRAP_ATTR) || el.hasAttribute(SCENE_PART_ATTR);
