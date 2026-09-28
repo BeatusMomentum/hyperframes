@@ -780,3 +780,46 @@ describe("templating tokens are checked on the raw src, before cleanAssetUrl", (
     expect(c.has("missing_local_asset")).toBe(true);
   });
 });
+
+describe("nested_media_starts_after_host_end", () => {
+  const rootWithHost =
+    `<html><body><div data-composition-id="main" data-start="0" data-duration="6">` +
+    `<div id="scene-pip-host" data-composition-id="pip-scene" data-composition-src="compositions/pip.html" data-start="3" data-duration="3"></div>` +
+    `</div></body></html>`;
+
+  function pipHtml(videoAttrs: string): string {
+    return `<template id="pip-template">
+  <div data-composition-id="pip-scene" data-width="1920" data-height="1080">
+    <video id="pip-video" ${videoAttrs} data-duration="3" src="https://example.com/pip.mp4" muted></video>
+  </div>
+</template>`;
+  }
+
+  async function findingsFor(videoAttrs: string): Promise<HyperframeLintFinding[]> {
+    const project = makeProject(rootWithHost, { "pip.html": pipHtml(videoAttrs) });
+    const { results } = await lintProject(project);
+    return results
+      .flatMap((r) => r.result.findings)
+      .filter((f) => f.code === "nested_media_starts_after_host_end");
+  }
+
+  it("flags a local start that lands on the host's end", async () => {
+    const findings = await findingsFor(`data-start="3"`);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      severity: "warning",
+      elementId: "pip-video",
+      file: "compositions/pip.html",
+    });
+    expect(findings[0]?.message).toContain("starts at 6s");
+    expect(findings[0]?.message).toContain('host "pip-scene" ends at 6s');
+    expect(findings[0]?.fixHint).toContain('data-hf-media-start-basis="global"');
+  });
+
+  it.each([`data-start="0"`, `data-start="3" data-hf-media-start-basis="global"`])(
+    "stays quiet when the clip starts inside the host (%s)",
+    async (attrs) => {
+      expect(await findingsFor(attrs)).toHaveLength(0);
+    },
+  );
+});

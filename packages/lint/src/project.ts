@@ -28,7 +28,7 @@ import type {
   HyperframeLinterOptions,
 } from "./types.js";
 import type { ParsableDocumentLike } from "@hyperframes/parsers/sub-composition-validity";
-import { mediaSrcTagRe } from "./utils";
+import { mediaSrcTagRe, parseHtmlStructure, readAttr } from "./utils";
 
 /** Adapts linkedom's `parseHTML` to the `checkSubCompositionUsability` contract. */
 function parseSubCompHtml(html: string): ParsableDocumentLike {
@@ -251,6 +251,7 @@ export async function lintProject(
     ...(!entryFile ? lintBlankRootWithStandaloneComposition(rootHtml, allHtmlSources) : []),
     ...lintDuplicateAudioTracks(allHtmlSources),
     ...lintMissingOrEmptySubComposition(projectDir, rootHtml),
+    ...lintNestedMediaStartsPastHostEnd(projectDir, rootHtml),
     ...(await lintVideoMediaStartPastEof(projectDir, allHtmlSources)),
     ...(await lintHevcPreviewCodec(collectLocalVideoCandidates(projectDir, allHtmlSources))),
   ];
@@ -596,6 +597,86 @@ function lintDuplicateAudioTracks(htmlSources: HtmlSource[]): HyperframeLintFind
  * never disagree about whether a given file would actually render
  * something.
  */
+function finiteAttr(tagRaw: string, attr: string): number | null {
+  const raw = readAttr(tagRaw, attr);
+  if (raw == null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Mirrors core's resolveAuthoredTimingWindow: a positive duration wins, else an end past the start. */
+function authoredHostEnd(tagRaw: string, start: number): number | null {
+  const duration = finiteAttr(tagRaw, "data-duration");
+  if (duration != null && duration > 0) return start + duration;
+  const end = finiteAttr(tagRaw, "data-end");
+  return end != null && end > start ? end : null;
+}
+
+/**
+ * Nested media whose root-timeline start lands at or after its host's end never plays: the render
+ * drops it. Hosts with an id-ref data-start are skipped; the render log still names those.
+ */
+function lintNestedMediaStartsPastHostEnd(
+  projectDir: string,
+  rootHtml: string,
+): HyperframeLintFinding[] {
+  const findings: HyperframeLintFinding[] = [];
+  const walk = (
+    html: string,
+    offset: number,
+    limit: { end: number; host: string } | null,
+    visiting: Set<string>,
+  ): void => {
+    for (const hostTag of parseHtmlStructure(html).tags) {
+      const srcPath = readAttr(hostTag.raw, "data-composition-src");
+      if (!srcPath) continue;
+      const rawStart = readAttr(hostTag.raw, "data-start");
+      const hostStart = rawStart == null ? 0 : finiteAttr(hostTag.raw, "data-start");
+      if (hostStart == null) continue;
+      const filePath = resolve(projectDir, srcPath);
+      if (visiting.has(filePath) || !existsSync(filePath)) continue;
+
+      const hostEnd = authoredHostEnd(hostTag.raw, Math.max(0, hostStart));
+      const hostName =
+        readAttr(hostTag.raw, "data-composition-id") || readAttr(hostTag.raw, "id") || srcPath;
+      const hostLimit =
+        hostEnd != null && (limit == null || offset + hostEnd < limit.end)
+          ? { end: offset + hostEnd, host: hostName }
+          : limit;
+      const hostOffset = offset + Math.max(0, hostStart);
+      const fileHtml = readFileSync(filePath, "utf-8");
+
+      if (hostLimit) {
+        for (const tag of parseHtmlStructure(fileHtml).tags) {
+          if (tag.name !== "video" && tag.name !== "audio") continue;
+          const authoredStart = finiteAttr(tag.raw, "data-start");
+          if (authoredStart == null) continue;
+          const isGlobal = readAttr(tag.raw, "data-hf-media-start-basis")?.trim() === "global";
+          const start = isGlobal ? authoredStart : hostOffset + authoredStart;
+          if (start < hostLimit.end) continue;
+          const elementId = readAttr(tag.raw, "id") || undefined;
+          findings.push({
+            code: "nested_media_starts_after_host_end",
+            severity: "warning",
+            message: `<${tag.name}${elementId ? ` id="${elementId}"` : ""}> in ${srcPath} starts at ${start}s on the root timeline, at or after its host "${hostLimit.host}" ends at ${hostLimit.end}s, so it never plays and the render drops it.`,
+            file: srcPath,
+            ...(elementId ? { elementId } : {}),
+            fixHint: isGlobal
+              ? `Move data-start below ${hostLimit.end}s, or extend the host's data-duration.`
+              : `Nested data-start is local to its composition (host start ${hostOffset}s + ${authoredStart}s). Use a local start, or add data-hf-media-start-basis="global" if ${authoredStart}s is a root-timeline time.`,
+          });
+        }
+      }
+
+      visiting.add(filePath);
+      walk(fileHtml, hostOffset, hostLimit, visiting);
+      visiting.delete(filePath);
+    }
+  };
+  walk(rootHtml, 0, null, new Set());
+  return findings;
+}
+
 function lintMissingOrEmptySubComposition(
   projectDir: string,
   rootHtml: string,
