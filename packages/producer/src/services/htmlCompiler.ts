@@ -47,6 +47,7 @@ import {
   readDeclaredDefaults,
   parseHostVariableValues,
   inlineScriptRuns,
+  hoistStyleImports,
   insertBeforeCloseTag,
 } from "@hyperframes/core/compiler";
 import {
@@ -871,27 +872,15 @@ function coalesceHeadStylesAndBodyScripts(html: string): string {
 
   const styleEls = Array.from(head.querySelectorAll("style"));
   if (styleEls.length > 1) {
-    const importRe = /@import\s+url\([^)]*\)\s*;|@import\s+["'][^"']+["']\s*;/gi;
-    const imports: string[] = [];
+    hoistStyleImports(styleEls);
     const cssParts: string[] = [];
-    const seenImports = new Set<string>();
 
     for (const el of styleEls) {
-      const raw = (el.textContent || "").trim();
-      if (!raw) continue;
-      const nonImportCss = raw.replace(importRe, (match) => {
-        const cleaned = match.trim();
-        if (!seenImports.has(cleaned)) {
-          seenImports.add(cleaned);
-          imports.push(cleaned);
-        }
-        return "";
-      });
-      const trimmedCss = nonImportCss.trim();
+      const trimmedCss = (el.textContent || "").trim();
       if (trimmedCss) cssParts.push(trimmedCss);
     }
 
-    const mergedCss = [...imports, ...cssParts].join("\n\n").trim();
+    const mergedCss = cssParts.join("\n\n").trim();
     if (mergedCss) {
       const firstStyleEl = styleEls[0];
       if (firstStyleEl) firstStyleEl.textContent = mergedCss;

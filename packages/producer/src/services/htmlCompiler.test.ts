@@ -29,6 +29,7 @@ import {
   resolveCompositionDurations,
 } from "./htmlCompiler.js";
 import { validateNoSystemFonts } from "./render/planValidation.js";
+import { bundleToSingleHtml } from "@hyperframes/core/compiler";
 
 describe("discoverMediaFromBrowser", () => {
   async function discover(
@@ -1543,6 +1544,46 @@ describe("template-wrapped sub-composition media offsets", () => {
 // Forces `text-rendering: geometricPrecision` so chrome-headless-shell
 // (BeginFrame) and full Chrome lay text out identically. See
 // `injectTextRenderingRule` in htmlCompiler.ts for full context.
+
+describe("lifted @import media", () => {
+  it.each([
+    [
+      `<style media="print">@import url("p.css"); .p { color: blue; }</style>`,
+      `@import url("p.css") print;`,
+    ],
+    [
+      `<style media="print">@import url("w.css") (min-width: 600px);</style>`,
+      `@import url("w.css") print and (min-width: 600px);`,
+    ],
+    [`<style type="text/x-template">@import url("t.css");</style>`, ""],
+  ])("places the @imports of %s as the scene-parts bundle does", async (head, lifted) => {
+    const projectDir = mkdtempSync(join(tmpdir(), "hf-lifted-import-"));
+    mkdirSync(join(projectDir, "compositions"));
+    writeFileSync(
+      join(projectDir, "index.html"),
+      `<!doctype html><html><head>${head}</head><body>
+  <div data-composition-id="main" data-width="640" data-height="360" data-duration="1">
+    <div data-composition-id="a" data-composition-src="compositions/a.html" data-start="0" data-duration="1"></div>
+  </div></body></html>`,
+    );
+    writeFileSync(
+      join(projectDir, "compositions/a.html"),
+      `<template id="a-template"><div data-composition-id="a">
+  <style>@import url("scene.css"); .t { color: red; }</style></div></template>`,
+    );
+    const importsByStyle = (html: string) =>
+      [...parseHTML(html).document.querySelectorAll("head style")]
+        .map((el) => [el.getAttribute("media"), el.textContent?.match(/@import[^;]*;/g) ?? []])
+        .filter(([, imports]) => imports!.length > 0);
+
+    const render = await compileForRender(projectDir, join(projectDir, "index.html"), projectDir);
+    const expected = [lifted, `@import url("scene.css");`].filter(Boolean);
+    expect(importsByStyle(render.html)[0]).toEqual([null, expected]);
+    expect(importsByStyle(render.html)).toEqual(
+      importsByStyle(await bundleToSingleHtml(projectDir, { sceneParts: true })),
+    );
+  });
+});
 
 describe("text-rendering rule injection", () => {
   it("injects a single geometricPrecision rule into <head> for a full-document composition", async () => {
