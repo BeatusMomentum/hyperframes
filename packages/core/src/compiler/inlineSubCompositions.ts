@@ -71,7 +71,7 @@ const isGsapBuild = (script: string) =>
 
 /**
  * Marks each scene whose nodes a script outside it names by selector, id or class: a swap would strand it.
- * A scene whose host alone is named is marked as such instead; a swap keeps that host.
+ * A scene whose host alone is named, only as a tween's target, is marked as such instead; a swap keeps that host.
  */
 export function refuseSwapsReachedByRootScripts(document: Document, rootScripts: string[]): void {
   const hosts = [...document.querySelectorAll(`[${SCENE_PART_ATTR}]`)];
@@ -104,16 +104,21 @@ export function refuseSwapsReachedByRootScripts(document: Document, rootScripts:
               document.querySelector(part) !== null,
           ),
       );
-  const literals = new Set(
-    rootScripts
-      .filter((s) => !isGsapBuild(s))
-      .flatMap((s) =>
-        [...s.matchAll(STRING_LITERAL_RE)]
-          .filter((m) => !isNotASelector(s, m.index, m[2] ?? ""))
-          .map((m) => m[2] ?? ""),
-      ),
-  );
-  for (const literal of literals) {
+  // Each literal, and whether every use of it is a tween's target: a swap can keep a host only for those.
+  const literals = new Map<string, boolean>();
+  for (const s of rootScripts.filter((script) => !isGsapBuild(script))) {
+    for (const m of s.matchAll(STRING_LITERAL_RE)) {
+      const literal = m[2] ?? "";
+      if (isNotASelector(s, m.index, literal)) continue;
+      const before = s.slice(Math.max(0, m.index - 20), m.index);
+      // A timeline's tween, which a swap re-renders; gsap.to() and the like finish and leave their timeline.
+      const tweened =
+        /\.\s*(to|from|fromTo|set)\s*\(\s*$/.test(before) &&
+        !/\bgsap\s*\.\s*\w+\s*\(\s*$/.test(before);
+      literals.set(literal, (literals.get(literal) ?? true) && tweened);
+    }
+  }
+  for (const [literal, tweenedOnly] of literals) {
     const open = hosts.filter((host) => !host.hasAttribute(SCENE_NO_SWAP_ATTR));
     if (open.length === 0) return;
     // Tag names match in any case; ids and classes do not.
@@ -135,10 +140,10 @@ export function refuseSwapsReachedByRootScripts(document: Document, rootScripts:
               ]
             : [[], []];
     const why = `a script outside the scene selects ${literal}`;
+    const mark = tweenedOnly ? SCENE_HOST_NAMED_ATTR : SCENE_NO_SWAP_ATTR;
     for (const host of reachedInside)
       if (!host.hasAttribute(SCENE_NO_SWAP_ATTR)) host.setAttribute(SCENE_NO_SWAP_ATTR, why);
-    for (const host of reachedHost)
-      if (!host.hasAttribute(SCENE_HOST_NAMED_ATTR)) host.setAttribute(SCENE_HOST_NAMED_ATTR, why);
+    for (const host of reachedHost) if (!host.hasAttribute(mark)) host.setAttribute(mark, why);
   }
 }
 

@@ -948,32 +948,70 @@ describe("__hfSwapScenes", () => {
     extraAttrs: ' id="sa" data-hf-scene-host-named="a script outside the scene selects #sa"',
   });
 
-  it("keeps a named host the root timeline fades, faded and still bound, and swaps what is inside it", async () => {
-    const exports: { gsap?: RealGsap & { timeline: (vars: object) => Tl } } = {};
+  type TweenTl = Tl & {
+    fromTo: (...args: unknown[]) => TweenTl;
+    to: (...args: unknown[]) => TweenTl;
+  };
+  const realGsap = () => {
+    const exports: { gsap?: RealGsap & { timeline: (vars: object) => TweenTl } } = {};
     const frame = window.requestAnimationFrame;
     window.requestAnimationFrame = () => 0;
     new Function("exports", "module", readFileSync(vendoredGsap(), "utf8"))(exports, { exports });
     window.requestAnimationFrame = frame;
     vi.stubGlobal("gsap", exports.gsap);
+    return exports.gsap!;
+  };
+
+  it("keeps a named host the root timeline fades, faded and still bound, and swaps what is inside it", async () => {
+    const gsap = realGsap();
     boot([namedHost(A1), B], trackingRoot().root);
     await tick();
     const host = sceneHost("a");
-    const fade = exports.gsap!.timeline({ paused: true });
-    (fade as unknown as { fromTo: (...a: unknown[]) => void }).fromTo(
-      "#sa",
-      { opacity: 1 },
-      { opacity: 0, duration: 1, ease: "none" },
-      0,
-    );
+    const fade = gsap.timeline({ paused: true });
+    fade.fromTo("#sa", { opacity: 1 }, { opacity: 0, duration: 1, ease: "none" }, 0);
     fade.totalTime!(0.5);
 
     await window.__hfSwapScenes!(preview([namedHost(A2), B]).html);
 
     expect(sceneHost("a")).toBe(host);
     expect(host.textContent).toBe("A two");
-    expect(exports.gsap!.getProperty(host, "opacity")).toBe(0.5);
+    expect(gsap.getProperty(host, "opacity")).toBe(0.5);
     fade.totalTime!(0.75);
-    expect(exports.gsap!.getProperty(host, "opacity")).toBe(0.25);
+    expect(gsap.getProperty(host, "opacity")).toBe(0.25);
+  });
+
+  it("puts a kept host back to its markup, then to what the root timeline has rendered by now", async () => {
+    const gsap = realGsap();
+    const styled = (s: Scene): Scene => ({
+      ...namedHost(s),
+      extraAttrs: `${namedHost(s).extraAttrs} style="color: blue"`,
+    });
+    boot([styled(A1), B], trackingRoot().root);
+    await tick();
+    const host = sceneHost("a") as HTMLElement;
+    const root = gsap.timeline({ paused: true });
+    root.to("#sa", { x: 40, duration: 0.1 }, 0);
+    root.fromTo("#sa", { opacity: 1 }, { opacity: 0, duration: 1, ease: "none" }, 0);
+    root.fromTo("#sa", { scale: 2 }, { scale: 3, immediateRender: false }, 0.9);
+    root.totalTime!(0.5);
+    // What the old scene's script wrote on its host itself, which its edited script no longer does.
+    host.classList.add("old");
+    host.style.background = "red";
+    host.style.color = "green";
+    host.setAttribute("aria-label", "old");
+
+    await window.__hfSwapScenes!(preview([styled(A2), B]).html);
+
+    expect(sceneHost("a")).toBe(host);
+    expect([host.className, host.style.background, host.getAttribute("aria-label")]).toEqual([
+      "",
+      "",
+      null,
+    ]);
+    expect(host.style.color).toBe("blue");
+    expect(host.style.opacity).toBe("0.5");
+    expect(host.style.transform).toMatch(/^translate\(40px, 0px\)/);
+    expect(host.style.transform).not.toMatch(/scale/);
   });
 
   it("refuses, changing nothing, when the root timeline tweens inside a named host", async () => {

@@ -293,6 +293,8 @@ export type RuntimeTimelineChildLike = {
   data?: unknown;
   parent?: RuntimeTimelineChildLike;
   getChildren?: RuntimeTimelineLike["getChildren"];
+  totalTime?: () => number;
+  render?: (totalTime: number, suppressEvents?: boolean, force?: boolean) => unknown;
 };
 
 /** A timeline or tween a composition script started, as a scene swap stops it. */

@@ -3502,6 +3502,7 @@ export function initSandboxRuntimeModular(): void {
     // Overrides re-dim every word they touch, so only the swapped scenes' captions get them.
     const captionHosts: Element[] = [];
     const swappedHosts: Element[] = [];
+    const keptHosts = new Set<unknown>();
     const oldIds = swaps.flatMap(({ oldHost }) => compositionIdsIn(oldHost));
     const stopped = new Set<unknown>();
     const stopOldAnimations = () => {
@@ -3550,11 +3551,28 @@ export function initSandboxRuntimeModular(): void {
         parts.flatMap((el) => (el.tagName === "SCRIPT" ? el.outerHTML : [])).join("");
       keepUnchangedMedia(oldHost, imported, scripts(oldParts) === scripts(newParts));
       const host = oldHost.hasAttribute(SCENE_HOST_NAMED_ATTR) ? oldHost : imported;
-      if (host === oldHost) oldHost.replaceChildren(...imported.childNodes);
-      else oldHost.replaceWith(imported);
+      if (host === oldHost) {
+        // Back to its markup, as a replaced host is; the runtime's passes below write the rest.
+        for (const { name } of Array.from(oldHost.attributes))
+          if (!imported.hasAttribute(name)) oldHost.removeAttribute(name);
+        for (const { name, value } of Array.from(imported.attributes))
+          oldHost.setAttribute(name, value);
+        oldHost.replaceChildren(...imported.childNodes);
+        keptHosts.add(oldHost);
+      } else oldHost.replaceWith(imported);
       swappedHosts.push(host);
       if (host.querySelector(".caption-group")) captionHosts.push(host);
     }
+    // What outside animations wrote on a kept host, back as a seek renders it: finished tweens too, unstarted ones not.
+    const globalTimeline = window.gsap?.globalTimeline as unknown;
+    const owners = new Set<RuntimeTimelineChildLike>();
+    for (const tween of window.gsap?.globalTimeline?.getChildren?.(true, true, false) ?? []) {
+      if (!tween.targets?.().some((target) => keptHosts.has(target))) continue;
+      let owner = tween;
+      while (owner.parent && owner.parent !== globalTimeline) owner = owner.parent;
+      owners.add(owner);
+    }
+    for (const owner of owners) owner.render?.(owner.totalTime?.() ?? 0, true, true);
     // Run once every host is replaced, so no new script binds to a scene still to be swapped.
     for (const { newParts } of swaps) {
       for (const el of newParts) {
