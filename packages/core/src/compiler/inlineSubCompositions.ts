@@ -1,5 +1,6 @@
 import { readExternalScriptAttributes, type ExternalScriptAttributes } from "./externalScripts";
 import { parseImportMap, type ImportMap } from "./importMaps";
+import { cssKeepingMedia, cssStyleMergeKey } from "./scriptRuns";
 /**
  * Shared sub-composition inlining logic.
  *
@@ -455,7 +456,8 @@ export function inlineSubCompositions(
     // carries its backgrounds, positioning and fonts, and a <head> library tag
     // (GSAP from a CDN) has to run before the content scripts calling into it.
     for (const styleEl of plan.styleSources) {
-      styles.push(scopeSubStyle(styleEl.textContent || ""));
+      if (cssStyleMergeKey(styleEl) === undefined) continue;
+      styles.push(cssKeepingMedia(styleEl, scopeSubStyle(styleEl.textContent || "")));
       if (scene) styleScenes.push(scene);
       styleEl.remove();
     }

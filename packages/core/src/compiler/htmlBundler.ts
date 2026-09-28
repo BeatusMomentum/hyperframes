@@ -1,4 +1,4 @@
-import { cssStyleMergeKey, headStyleRuns, inlineScriptRuns } from "./scriptRuns";
+import { cssKeepingMedia, cssStyleMergeKey, headStyleRuns, inlineScriptRuns } from "./scriptRuns";
 import { SCENE_PART_ATTR } from "../sceneParts";
 import {
   ensureExternalScriptTag,
@@ -1138,13 +1138,17 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
       if (innerRoot) {
         // Hoist styles into the collected style chunks
         for (const styleEl of [...innerRoot.querySelectorAll("style")]) {
+          if (cssStyleMergeKey(styleEl) === undefined) continue;
           const css = styleEl.textContent || "";
           compStyleChunks.push(
-            compId
-              ? scopeCssToComposition(css, compId, runtimeScope, authoredRootId, {
-                  scopeRootSelectors: true,
-                })
-              : css,
+            cssKeepingMedia(
+              styleEl,
+              compId
+                ? scopeCssToComposition(css, compId, runtimeScope, authoredRootId, {
+                    scopeRootSelectors: true,
+                  })
+                : css,
+            ),
           );
           styleEl.remove();
         }
@@ -1169,13 +1173,17 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
       } else {
         // No matching inner root — inject all template content directly
         for (const styleEl of [...innerDoc.querySelectorAll("style")]) {
+          if (cssStyleMergeKey(styleEl) === undefined) continue;
           const css = styleEl.textContent || "";
           compStyleChunks.push(
-            compId
-              ? scopeCssToComposition(css, compId, runtimeScope, undefined, {
-                  scopeRootSelectors: true,
-                })
-              : css,
+            cssKeepingMedia(
+              styleEl,
+              compId
+                ? scopeCssToComposition(css, compId, runtimeScope, undefined, {
+                    scopeRootSelectors: true,
+                  })
+                : css,
+            ),
           );
           styleEl.remove();
         }

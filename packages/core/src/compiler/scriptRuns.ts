@@ -61,3 +61,8 @@ export function headStyleRuns(
   }
   return runs;
 }
+
+export function cssKeepingMedia(el: Element, css: string): string {
+  const media = (el.getAttribute("media") ?? "").trim();
+  return media && media.toLowerCase() !== "all" ? `@media ${media} {\n${css}\n}` : css;
+}

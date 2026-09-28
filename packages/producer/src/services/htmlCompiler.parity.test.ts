@@ -155,6 +155,24 @@ describe("preview/render semantic compilation parity", () => {
     expect(render).toEqual(preview);
   });
 
+  it("keeps a composition's print style print-only in preview and render", async () => {
+    const dir = project({
+      "index.html": shell(
+        `<main data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1">
+          <section data-composition-id="card" data-composition-src="card.html" data-start="0" data-duration="1"></section>
+        </main>`,
+      ),
+      "card.html": `<template id="card-template"><article data-composition-id="card" data-width="320" data-height="180">
+        <style media="print">.card-p{color:blue}</style><p class="card-p">x</p></article></template>`,
+    });
+    const printBlock = /@media print \{\s*[^{}]*\.card-p\b[^{}]*\{color:blue\}\s*\}/;
+    expect(await bundleToSingleHtml(dir)).toMatch(printBlock);
+    const render = await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
+      allowSystemFontCapture: false,
+    });
+    expect(render.html).toMatch(printBlock);
+  });
+
   it("keeps legacy end/layer timing semantically identical", async () => {
     const result = await contracts({
       "index.html":

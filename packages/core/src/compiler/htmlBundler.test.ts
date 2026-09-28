@@ -1453,6 +1453,36 @@ describe("bundleToSingleHtml", () => {
       ]);
     });
 
+    it("keeps a composition's print style print-only and its non-CSS style out of CSS", async () => {
+      const comp = (
+        id: string,
+      ) => `<div data-composition-id="${id}" data-width="320" data-height="180">
+  <style media="print">.${id}-p{color:blue}</style><style type="text/x-tpl">{{ ${id} }}</style>
+  <p class="${id}-p">x</p></div>`;
+      const dir = makeTempProject({
+        "index.html": `<!doctype html>
+<html><head></head><body>
+  <div data-composition-id="root" data-width="320" data-height="180">
+    <div data-composition-id="file" data-composition-src="file.html"></div>
+    <div data-composition-id="inline"></div>
+  </div>
+  <template id="inline-template">${comp("inline")}</template>
+  <script>window.__timelines = window.__timelines || {}; window.__timelines.root = {}</script>
+</body></html>`,
+        "file.html": `<template id="file-template">${comp("file")}</template>`,
+      });
+      const { document } = parseHTML(await bundleToSingleHtml(dir));
+      const css = [...document.querySelectorAll("style:not([type])")]
+        .map((el) => el.textContent)
+        .join("\n");
+      for (const id of ["file", "inline"]) {
+        expect(css).toMatch(
+          new RegExp(`@media print \\{\\s*[^{}]*\\.${id}-p\\b[^{}]*\\{color:blue\\}\\s*\\}`),
+        );
+        expect(css).not.toContain(`{{ ${id} }}`);
+      }
+    });
+
     it("keeps rule order across a conditional style", async () => {
       expect(
         await bundledHeadStyles(
