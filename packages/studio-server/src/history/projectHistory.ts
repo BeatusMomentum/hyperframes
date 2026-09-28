@@ -25,7 +25,7 @@ import {
   recordFileWriteReceipt,
 } from "../helpers/fileVersion.js";
 import { affectsProjectSignature, listProjectFiles } from "../helpers/projectSignature.js";
-import { openBlobStore, type BlobStore } from "./blobStore.js";
+import { NOT_A_REGULAR_FILE, openBlobStore, type BlobStore } from "./blobStore.js";
 import { pruneGoneProjectHistoriesDaily } from "./pruneHistories.js";
 import {
   ID_PATH,
@@ -456,12 +456,13 @@ class Engine {
     if (changed) this.saveStatCache();
   }
 
-  /** The file's hash once copied in; null when it was removed before the copy (the next sweep records that). */
+  /** The file's hash once copied in; null when it was removed or replaced by a non-file (the next sweep records that). */
   async storeIfPresent(path: string): Promise<string | null> {
     try {
       return await this.blobs.put(join(this.dir, path));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (["ENOENT", "ELOOP", NOT_A_REGULAR_FILE].includes(code)) return null;
       throw error;
     }
   }

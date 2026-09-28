@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -162,6 +163,24 @@ describe("a project folder swapped while the history is at work", () => {
     cleanup.push(() => history.close());
     expect(history.list()).toEqual([]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "opens without waiting on a pipe swapped in for a file while it was read",
+    async () => {
+      const { projectDir, historyRoot } = unopened();
+      let puts = 0;
+      hooks.beforePut = () => {
+        if (++puts !== 2) return;
+        rmSync(join(projectDir, "b.html"));
+        spawnSync("mkfifo", [join(projectDir, "b.html")]);
+      };
+
+      const history = await openProjectHistory({ projectDir, historyRoot });
+      cleanup.push(() => history.close());
+      expect(history.list()).toEqual([]);
+    },
+    2_000,
+  );
 
   it("drops a first baseline read partly from a swapped folder, so the original never gets its bytes", async () => {
     const { projectDir, historyRoot, moved, swap, texts } = unopened();
