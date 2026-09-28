@@ -1,6 +1,6 @@
 import { readExternalScriptAttributes, type ExternalScriptAttributes } from "./externalScripts";
 import { parseImportMap, type ImportMap } from "./importMaps";
-import { cssKeepingMedia, cssStyleMergeKey } from "./scriptRuns";
+import { compositionStyle, cssStyleMergeKey, type CompositionStyle } from "./scriptRuns";
 /**
  * Shared sub-composition inlining logic.
  *
@@ -230,8 +230,16 @@ export interface InlineSubCompositionsOptions {
   tagScenes?: boolean;
 }
 
+export interface ExternalLink {
+  href: string;
+  rel: string;
+  crossorigin?: string;
+  media?: string;
+  title?: string;
+}
+
 export interface InlineSubCompositionsResult {
-  styles: string[];
+  styles: CompositionStyle[];
   /** With `tagScenes`: the scene each entry of `styles` belongs to. */
   styleScenes: string[];
   scripts: string[];
@@ -240,7 +248,7 @@ export interface InlineSubCompositionsResult {
     | { kind: "inline"; content: string; scene?: string }
     | ({ kind: "external"; src: string; scene?: string } & ExternalScriptAttributes)
   >;
-  externalLinks: { href: string; rel: string; crossorigin?: string }[];
+  externalLinks: ExternalLink[];
   variablesByComp: Record<string, Record<string, unknown>>;
   /** Mounted files' import maps, addresses rebased; emit with `emitMountedModuleScripts`. */
   importMaps: ImportMap[];
@@ -298,14 +306,14 @@ export function inlineSubCompositions(
     tagScenes = false,
   } = options;
 
-  const styles: string[] = [];
+  const styles: CompositionStyle[] = [];
   const styleScenes: string[] = [];
   const scripts: string[] = [];
   const externalScriptSrcs: string[] = [];
   const scriptItems: InlineSubCompositionsResult["scriptItems"] = [];
   const importMaps: ImportMap[] = [];
   const moduleScripts: string[] = [];
-  const externalLinks: { href: string; rel: string; crossorigin?: string }[] = [];
+  const externalLinks: ExternalLink[] = [];
   const seenLinkHrefs = new Set<string>();
   const variablesByComp: Record<string, Record<string, unknown>> = {};
 
@@ -448,7 +456,9 @@ export function inlineSubCompositions(
         const crossorigin = link.hasAttribute("crossorigin")
           ? link.getAttribute("crossorigin") || ""
           : undefined;
-        externalLinks.push({ href, rel, crossorigin });
+        const media = link.getAttribute("media") ?? undefined;
+        const title = link.getAttribute("title") ?? undefined;
+        externalLinks.push({ href, rel, crossorigin, media, title });
       }
     }
 
@@ -457,7 +467,7 @@ export function inlineSubCompositions(
     // (GSAP from a CDN) has to run before the content scripts calling into it.
     for (const styleEl of plan.styleSources) {
       if (cssStyleMergeKey(styleEl) === undefined) continue;
-      styles.push(cssKeepingMedia(styleEl, scopeSubStyle(styleEl.textContent || "")));
+      styles.push(compositionStyle(styleEl, scopeSubStyle(styleEl.textContent || "")));
       if (scene) styleScenes.push(scene);
       styleEl.remove();
     }

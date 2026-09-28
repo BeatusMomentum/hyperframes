@@ -1,4 +1,11 @@
-import { cssKeepingMedia, cssStyleMergeKey, headStyleRuns, inlineScriptRuns } from "./scriptRuns";
+import {
+  compositionStyle,
+  cssStyleMergeKey,
+  headStyleRuns,
+  inlineScriptRuns,
+  styleElementsFor,
+  type CompositionStyle,
+} from "./scriptRuns";
 import { SCENE_PART_ATTR } from "../sceneParts";
 import {
   ensureExternalScriptTag,
@@ -1050,10 +1057,12 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
     },
   });
   refuseSwapsReachedByRootScripts(document, rootScripts);
-  const styleRuns: PartRun<string>[] = [];
-  subCompResult.styles.forEach((css, i) => pushRun(styleRuns, subCompResult.styleScenes[i], css));
+  const styleRuns: PartRun<CompositionStyle>[] = [];
+  subCompResult.styles.forEach((style, i) =>
+    pushRun(styleRuns, subCompResult.styleScenes[i], style),
+  );
   const scriptRuns: PartRun<DeferredScriptChunk>[] = [];
-  const compStyleChunks: string[] = [];
+  const compStyleChunks: CompositionStyle[] = [];
   const compScriptChunks: DeferredScriptChunk[] = [];
   const compExternalLinks = [...subCompResult.externalLinks];
   const compVariablesByComp: Record<string, Record<string, unknown>> = {
@@ -1141,7 +1150,7 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
           if (cssStyleMergeKey(styleEl) === undefined) continue;
           const css = styleEl.textContent || "";
           compStyleChunks.push(
-            cssKeepingMedia(
+            compositionStyle(
               styleEl,
               compId
                 ? scopeCssToComposition(css, compId, runtimeScope, authoredRootId, {
@@ -1176,7 +1185,7 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
           if (cssStyleMergeKey(styleEl) === undefined) continue;
           const css = styleEl.textContent || "";
           compStyleChunks.push(
-            cssKeepingMedia(
+            compositionStyle(
               styleEl,
               compId
                 ? scopeCssToComposition(css, compId, runtimeScope, undefined, {
@@ -1252,6 +1261,8 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
       linkEl.setAttribute("rel", link.rel);
       linkEl.setAttribute("href", link.href);
       if (link.crossorigin != null) linkEl.setAttribute("crossorigin", link.crossorigin);
+      if (link.media != null) linkEl.setAttribute("media", link.media);
+      if (link.title != null) linkEl.setAttribute("title", link.title);
       document.head.appendChild(linkEl);
     }
   }
@@ -1264,10 +1275,11 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
     else scriptRuns.unshift({ chunks: [variablesByCompScript] });
   }
   for (const { scene, chunks } of styleRuns) {
-    const style = document.createElement("style");
-    if (scene) style.setAttribute(SCENE_PART_ATTR, scene);
-    style.textContent = scene ? joinCssHoistingImports(chunks) : chunks.join("\n\n");
-    document.head.appendChild(style);
+    const join = scene ? joinCssHoistingImports : (css: string[]) => css.join("\n\n");
+    for (const style of styleElementsFor(document, chunks, join)) {
+      if (scene) style.setAttribute(SCENE_PART_ATTR, scene);
+      document.head.appendChild(style);
+    }
   }
   for (const { scene, chunks } of scriptRuns) {
     const script = document.createElement("script");
@@ -1524,7 +1536,7 @@ function pushSubCompVariableStyles(
   innerRoot: Element | null,
   mergedVariables: Record<string, unknown>,
   runtimeScope: string,
-  compStyleChunks: string[],
+  compStyleChunks: CompositionStyle[],
 ): void {
   if (!runtimeScope) return;
   const declaredForCss = readDeclaredDefaults(innerDoc.documentElement);
@@ -1534,5 +1546,5 @@ function pushSubCompVariableStyles(
     { ...declaredForCss, ...mergedVariables },
     runtimeScope,
   );
-  if (cssVars) compStyleChunks.push(cssVars);
+  if (cssVars) compStyleChunks.push({ css: cssVars, media: null, title: null });
 }

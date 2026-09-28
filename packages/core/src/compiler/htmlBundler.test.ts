@@ -1472,14 +1472,12 @@ describe("bundleToSingleHtml", () => {
         "file.html": `<template id="file-template">${comp("file")}</template>`,
       });
       const { document } = parseHTML(await bundleToSingleHtml(dir));
-      const css = [...document.querySelectorAll("style:not([type])")]
-        .map((el) => el.textContent)
-        .join("\n");
+      const css = (selector: string) =>
+        [...document.querySelectorAll(selector)].map((el) => el.textContent).join("\n");
       for (const id of ["file", "inline"]) {
-        expect(css).toMatch(
-          new RegExp(`@media print \\{\\s*[^{}]*\\.${id}-p\\b[^{}]*\\{color:blue\\}\\s*\\}`),
-        );
-        expect(css).not.toContain(`{{ ${id} }}`);
+        expect(css('style[media="print"]')).toContain(`.${id}-p{color:blue}`);
+        expect(css("style:not([media]):not([type])")).not.toContain(`.${id}-p{`);
+        expect(css("style:not([type])")).not.toContain(`{{ ${id} }}`);
       }
     });
 

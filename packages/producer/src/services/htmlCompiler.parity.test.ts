@@ -165,12 +165,73 @@ describe("preview/render semantic compilation parity", () => {
       "card.html": `<template id="card-template"><article data-composition-id="card" data-width="320" data-height="180">
         <style media="print">.card-p{color:blue}</style><p class="card-p">x</p></article></template>`,
     });
-    const printBlock = /@media print \{\s*[^{}]*\.card-p\b[^{}]*\{color:blue\}\s*\}/;
-    expect(await bundleToSingleHtml(dir)).toMatch(printBlock);
+    const printCss = (html: string) =>
+      [
+        ...new DOMParser()
+          .parseFromString(html, "text/html")
+          .querySelectorAll('style[media="print"]'),
+      ]
+        .map((el) => el.textContent)
+        .join("\n");
+    expect(printCss(await bundleToSingleHtml(dir))).toMatch(/\.card-p\{color:blue\}/);
     const render = await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
       allowSystemFontCapture: false,
     });
-    expect(render.html).toMatch(printBlock);
+    expect(printCss(render.html)).toMatch(/\.card-p\{color:blue\}/);
+  });
+
+  it("emits conditional composition styles and links as their own elements in preview and render", async () => {
+    const host = (id: string) =>
+      `<section data-composition-id="${id}" data-composition-src="${id}.html" data-start="0" data-duration="1"></section>`;
+    const comp = (id: string, inner: string) =>
+      `<template id="${id}-template"><article data-composition-id="${id}" data-width="320" data-height="180">${inner}<p class="p${id}">x</p></article></template>`;
+    const dir = project({
+      "index.html": shell(
+        `<main data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1">
+          ${["a", "b", "c", "d"].map(host).join("")}</main>`,
+      ),
+      "a.html": comp("a", `<style media="(max-width: 10px">.pa{color:blue}</style>`),
+      "b.html": comp("b", `<style>.pb{color:green}</style>`),
+      "c.html": comp("c", `<style media="screen">@import "local.css"; .pc{color:red}</style>`),
+      "d.html": comp(
+        "d",
+        `<style title="alt">.pd{color:black}</style><link rel="stylesheet" href="d.css" media="print" title="alt">`,
+      ),
+      "local.css": ".q{color:green}",
+      "d.css": ".pd{color:white}",
+    });
+    const head = (html: string) => {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const styles = [...doc.head.querySelectorAll("style")]
+        .filter((el) => /\.p[a-d]\b/.test(el.textContent ?? ""))
+        .map((el) => ({
+          media: el.getAttribute("media"),
+          title: el.getAttribute("title"),
+          css: (el.textContent ?? "").trim(),
+        }));
+      const links = [...doc.head.querySelectorAll('link[rel="stylesheet"]')].map((el) => ({
+        media: el.getAttribute("media"),
+        title: el.getAttribute("title"),
+      }));
+      return { styles, links };
+    };
+    const preview = head(await bundleToSingleHtml(dir));
+    const render = head(
+      (
+        await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
+          allowSystemFontCapture: false,
+        })
+      ).html,
+    );
+    const find = (id: string) => preview.styles.find((style) => style.css.includes(`.p${id}{`));
+    expect(find("a")?.media).toBe("(max-width: 10px");
+    expect(find("a")?.css).not.toContain(".pb{");
+    expect(find("b")).toMatchObject({ media: null, title: null });
+    expect(find("c")?.media).toBe("screen");
+    expect(find("c")?.css.startsWith('@import "local.css"')).toBe(true);
+    expect(find("d")).toMatchObject({ media: null, title: "alt" });
+    expect(preview.links).toEqual([{ media: "print", title: "alt" }]);
+    expect(render).toEqual(preview);
   });
 
   it("keeps legacy end/layer timing semantically identical", async () => {

@@ -48,6 +48,7 @@ import {
   parseHostVariableValues,
   headStyleRuns,
   inlineScriptRuns,
+  styleElementsFor,
   insertBeforeCloseTag,
 } from "@hyperframes/core/compiler";
 import {
@@ -1041,15 +1042,17 @@ function inlineSubCompositions(
       el.setAttribute("rel", link.rel);
       el.setAttribute("href", link.href);
       if (link.crossorigin != null) el.setAttribute("crossorigin", link.crossorigin);
+      if (link.media != null) el.setAttribute("media", link.media);
+      if (link.title != null) el.setAttribute("title", link.title);
       head.appendChild(el);
     }
   }
 
   // Append collected styles to <head>
-  if (result.styles.length && head) {
-    const styleEl = document.createElement("style");
-    styleEl.textContent = result.styles.join("\n\n");
-    head.appendChild(styleEl);
+  if (head) {
+    for (const style of styleElementsFor(document, result.styles, (css) => css.join("\n\n"))) {
+      head.appendChild(style);
+    }
   }
 
   // CDN and integrity-pinned scripts go first so plugins (e.g. TextPlugin,

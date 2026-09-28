@@ -62,7 +62,31 @@ export function headStyleRuns(
   return runs;
 }
 
-export function cssKeepingMedia(el: Element, css: string): string {
-  const media = (el.getAttribute("media") ?? "").trim();
-  return media && media.toLowerCase() !== "all" ? `@media ${media} {\n${css}\n}` : css;
+export interface CompositionStyle {
+  css: string;
+  media: string | null;
+  title: string | null;
+}
+
+export function compositionStyle(el: Element, css: string): CompositionStyle {
+  return { css, media: el.getAttribute("media"), title: el.getAttribute("title") };
+}
+
+/** One `<style>` per adjacent run of same-condition sheets, keeping each run's media and title. */
+export function styleElementsFor(
+  document: Document,
+  sheets: readonly CompositionStyle[],
+  join: (css: string[]) => string,
+): Element[] {
+  const elements = sheets.map(({ css, media, title }) => {
+    const el = document.createElement("style");
+    if (media !== null) el.setAttribute("media", media);
+    if (title !== null) el.setAttribute("title", title);
+    el.textContent = css;
+    return el;
+  });
+  return headStyleRuns(elements).map((run) => {
+    run[0]!.textContent = join(run.map((el) => el.textContent || ""));
+    return run[0]!;
+  });
 }

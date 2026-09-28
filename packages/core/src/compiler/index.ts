@@ -61,10 +61,12 @@ export { addScenePartsManifest } from "./scenePartsManifest";
 
 // Script ordering shared by the bundler and the producer coalescers
 export {
-  cssKeepingMedia,
+  compositionStyle,
   cssStyleMergeKey,
   headStyleRuns,
   inlineScriptRuns,
+  styleElementsFor,
+  type CompositionStyle,
   type InlineScriptRun,
 } from "./scriptRuns";
 
