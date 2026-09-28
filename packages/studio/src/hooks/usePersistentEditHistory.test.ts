@@ -148,7 +148,7 @@ it("a refused undo names the agent's later change, and undoing that first lets C
     reason: "content-mismatch",
     changedSince: { label: "Agent turn" },
   });
-  await vi.waitFor(() => expect(hook().undoChangedSince).toBe("Agent turn"));
+  await vi.waitFor(() => expect(hook().undoChangedSince).toBe(`Agent's "Agent turn"`));
   expect(await act(() => hook().undoEntry(refused.changedSince!.id, { readFile }))).toMatchObject({
     ok: true,
     label: "Undid: Agent turn",
@@ -159,6 +159,32 @@ it("a refused undo names the agent's later change, and undoing that first lets C
     label: "Undid: Moved Title",
   });
   expect(file()).toBe("A");
+});
+
+it("the offer is checked again on click: a turn that landed since is named and kept", async () => {
+  const { history, hook, file, save, readFile } = await studio();
+  save("B");
+  await act(() =>
+    hook().recordEdit({
+      label: "Moved Title",
+      files: { "index.html": { before: "A", after: "B" } },
+    }),
+  );
+  let window = await history.beginWindow({ kind: "agent", name: "Agent" }, "Agent turn");
+  save("C");
+  await window.close();
+  const since = (await act(() => hook().undo({ readFile }))).changedSince!;
+  window = await history.beginWindow({ kind: "agent", name: "Agent" }, "Agent turn 2");
+  save("D");
+  await window.close();
+
+  const clicked = await act(() => hook().undoEntry(since.id, { readFile }, since.paths));
+  expect(clicked).toMatchObject({
+    ok: false,
+    reason: "content-mismatch",
+    changedSince: { label: "Agent turn 2" },
+  });
+  expect(file()).toBe("D");
 });
 
 it("the offer undoes an agent turn Studio has not seen yet, locking and soft-applying its files", async () => {

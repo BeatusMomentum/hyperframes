@@ -173,7 +173,7 @@ describe("openProjectHistory", () => {
     expect(await history.undo(first.id, { who: you })).toEqual({
       ok: false,
       conflict: { files: ["index.html"], newer: [newer.id] },
-      changedSince: { id: newer.id, label: "Retitle", paths: ["index.html"] },
+      changedSince: { id: newer.id, label: "Retitle", who: agent, paths: ["index.html"] },
     });
     expect([read("index.html"), read("notes.txt")]).toEqual(["C", "n2"]);
 
@@ -1853,6 +1853,20 @@ describe("claim: a writer that records after writing", () => {
       ok: false,
       changedSince: { id: turn.id, paths: ["index.html", "scene.html"] },
     });
+  });
+
+  it("names the newest of two later changes still in effect, then the older once it is undone", async () => {
+    const { history, write } = await project({ "a.html": "a1", "b.html": "b1" });
+    write("a.html", "a2");
+    write("b.html", "b2");
+    await history.claim(you, "Moved Title", ["a.html", "b.html"]);
+    const first = await change(history, agent, "T1", () => write("a.html", "a3"));
+    const second = await change(history, agent, "T2", () => write("b.html", "b3"));
+    const blocked = history.next("back", you)!.id;
+
+    expect(history.changedSince(blocked)?.label).toBe("T2");
+    await history.undo(second.id, { who: agent });
+    expect(history.changedSince(blocked)?.id).toBe(first.id);
   });
 
   it("names the agent's earlier turn, not its undo of a later one or the turn it undid", async () => {

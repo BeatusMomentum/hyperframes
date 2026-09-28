@@ -4,11 +4,13 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STUDIO_MOTION_PATH } from "../components/editor/studioMotion";
+import type { HistoryName } from "@hyperframes/studio-server";
 import { useEditHistoryActions, type EditHistoryHandle } from "./useEditHistoryActions";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
+const claude = { kind: "agent", name: "Claude" } as const;
 afterEach(() => act(() => root?.unmount()));
 
 function mount(result: {
@@ -17,7 +19,7 @@ function mount(result: {
   message?: string;
   label?: string;
   paths?: string[];
-  changedSince?: { id: string; label: string; paths?: string[] };
+  changedSince?: HistoryName;
 }) {
   const editHistory = {
     undo: vi.fn<EditHistoryHandle["undo"]>(async () => result),
@@ -78,13 +80,13 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["index.html"],
-      changedSince: { id: "turn-1", label: "Agent turn", paths: ["index.html"] },
+      changedSince: { id: "turn-1", label: "Bigger title", who: claude, paths: ["index.html"] },
     });
     await act(() => actions.undo());
     expect(deps.showToast).toHaveBeenCalledWith(
-      "Can't undo: Agent turn changed index.html since that edit.",
+      `Can't undo: Claude's "Bigger title" changed index.html since that edit.`,
       "info",
-      { label: "Undo Agent turn", run: expect.any(Function) },
+      { label: `Undo Claude's "Bigger title"`, run: expect.any(Function) },
     );
     const [, , offer] = deps.showToast.mock.calls[0]!;
     await act(async () => offer.run());
@@ -101,7 +103,7 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["scene.html"],
-      changedSince: { id: "turn-1", label: "Agent turn", paths: ["scene.html"] },
+      changedSince: { id: "turn-1", label: "Agent turn", who: claude, paths: ["scene.html"] },
     });
     deps.editHistory.undoEntry.mockResolvedValue({
       ok: true,
@@ -121,7 +123,7 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["index.html"],
-      changedSince: { id: "turn-1", label: "Agent turn" },
+      changedSince: { id: "turn-1", label: "Agent turn", who: claude, paths: ["index.html"] },
     });
     await act(() => actions.redo());
     expect(deps.showToast).toHaveBeenCalledWith(

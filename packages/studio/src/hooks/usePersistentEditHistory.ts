@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { HistoryListItem, HistoryResult } from "@hyperframes/studio-server";
+import type { HistoryListItem, HistoryName, HistoryResult } from "@hyperframes/studio-server";
 import { studioFileContentVersion, studioWriteHeaders } from "../utils/studioFileVersion";
+import { changeName } from "../utils/studioHelpers";
 
 interface RecordEditInput {
   label: string;
@@ -31,13 +32,7 @@ interface ApplyResult {
   label?: string;
   paths?: string[];
   files?: Record<string, ApplyRestoredFile>;
-  changedSince?: EntryName;
-}
-
-interface EntryName {
-  id: string;
-  label: string;
-  paths?: string[];
+  changedSince?: HistoryName;
 }
 
 interface NextStep {
@@ -45,7 +40,7 @@ interface NextStep {
   label: string;
   endedAt: number;
   paths: string[];
-  changedSince?: EntryName;
+  changedSince?: HistoryName;
 }
 
 interface HistoryView {
@@ -172,7 +167,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
     async (
       path: string,
       body: object,
-      paths: string[],
+      paths: readonly string[],
       callbacks: ApplyCallbacks,
     ): Promise<ApplyResult> => {
       if (!projectId) return { ok: false, reason: "empty" };
@@ -217,7 +212,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
   const undoEntry = useCallback(
     (entryId: string, callbacks: ApplyCallbacks, pathsIfUnseen: readonly string[] = []) => {
       const entry = view.entries.find((candidate) => candidate.id === entryId);
-      const paths = entry?.files.map((file) => file.path) ?? [...pathsIfUnseen];
+      const paths = entry?.files.map((file) => file.path) ?? pathsIfUnseen;
       return apply("/undo", { entryId }, paths, callbacks);
     },
     [view, apply],
@@ -240,7 +235,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
     canUndo: Boolean(view.back),
     canRedo: Boolean(view.forward),
     undoLabel: view.back?.label,
-    undoChangedSince: view.back?.changedSince?.label,
+    undoChangedSince: view.back?.changedSince && changeName(view.back.changedSince),
     redoLabel: view.forward?.label,
     undoPaths: view.back?.paths ?? [],
     redoPaths: view.forward?.paths ?? [],

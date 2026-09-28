@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  changeName,
   historyTooltipLabel,
   findMatchingTimelineElementId,
   findTimelineIdByAncestor,
@@ -216,6 +217,19 @@ describe("resolveElementTrack", () => {
 
   it("falls back to the resolved track, rounded, when nothing was authored", () => {
     expect(resolveElementTrack({ authoredTrack: undefined, track: 3.6 })).toBe(4);
+  });
+});
+
+describe("changeName", () => {
+  it("says who made the later change", () => {
+    const label = "Bigger title";
+    expect(changeName({ label, who: { kind: "agent", name: "Claude" } })).toBe(
+      `Claude's "Bigger title"`,
+    );
+    expect(changeName({ label, who: { kind: "person", name: "You" } })).toBe(`your "Bigger title"`);
+    expect(
+      changeName({ label: "Changed outside the app", who: { kind: "outside", name: "Outside" } }),
+    ).toBe("an edit outside the app");
   });
 });
 

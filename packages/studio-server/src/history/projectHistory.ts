@@ -112,7 +112,7 @@ export interface HistoryListItem extends HistoryEntry {
 }
 
 /** The later change a refused undo can offer to undo first. */
-export type HistoryName = { id: string; label: string; paths: string[] };
+export type HistoryName = Pick<HistoryEntry, "id" | "label" | "who"> & { paths: string[] };
 
 export type HistoryResult =
   | { ok: true; entry: HistoryEntry | null }
@@ -931,7 +931,8 @@ class Engine {
       (candidate) => !candidate.undoes && !undone.has(candidate.id) && holdsBlockedFile(candidate),
     );
     if (!blocker) return undefined;
-    return { id: blocker.id, label: blocker.label, paths: blocker.files.map((file) => file.path) };
+    const { id, label, who } = blocker;
+    return { id, label, who, paths: blocker.files.map((file) => file.path) };
   }
 
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined {
@@ -1055,8 +1056,7 @@ class Engine {
       changedSince: (id) => {
         this.assertOpen();
         const entry = this.log.entries.find((candidate) => candidate.id === id);
-        const changed = entry ? this.movedOn(entry) : [];
-        return entry && changed.length ? this.blockerOf(entry, changed) : undefined;
+        return entry && this.blockerOf(entry, this.movedOn(entry));
       },
       readBlob: async (hash) => {
         this.assertOpen();

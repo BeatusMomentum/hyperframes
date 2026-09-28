@@ -1,3 +1,4 @@
+import type { HistoryName } from "@hyperframes/studio-server";
 import { buildProjectApiPath } from "./projectRouting";
 import { isTypingTarget } from "./typingTarget";
 import type { TimelineElement } from "../player/store/playerStore";
@@ -8,6 +9,12 @@ import { roundToCenti } from "./rounding";
 export interface EditingFile {
   path: string;
   content: string | null;
+}
+
+/** A later change as a phrase: `Claude's "Bigger title"`, `your "Moved Title"`, or an outside edit. */
+export function changeName({ label, who }: Pick<HistoryName, "label" | "who">): string {
+  if (who.kind === "outside") return "an edit outside the app";
+  return who.kind === "agent" ? `${who.name}'s "${label}"` : `your "${label}"`;
 }
 
 export interface ToastAction {

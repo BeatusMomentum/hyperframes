@@ -12,6 +12,7 @@ export {
   type ProjectHistory,
   type ProjectHistoryOptions,
   type HistoryListItem,
+  type HistoryName,
   type HistoryResult,
   type HistoryWindow,
   HistoryClosedError,

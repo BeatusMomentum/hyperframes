@@ -2,7 +2,8 @@
 import { useCallback, useMemo, useRef } from "react";
 import { STUDIO_MOTION_PATH } from "../components/editor/studioMotion";
 import { serializeStudioFileMutations } from "../utils/studioFileMutationCoordinator";
-import type { ToastAction } from "../utils/studioHelpers";
+import type { HistoryName } from "@hyperframes/studio-server";
+import { changeName, type ToastAction } from "../utils/studioHelpers";
 
 interface HistoryResult {
   ok: boolean;
@@ -12,7 +13,7 @@ interface HistoryResult {
   paths?: string[];
   /** Per-file restored/previous content, used to soft-apply the preview. */
   files?: Record<string, { previous: string; restored: string }>;
-  changedSince?: { id: string; label: string; paths?: string[] };
+  changedSince?: HistoryName;
 }
 interface HistoryFileCallbacks {
   readFile: (path: string) => Promise<string>;
@@ -60,8 +61,8 @@ export function useEditHistoryActions({
   activeCompPath,
   forceReloadSdkSession,
 }: UseEditHistoryActionsOptions) {
-  const compOpenAtClickRef = useRef(activeCompPath);
-  compOpenAtClickRef.current = activeCompPath;
+  const activeCompPathRef = useRef(activeCompPath);
+  activeCompPathRef.current = activeCompPath;
   const readHistoryFile = useCallback(
     (path: string): Promise<string> =>
       path === STUDIO_MOTION_PATH ? readOptionalProjectFile(path) : readProjectFile(path),
@@ -86,14 +87,11 @@ export function useEditHistoryActions({
         const since = result.changedSince;
         const { undoEntry } = editHistory;
         if (since && undoEntry && direction === "undo") {
-          showToast(
-            `Can't ${direction}: ${since.label} changed ${files} since that edit.`,
-            "info",
-            {
-              label: `Undo ${since.label}`,
-              run: () => void apply("undo", (cb) => undoEntry(since.id, cb, since.paths)),
-            },
-          );
+          const name = changeName(since);
+          showToast(`Can't ${direction}: ${name} changed ${files} since that edit.`, "info", {
+            label: `Undo ${name}`,
+            run: () => void apply("undo", (cb) => undoEntry(since.id, cb, since.paths)),
+          });
           return;
         }
         showToast(`Can't ${direction}: ${files} changed since that edit.`, "info");
@@ -106,7 +104,7 @@ export function useEditHistoryActions({
       if (result.ok && result.label) {
         const restore = { paths: result.paths, files: result.files };
         onAfterUndoRedo?.(restore);
-        const openPath = compOpenAtClickRef.current;
+        const openPath = activeCompPathRef.current;
         if (openPath && result.paths?.includes(openPath)) {
           forceReloadSdkSession?.();
         }
