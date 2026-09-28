@@ -151,15 +151,9 @@ export function useElementPicker(
     ) => {
       const opts = optionsRef.current;
       if (!opts?.workspaceFiles || !opts.onSyncFiles) return;
-      // The hf-id names the element in the file it was served from; an id can repeat across scenes.
-      const hfId = live.getAttribute("data-hf-id");
       const pending = pendingWritesRef.current;
       const files = withPendingWrites(opts.workspaceFiles, pending);
-      const patch = hfId
-        ? patchByIdentity(files, hfId, picked.id, ownSourceFile(live, iframe), op)
-        : picked.id
-          ? patchById(files, picked.id, picked.selector, op)
-          : null;
+      const patch = sourcePatchFor(files, picked, live, iframe, op);
       if (patch === NOT_UNIQUE) {
         revertLive();
         opts.showToast?.(NOT_UNIQUE_MESSAGE, "error");
@@ -172,112 +166,82 @@ export function useElementPicker(
     [],
   );
 
-  const setStyle = useCallback(
-    (prop: string, value: string) => {
+  const editPicked = useCallback(
+    (edit: (el: HTMLElement, iframe: HTMLIFrameElement, picked: PickedElement) => void) => {
       const activeIframe = getActiveIframe();
       if (!pickedElement?.selector || !activeIframe) return;
       try {
-        const doc = activeIframe.contentDocument;
-        const el = doc?.querySelector(pickedElement.selector) as HTMLElement | null;
-        if (el) {
-          const before = el.style.getPropertyValue(prop);
-          const shownBefore = pickedElement.computedStyles[prop];
-          el.style.setProperty(prop, value);
-          const showStyle = (shown: string | undefined) =>
-            setPickedElement((prev) =>
-              prev
-                ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } }
-                : null,
-            );
-          showStyle(value);
-          syncToSource(
-            pickedElement,
-            el,
-            activeIframe,
-            { type: "inline-style", property: prop, value },
-            () => {
-              el.style.setProperty(prop, before);
-              showStyle(shownBefore);
-            },
-          );
-        }
+        const el = activeIframe.contentDocument?.querySelector(pickedElement.selector);
+        if (el) edit(el as HTMLElement, activeIframe, pickedElement);
       } catch {
         /* cross-origin */
       }
     },
-    [pickedElement, getActiveIframe, syncToSource],
+    [pickedElement, getActiveIframe],
+  );
+
+  const setStyle = useCallback(
+    (prop: string, value: string) =>
+      editPicked((el, iframe, picked) => {
+        const before = el.style.getPropertyValue(prop);
+        const shownBefore = picked.computedStyles[prop];
+        el.style.setProperty(prop, value);
+        const showStyle = (shown: string | undefined) =>
+          setPickedElement((prev) =>
+            prev
+              ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } }
+              : null,
+          );
+        showStyle(value);
+        syncToSource(picked, el, iframe, { type: "inline-style", property: prop, value }, () => {
+          el.style.setProperty(prop, before);
+          showStyle(shownBefore);
+        });
+      }),
+    [editPicked, syncToSource],
   );
 
   const setDataAttr = useCallback(
-    (attr: string, value: string) => {
-      const activeIframe = getActiveIframe();
-      if (!pickedElement?.selector || !activeIframe) return;
-      try {
-        const doc = activeIframe.contentDocument;
-        const el = doc?.querySelector(pickedElement.selector);
-        if (el) {
-          const before = el.getAttribute(`data-${attr}`);
-          el.setAttribute(`data-${attr}`, value);
-          setPickedElement((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  dataAttributes: { ...prev.dataAttributes, [attr]: value },
-                }
-              : null,
-          );
-          syncToSource(
-            pickedElement,
-            el as HTMLElement,
-            activeIframe,
-            { type: "attribute", property: attr, value },
-            () => {
-              if (before === null) el.removeAttribute(`data-${attr}`);
-              else el.setAttribute(`data-${attr}`, before);
-              setPickedElement((prev) => {
-                if (!prev) return null;
-                const dataAttributes = { ...prev.dataAttributes };
-                if (before === null) delete dataAttributes[attr];
-                else dataAttributes[attr] = before;
-                return { ...prev, dataAttributes };
-              });
-            },
-          );
-        }
-      } catch {
-        /* cross-origin */
-      }
-    },
-    [pickedElement, getActiveIframe, syncToSource],
+    (attr: string, value: string) =>
+      editPicked((el, iframe, picked) => {
+        const before = el.getAttribute(`data-${attr}`);
+        const showAttr = (shown: string | null) => {
+          if (shown === null) el.removeAttribute(`data-${attr}`);
+          else el.setAttribute(`data-${attr}`, shown);
+          setPickedElement((prev) => {
+            if (!prev) return null;
+            const dataAttributes = { ...prev.dataAttributes };
+            if (shown === null) delete dataAttributes[attr];
+            else dataAttributes[attr] = shown;
+            return { ...prev, dataAttributes };
+          });
+        };
+        showAttr(value);
+        syncToSource(picked, el, iframe, { type: "attribute", property: attr, value }, () =>
+          showAttr(before),
+        );
+      }),
+    [editPicked, syncToSource],
   );
 
   const setTextContent = useCallback(
-    (text: string) => {
-      const activeIframe = getActiveIframe();
-      if (!pickedElement?.selector || !activeIframe) return;
-      try {
-        const doc = activeIframe.contentDocument;
-        const el = doc?.querySelector(pickedElement.selector);
-        if (el) {
-          const before = el.textContent;
-          el.textContent = text;
-          setPickedElement((prev) => (prev ? { ...prev, textContent: text } : null));
-          syncToSource(
-            pickedElement,
-            el as HTMLElement,
-            activeIframe,
-            { type: "text-content", property: "textContent", value: text },
-            () => {
-              el.textContent = before;
-              setPickedElement((prev) => (prev ? { ...prev, textContent: before ?? "" } : null));
-            },
-          );
-        }
-      } catch {
-        /* cross-origin */
-      }
-    },
-    [pickedElement, getActiveIframe, syncToSource],
+    (text: string) =>
+      editPicked((el, iframe, picked) => {
+        const before = el.textContent;
+        const showText = (shown: string | null) => {
+          el.textContent = shown;
+          setPickedElement((prev) => (prev ? { ...prev, textContent: shown ?? "" } : null));
+        };
+        showText(text);
+        syncToSource(
+          picked,
+          el,
+          iframe,
+          { type: "text-content", property: "textContent", value: text },
+          () => showText(before),
+        );
+      }),
+    [editPicked, syncToSource],
   );
 
   // Ref-like object that always points to the active iframe (override or primary)
@@ -380,6 +344,19 @@ function patchById(
 function ownSourceFile(live: HTMLElement, iframe: HTMLIFrameElement): string {
   const previewed = compositionPathOfPreviewUrl(iframe.getAttribute("src") ?? "");
   return getSourceFileForElement(live, previewed).sourceFile;
+}
+
+// The hf-id names the element in the file it was served from; an id can repeat across scenes.
+function sourcePatchFor(
+  files: Record<string, string>,
+  picked: PickedElement,
+  live: HTMLElement,
+  iframe: HTMLIFrameElement,
+  op: PatchOperation,
+): SourcePatch | typeof NOT_UNIQUE | null {
+  const hfId = live.getAttribute("data-hf-id");
+  if (hfId) return patchByIdentity(files, hfId, picked.id, ownSourceFile(live, iframe), op);
+  return picked.id ? patchById(files, picked.id, picked.selector, op) : null;
 }
 
 function patchByIdentity(
