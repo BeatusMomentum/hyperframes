@@ -1457,7 +1457,7 @@ describe("bundleToSingleHtml", () => {
       const comp = (
         id: string,
       ) => `<div data-composition-id="${id}" data-width="320" data-height="180">
-  <style media="print">.${id}-p{color:blue}</style><style type="text/x-tpl">{{ ${id} }}</style>
+  <style media="print">.${id}-p{color:blue}</style><style type="text/x-tpl">.${id}-t{color:red}</style>
   <p class="${id}-p">x</p></div>`;
       const dir = makeTempProject({
         "index.html": `<!doctype html>
@@ -1477,7 +1477,7 @@ describe("bundleToSingleHtml", () => {
       for (const id of ["file", "inline"]) {
         expect(css('style[media="print"]')).toContain(`.${id}-p{color:blue}`);
         expect(css("style:not([media]):not([type])")).not.toContain(`.${id}-p{`);
-        expect(css("style:not([type])")).not.toContain(`{{ ${id} }}`);
+        expect(css("style:not([type])")).not.toContain(`.${id}-t{`);
       }
     });
 
