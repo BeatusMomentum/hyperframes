@@ -33,6 +33,7 @@ import {
   type ImageElement,
   type AudioElement,
 } from "@hyperframes/engine";
+import { defaultLogger, type ProducerLogger } from "../logger.js";
 
 /**
  * Marks a host element that `inlineSubCompositions` hoisted a composition into.
@@ -55,6 +56,12 @@ function resolveHostEnd(host: Element, hostStart: number): number | null {
   );
 }
 
+function hostName(host: Element): string | null {
+  return (
+    host.getAttribute("data-composition-id") || host.id || host.getAttribute(COMPOSITION_HOST_ATTR)
+  );
+}
+
 interface HostWindow {
   /** Seconds to add to a descendant's authored, scene-relative start. */
   offset: number;
@@ -62,9 +69,11 @@ interface HostWindow {
   limit: number;
   /** Whether authored media time is composition-local or legacy root-global. */
   basis: MediaStartBasis;
+  /** The host whose end sets `limit`, named in the dropped-clip warning. */
+  limitHost: string | null;
 }
 
-const ROOT_WINDOW: HostWindow = { offset: 0, limit: Infinity, basis: "local" };
+const ROOT_WINDOW: HostWindow = { offset: 0, limit: Infinity, basis: "local", limitHost: null };
 
 /**
  * Fold a media element's chain of composition hosts into one window.
@@ -90,11 +99,15 @@ function resolveHostWindow(
 
   let offset = 0;
   let limit = Infinity;
+  let limitHost: string | null = null;
   // parentElement walks leaf → root; the offsets accumulate root → leaf.
   for (const host of hosts.reverse()) {
     const hostStart = resolveReferencedStart(document, host, startCache, visiting);
     const hostEnd = resolveHostEnd(host, hostStart);
-    if (hostEnd != null) limit = Math.min(limit, offset + hostEnd);
+    if (hostEnd != null && offset + hostEnd < limit) {
+      limit = offset + hostEnd;
+      limitHost = hostName(host);
+    }
     offset += hostStart;
   }
   const tag = element.tagName.toLowerCase();
@@ -106,6 +119,7 @@ function resolveHostWindow(
     offset,
     limit,
     basis,
+    limitHost,
   };
 }
 
@@ -154,6 +168,26 @@ function toAbsoluteWindow(
   return { start: absoluteStart, end: Math.min(absoluteEnd, window.limit) };
 }
 
+/** A clip that starts at or after its host's end never plays; say so rather than drop it silently. */
+function warnStartsPastHostEnd(
+  log: ProducerLogger,
+  id: string,
+  authoredStart: number,
+  window: HostWindow,
+): void {
+  const start = resolveAbsoluteMediaStartSeconds({
+    authoredStart,
+    hostStart: window.offset,
+    basis: window.basis,
+  });
+  log.warn(
+    `[Compiler] Media "${id}" starts at ${start}s, at or after its host "${window.limitHost}" ` +
+      `ends at ${window.limit}s, so it is not rendered. data-start inside a sub-composition ` +
+      `is local to it; mark a root-timeline start with data-hf-media-start-basis="global".`,
+    { mediaId: id, host: window.limitHost, start, hostEnd: window.limit, basis: window.basis },
+  );
+}
+
 export interface RenderMedia {
   videos: VideoElement[];
   audios: AudioElement[];
@@ -168,19 +202,24 @@ export interface RenderMedia {
  * render id as each element's `id`, which is what the rest of the pipeline
  * keys on and what the engine resolves back to a DOM node.
  */
-export function collectRenderMedia(html: string): RenderMedia {
+export function collectRenderMedia(html: string, log: ProducerLogger = defaultLogger): RenderMedia {
   const windows = collectHostWindows(html);
-  const windowFor = (id: string): HostWindow => windows.get(id) ?? ROOT_WINDOW;
+  const place = (id: string, start: number, end: number, reportDrop = true) => {
+    const window = windows.get(id) ?? ROOT_WINDOW;
+    const absolute = toAbsoluteWindow(start, end, window);
+    if (!absolute && reportDrop) warnStartsPastHostEnd(log, id, start, window);
+    return absolute;
+  };
 
   const videos: VideoElement[] = [];
   for (const video of parseVideoElements(html)) {
-    const absolute = toAbsoluteWindow(video.start, video.end, windowFor(video.id));
+    const absolute = place(video.id, video.start, video.end);
     if (absolute) videos.push({ ...video, ...absolute });
   }
 
   const images: ImageElement[] = [];
   for (const image of parseImageElements(html)) {
-    const absolute = toAbsoluteWindow(image.start, image.end, windowFor(image.id));
+    const absolute = place(image.id, image.start, image.end);
     if (absolute) images.push({ ...image, ...absolute });
   }
 
@@ -192,7 +231,8 @@ export function collectRenderMedia(html: string): RenderMedia {
     // The mixer reads end === 0 as "run to the natural media length", so an
     // unbounded track must stay unbounded rather than collapse onto its start.
     const authoredEnd = audio.end > 0 ? audio.end : Infinity;
-    const absolute = toAbsoluteWindow(audio.start, authoredEnd, windowFor(elementId));
+    // A video's own audio track is dropped with the video, which already warned.
+    const absolute = place(elementId, audio.start, authoredEnd, audio.type !== "video");
     if (!absolute) continue;
     audios.push({
       ...audio,

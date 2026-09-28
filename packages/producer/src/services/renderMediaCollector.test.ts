@@ -2,6 +2,21 @@ import { describe, expect, it } from "bun:test";
 import { MEDIA_RENDER_ID_ATTR } from "@hyperframes/core";
 import { collectRenderMedia } from "./renderMediaCollector.js";
 
+function captureLogger() {
+  const warnings: { message: string; meta?: Record<string, unknown> }[] = [];
+  return {
+    warnings,
+    log: {
+      error() {},
+      warn(message: string, meta?: Record<string, unknown>) {
+        warnings.push({ message, meta });
+      },
+      info() {},
+      debug() {},
+    },
+  };
+}
+
 describe("collectRenderMedia host windows", () => {
   it("schedules nested videos at resolved host id-ref windows", () => {
     const html =
@@ -94,5 +109,28 @@ describe("collectRenderMedia host windows", () => {
     // Open-ended audio tracks close with the host (data-start 2 + data-duration 6).
     expect(audios.find((audio) => audio.id === "local-audio")).toMatchObject({ start: 4, end: 8 });
     expect(audios.find((audio) => audio.id === "global-audio")).toMatchObject({ start: 2, end: 8 });
+  });
+
+  it("warns, naming the clip and its host, when a clip starts at or after the host's end", () => {
+    // A root-time start with no global basis reads as local: host 3s + 3s = 6s, the host's end.
+    const html =
+      `<div data-composition-file="pip.html" data-composition-id="pip-scene" data-start="3" data-duration="3">` +
+      `<video ${MEDIA_RENDER_ID_ATTR}="pip-video" id="pip-video" src="pip.mp4" data-start="3" data-duration="3" data-has-audio="true"></video>` +
+      `<video ${MEDIA_RENDER_ID_ATTR}="kept" id="kept" src="kept.mp4" data-start="0" data-duration="3"></video>` +
+      `</div>`;
+
+    const { log, warnings } = captureLogger();
+    const { videos, audios } = collectRenderMedia(html, log);
+    expect(videos.map((video) => video.id)).toEqual(["kept"]);
+    expect(audios).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain('Media "pip-video" starts at 6s');
+    expect(warnings[0]?.message).toContain('host "pip-scene" ends at 6s');
+    expect(warnings[0]?.meta).toMatchObject({
+      mediaId: "pip-video",
+      host: "pip-scene",
+      start: 6,
+      hostEnd: 6,
+    });
   });
 });
