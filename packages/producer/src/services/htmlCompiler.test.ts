@@ -1583,6 +1583,38 @@ describe("lifted @import media", () => {
       importsByStyle(await bundleToSingleHtml(projectDir, { sceneParts: true })),
     );
   });
+
+  it.each([
+    [
+      "print",
+      `@import url("https://example.invalid/p.css") (min-width: 600px);`,
+      "print and (min-width: 600px)",
+    ],
+    ["", `@import url("https://example.invalid/p.css") screen;`, "screen"],
+    ["", `@import url("https://example.invalid/p.css");`, null],
+  ])(
+    "promotes a remote @import in a style with media %j to links under its media",
+    async (styleMedia, rule, media) => {
+      const projectDir = mkdtempSync(join(tmpdir(), "hf-promoted-import-"));
+      const conditional = styleMedia ? ` media="${styleMedia}"` : "";
+      writeFileSync(
+        join(projectDir, "index.html"),
+        `<!doctype html><html><head><style>.a { color: red; }</style><style${conditional}>${rule} .p { color: blue; }</style></head>
+<body><div data-composition-id="main" data-width="640" data-height="360" data-duration="1"></div></body></html>`,
+      );
+      const render = await compileForRender(projectDir, join(projectDir, "index.html"), projectDir);
+      const { document } = parseHTML(render.html);
+
+      const css = [...document.querySelectorAll("style")].map((el) => el.textContent).join("\n");
+      expect(css).toContain(".p { color: blue; }");
+      expect(css).not.toMatch(/@import|screen;|600px/);
+      const links = [...document.querySelectorAll('link[href="https://example.invalid/p.css"]')];
+      expect(links.map((link) => [link.getAttribute("rel"), link.getAttribute("media")])).toEqual([
+        ["preload", media],
+        ["stylesheet", media],
+      ]);
+    },
+  );
 });
 
 describe("text-rendering rule injection", () => {

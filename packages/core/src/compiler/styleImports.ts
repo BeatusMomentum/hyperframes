@@ -34,17 +34,18 @@ const group = (condition: string) =>
 // A `not <type>` query ANDed with another has no CSS spelling (MQ4 §3), so it becomes `not all`.
 function bothQueries(a: string, b: string): string {
   const [left, right] = [splitQuery(a), splitQuery(b)];
-  if (!left || !right) return "not all";
-  const type =
-    left[0] === "all" ? right[0] : right[0] === "all" || right[0] === left[0] ? left[0] : null;
+  const type = left && right ? sharedType(left[0], right[0]) : null;
   if (type === null) return "not all";
-  const conditions = [left[1], right[1]].filter((c): c is string => Boolean(c));
+  const conditions = [left![1], right![1]].filter((c): c is string => Boolean(c));
   if (conditions.length === 0) return type;
-  const condition =
-    type === "all" && conditions.length === 1
-      ? conditions[0]!
-      : conditions.map(group).join(" and ");
+  if (type === "all" && conditions.length === 1) return conditions[0]!;
+  const condition = conditions.map(group).join(" and ");
   return type === "all" ? condition : `${type} and ${condition}`;
+}
+
+function sharedType(left: string, right: string): string | null {
+  if (left === "all" || left === right) return right;
+  return right === "all" ? left : null;
 }
 
 /** Media Queries 4 §2.1: a list matches when any query does, so two lists intersect pairwise. */
@@ -57,23 +58,48 @@ function intersectMedia(outer: string, inner: string): string {
   return matching.length > 0 ? matching.join(", ") : "not all";
 }
 
+export interface StyleImport {
+  /** The whole rule, carrying the media its style applied under. */
+  rule: string;
+  /** The `url(...)` target; undefined for the string form. */
+  url?: string;
+  layerSupports: string;
+  media: string;
+}
+
+/** Removes each `@import` of a CSS style that `take` accepts, returning it under the media it applied under. */
+export function takeStyleImports(
+  el: Element,
+  take: (found: StyleImport) => boolean = () => true,
+): StyleImport[] {
+  const styleApplies = styleMedia(el);
+  if (styleApplies === undefined) return [];
+  const taken: StyleImport[] = [];
+  const rest = (el.textContent || "").replace(
+    CSS_IMPORT_RE,
+    (match, q1, url, q2, path, conditions: string) => {
+      const layerSupports = IMPORT_LAYER_SUPPORTS_RE.exec(conditions)![0];
+      const media = intersectMedia(styleApplies, conditions.slice(layerSupports.length).trim());
+      const target = url ? `url(${q1}${url}${q1})` : `${q2}${path}${q2}`;
+      const rule = styleApplies ? `@import ${target} ${layerSupports}${media};` : match.trim();
+      const found = { rule, url, layerSupports, media };
+      if (!take(found)) return match;
+      taken.push(found);
+      return "";
+    },
+  );
+  if (taken.length > 0) el.textContent = rest;
+  return taken;
+}
+
 /** Moves each distinct `@import` of the CSS `styles` to the front of the first,
  * keeping the media it applied under. */
 export function hoistStyleImports(styles: Element[]): void {
   const imports = new Set<string>();
   for (const el of styles) {
-    const media = styleMedia(el);
-    if (media === undefined) continue;
-    el.textContent = (el.textContent || "")
-      .replace(CSS_IMPORT_RE, (match, q1, url, q2, path, conditions: string) => {
-        if (!media) return (imports.add(match.trim()), "");
-        const layerSupports = IMPORT_LAYER_SUPPORTS_RE.exec(conditions)![0];
-        const own = conditions.slice(layerSupports.length).trim();
-        const target = url ? `url(${q1}${url}${q1})` : `${q2}${path}${q2}`;
-        imports.add(`@import ${target} ${layerSupports}${intersectMedia(media, own)};`);
-        return "";
-      })
-      .trim();
+    const taken = takeStyleImports(el);
+    if (taken.length > 0) el.textContent = (el.textContent || "").trim();
+    for (const { rule } of taken) imports.add(rule);
   }
   if (imports.size === 0) return;
   const hoisted = [...imports].join("\n\n");

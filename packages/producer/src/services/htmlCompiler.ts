@@ -48,6 +48,7 @@ import {
   parseHostVariableValues,
   inlineScriptRuns,
   hoistStyleImports,
+  takeStyleImports,
   insertBeforeCloseTag,
 } from "@hyperframes/core/compiler";
 import {
@@ -753,52 +754,30 @@ async function parseSubCompositions(
   return { subCompositions };
 }
 
-/**
- * Extract CSS `@import url(...)` rules that load external stylesheets (e.g. Google Fonts)
- * from inline `<style>` blocks and promote them to `<link rel="stylesheet">` +
- * `<link rel="preload">` in `<head>`.
- *
- * This moves font discovery from the CSS cascade to the document parser level so
- * Chromium's `load` event and `networkidle2` correctly track them, preventing
- * font-swap artifacts during frame capture.
- */
+/** Promotes each remote `@import url(...)` of a `<style>` to preload + stylesheet `<link>`s under
+ * its media, so `load`/`networkidle2` wait for it (e.g. Google Fonts) before frame capture. */
 function promoteCssImportsToLinkTags(html: string): string {
   const { document } = parseHTML(html);
   const head = document.querySelector("head");
   if (!head) return html;
 
-  const importRe = /@import\s+url\(\s*['"]?([^'")\s]+)['"]?\s*\)\s*;?/gi;
-  const seenUrls = new Set<string>();
-  const styleEls = document.querySelectorAll("style");
-
-  for (const styleEl of styleEls) {
-    const original = styleEl.textContent || "";
-    let modified = original;
-    let match: RegExpExecArray | null;
-    importRe.lastIndex = 0;
-    while ((match = importRe.exec(original)) !== null) {
-      const url = match[1] ?? "";
-      if (!url.startsWith("http://") && !url.startsWith("https://")) continue;
-      if (seenUrls.has(url)) {
-        modified = modified.replace(match[0], "");
-        continue;
+  const seen = new Set<string>();
+  for (const styleEl of document.querySelectorAll("style")) {
+    const remoteWithoutLayerOrSupports = takeStyleImports(
+      styleEl,
+      ({ url, layerSupports }) => /^https?:\/\//.test(url ?? "") && !layerSupports,
+    );
+    for (const { url, media } of remoteWithoutLayerOrSupports) {
+      if (seen.has(`${url} ${media}`)) continue;
+      seen.add(`${url} ${media}`);
+      for (const rel of ["preload", "stylesheet"]) {
+        const link = document.createElement("link");
+        link.setAttribute("rel", rel);
+        link.setAttribute("href", url!);
+        if (rel === "preload") link.setAttribute("as", "style");
+        if (media) link.setAttribute("media", media);
+        head.appendChild(link);
       }
-      seenUrls.add(url);
-      modified = modified.replace(match[0], "");
-
-      const preload = document.createElement("link");
-      preload.setAttribute("rel", "preload");
-      preload.setAttribute("href", url);
-      preload.setAttribute("as", "style");
-      head.appendChild(preload);
-
-      const link = document.createElement("link");
-      link.setAttribute("rel", "stylesheet");
-      link.setAttribute("href", url);
-      head.appendChild(link);
-    }
-    if (modified !== original) {
-      styleEl.textContent = modified;
     }
   }
 

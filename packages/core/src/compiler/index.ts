@@ -61,7 +61,7 @@ export { addScenePartsManifest } from "./scenePartsManifest";
 
 // Script ordering shared by the bundler and the producer coalescers
 export { inlineScriptRuns, type InlineScriptRun } from "./scriptRuns";
-export { hoistStyleImports } from "./styleImports";
+export { hoistStyleImports, takeStyleImports } from "./styleImports";
 
 // Static guard
 export {
