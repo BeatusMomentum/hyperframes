@@ -1373,6 +1373,7 @@ describe("bundleToSingleHtml", () => {
         media: el.getAttribute("media"),
         type: el.getAttribute("type"),
         css: el.textContent,
+        ...(el.hasAttribute("title") && { title: el.getAttribute("title") }),
       }));
     }
 
@@ -1431,6 +1432,23 @@ describe("bundleToSingleHtml", () => {
           "a.scss": "p{color:blue}",
         }),
       ).toEqual([]);
+    });
+
+    it("merges a titled style only with styles of the same title", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>a{color:red}</style><style title="t">b{color:red}</style><style title="t">i{color:red}</style>` +
+            `<style title="T">u{color:red}</style><style title="">s{color:red}</style><style>q{color:red}</style>` +
+            `<link rel="stylesheet" href="alt.css" title="u">`,
+          { "alt.css": "p{color:blue}" },
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "a{color:red}" },
+        { media: null, type: null, css: "b{color:red}\n\ni{color:red}", title: "t" },
+        { media: null, type: null, css: "u{color:red}", title: "T" },
+        { media: null, type: null, css: "s{color:red}\n\nq{color:red}", title: "" },
+        { media: null, type: null, css: "p{color:blue}", title: "u" },
+      ]);
     });
 
     it("keeps rule order across a conditional style", async () => {

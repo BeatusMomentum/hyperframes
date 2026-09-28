@@ -710,12 +710,11 @@ function pushRun<T>(runs: PartRun<T>[], scene: string | undefined, chunk: T): vo
   else runs.push({ scene, chunks: [chunk] });
 }
 
-// Styles merge only with neighbours the browser applies under the same condition; undefined = never merge.
 function cssStyleMergeKey(el: Element): string | undefined {
   const type = el.getAttribute("type") ?? "";
   if (type !== "" && type.toLowerCase() !== "text/css") return undefined;
   const media = (el.getAttribute("media") ?? "").trim().toLowerCase();
-  return media === "all" ? "" : media;
+  return JSON.stringify([media === "all" ? "" : media, el.getAttribute("title") ?? ""]);
 }
 
 function coalesceHeadStylesAndBodyScripts(document: Document): void {
@@ -999,7 +998,6 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
     rebaseEntryAuthoredAssetPaths(document, sourceDir, projectDir);
   }
 
-  // Inline local CSS: each sheet takes its <link>'s place and condition, so cascade order holds.
   for (const el of [...document.querySelectorAll('link[rel="stylesheet"]')]) {
     const href = el.getAttribute("href");
     if (!href || !isRelativeUrl(href) || cssStyleMergeKey(el) === undefined) continue;
@@ -1008,8 +1006,10 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
     const css = safeReadFile(cssPath);
     if (css == null) continue;
     const style = document.createElement("style");
-    const media = el.getAttribute("media");
-    if (media !== null) style.setAttribute("media", media);
+    for (const name of ["media", "title"]) {
+      const value = el.getAttribute(name);
+      if (value !== null) style.setAttribute(name, value);
+    }
     style.textContent = inlineCssFile(css, dirname(cssPath), projectDir);
     el.replaceWith(style);
   }
