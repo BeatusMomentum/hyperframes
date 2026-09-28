@@ -1356,6 +1356,144 @@ describe("bundleToSingleHtml", () => {
     expect(styleText(bundled)).not.toContain("@import");
   });
 
+  describe("head style coalescing", () => {
+    async function bundledHeadStyles(head: string, files: Record<string, string> = {}) {
+      const dir = makeTempProject({
+        ...files,
+        "index.html": `<!doctype html>
+<html><head>${head}</head><body>
+  <div data-composition-id="root" data-width="320" data-height="180"></div>
+  <script>window.__timelines = window.__timelines || {}; window.__timelines.root = {}</script>
+</body></html>`,
+      });
+      const { document } = parseHTML(await bundleToSingleHtml(dir));
+      return [
+        ...document.querySelectorAll("head style:not([data-hyperframes-text-rendering])"),
+      ].map((el) => ({
+        media: el.getAttribute("media"),
+        type: el.getAttribute("type"),
+        css: el.textContent,
+        ...(el.hasAttribute("title") && { title: el.getAttribute("title") }),
+      }));
+    }
+
+    it("does not merge a non-CSS style into CSS", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><style type="text/x-tpl">{{ a }}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: null, type: "text/x-tpl", css: "{{ a }}" },
+      ]);
+    });
+
+    it("still merges styles the browser applies under the same condition", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>a{color:red}</style><style type="text/css">b{color:red}</style>` +
+            `<style media="all">i{color:red}</style><style type="TEXT/CSS">u{color:red}</style>` +
+            `<style media=" ALL ">s{color:red}</style>` +
+            `<style media="print">a{color:blue}</style><style media="print">b{color:blue}</style>`,
+        ),
+      ).toEqual([
+        {
+          media: null,
+          type: null,
+          css: "a{color:red}\n\nb{color:red}\n\ni{color:red}\n\nu{color:red}\n\ns{color:red}",
+        },
+        { media: "print", type: null, css: "a{color:blue}\n\nb{color:blue}" },
+      ]);
+    });
+
+    it("inlines each linked sheet at its link's place with the link's media", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><link rel="stylesheet" href="print.css" media="print">` +
+            `<style>p{color:green}</style><link rel="stylesheet" href="late.css">`,
+          { "print.css": "p{color:blue}", "late.css": "p{color:black}" },
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: "print", type: null, css: "p{color:blue}" },
+        { media: null, type: null, css: "p{color:green}\n\np{color:black}" },
+      ]);
+    });
+
+    it("does not inline a linked sheet of a non-CSS type as CSS", async () => {
+      expect(
+        await bundledHeadStyles(`<link rel="stylesheet" type="text/x-scss" href="a.scss">`, {
+          "a.scss": "p{color:blue}",
+        }),
+      ).toEqual([]);
+    });
+
+    it("does not inline a disabled linked sheet", async () => {
+      expect(
+        await bundledHeadStyles(`<link rel="stylesheet" href="a.css" disabled>`, {
+          "a.css": "p{color:blue}",
+        }),
+      ).toEqual([]);
+    });
+
+    it("merges a titled style only with styles of the same title", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>a{color:red}</style><style title="t">b{color:red}</style><style title="t">i{color:red}</style>` +
+            `<style title="T">u{color:red}</style><style title="">s{color:red}</style><style>q{color:red}</style>` +
+            `<link rel="stylesheet" href="alt.css" title="u">`,
+          { "alt.css": "p{color:blue}" },
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "a{color:red}" },
+        { media: null, type: null, css: "b{color:red}\n\ni{color:red}", title: "t" },
+        { media: null, type: null, css: "u{color:red}", title: "T" },
+        { media: null, type: null, css: "s{color:red}\n\nq{color:red}", title: "" },
+        { media: null, type: null, css: "p{color:blue}", title: "u" },
+      ]);
+    });
+
+    it("keeps a composition's print style print-only and its non-CSS style out of CSS", async () => {
+      const comp = (
+        id: string,
+      ) => `<div data-composition-id="${id}" data-width="320" data-height="180">
+  <style media="print">.${id}-p{color:blue}</style><style type="text/x-tpl">.${id}-t{color:red}</style>
+  <p class="${id}-p">x</p></div>`;
+      const dir = makeTempProject({
+        "index.html": `<!doctype html>
+<html><head></head><body>
+  <div data-composition-id="root" data-width="320" data-height="180">
+    <div data-composition-id="file" data-composition-src="file.html"></div>
+    <div data-composition-id="inline"></div>
+  </div>
+  <template id="inline-template">${comp("inline")}</template>
+  <script>window.__timelines = window.__timelines || {}; window.__timelines.root = {}</script>
+</body></html>`,
+        "file.html": `<template id="file-template">${comp("file")}</template>`,
+      });
+      const { document } = parseHTML(await bundleToSingleHtml(dir));
+      const css = (selector: string) =>
+        [...document.querySelectorAll(selector)].map((el) => el.textContent).join("\n");
+      for (const id of ["file", "inline"]) {
+        expect(css('style[media="print"]')).toContain(`.${id}-p{color:blue}`);
+        expect(css("style:not([media]):not([type])")).not.toContain(`.${id}-p{`);
+        expect(css("style:not([type])")).not.toContain(`.${id}-t{`);
+      }
+    });
+
+    it("keeps rule order across a conditional style", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><style media="print">p{color:blue}</style><style>p{color:green}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: "print", type: null, css: "p{color:blue}" },
+        { media: null, type: null, css: "p{color:green}" },
+      ]);
+    });
+  });
+
   it("preserves @import for absolute URLs", async () => {
     const dir = makeTempProject({
       "index.html": `<!doctype html>
