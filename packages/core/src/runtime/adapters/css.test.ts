@@ -225,7 +225,9 @@ describe("css adapter", () => {
     });
 
     it("a name with a comma, which computed style escapes", () => {
-      vi.stubGlobal("CSS", { escape: (name: string) => name.replace(/,/g, "\\,") });
+      vi.stubGlobal("CSS", {
+        escape: (name: string) => name.replace(/\\/g, "\\\\").replace(/,/g, "\\,"),
+      });
       named(new Map([[a, "pulse, n\\,m"]]));
       const comma = Object.assign(makeAnimation(a), { animationName: "n,m" });
       seekLive([comma]);
@@ -233,7 +235,9 @@ describe("css adapter", () => {
     });
 
     it("a name ending in a space, which computed style escapes", () => {
-      vi.stubGlobal("CSS", { escape: (name: string) => name.replace(/ /g, "\\ ") });
+      vi.stubGlobal("CSS", {
+        escape: (name: string) => name.replace(/\\/g, "\\\\").replace(/ /g, "\\ "),
+      });
       named(new Map([[a, "nm\\ , pulse"]]));
       const spaced = Object.assign(makeAnimation(a), { animationName: "nm " });
       seekLive([spaced]);
