@@ -581,15 +581,16 @@ function describeError(err: unknown): string {
 }
 
 /** A missing WebGPU adapter is the runner, not the item: it keeps its committed poster and video. */
-function reportItemFailure(item: CatalogItem, err: unknown): void {
+function reportItemFailure(item: CatalogItem, err: unknown): boolean {
   const message = describeError(err);
   if (!MISSING_ADAPTER.test(message)) {
     console.error(`  ✗ ${item.name}: ${message}`);
-    return;
+    return true;
   }
   console.log(
     `  – ${item.name}: no WebGPU adapter on this runner, keeping its committed poster and video`,
   );
+  return false;
 }
 
 async function generateItem(item: CatalogItem, skipVideo: boolean): Promise<void> {
@@ -598,11 +599,32 @@ async function generateItem(item: CatalogItem, skipVideo: boolean): Promise<void
   try {
     await generateThumbnail(item, projectDir);
     if (!skipVideo) await generateVideo(item, projectDir);
-  } catch (err) {
-    reportItemFailure(item, err);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
   }
+}
+
+/** Whether the item rendered, counting a runner without a WebGPU adapter as rendered. */
+async function rendered(item: CatalogItem, skipVideo: boolean, generate: typeof generateItem) {
+  try {
+    await generate(item, skipVideo);
+    return true;
+  } catch (err) {
+    return !reportItemFailure(item, err);
+  }
+}
+
+/** Renders every item, then throws naming the ones that failed so the command exits non-zero. */
+export async function generateAll(
+  items: CatalogItem[],
+  skipVideo: boolean,
+  generate = generateItem,
+): Promise<void> {
+  const failed: string[] = [];
+  for (const item of items)
+    if (!(await rendered(item, skipVideo, generate))) failed.push(item.name);
+  if (failed.length > 0)
+    throw new Error(`${failed.length} item(s) failed to render: ${failed.join(", ")}`);
 }
 
 async function main(): Promise<void> {
@@ -613,7 +635,7 @@ async function main(): Promise<void> {
     `Generating catalog previews for ${items.length} item(s)${skipVideo ? " (thumbnails only)" : " + videos"}...\n`,
   );
 
-  for (const item of items) await generateItem(item, skipVideo);
+  await generateAll(items, skipVideo);
 
   console.log("\nDone.");
 }
