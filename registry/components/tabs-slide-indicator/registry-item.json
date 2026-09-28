@@ -61,8 +61,5 @@
       "description": "The tab names, separated by commas. Two or more names rebuild the row.",
       "default": "Plan,Debug,Ask"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/tabs-slide-indicator.png"
-  }
+  ]
 }

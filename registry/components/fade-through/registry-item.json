@@ -50,8 +50,5 @@
         { "value": "bloom", "label": "Bloom" }
       ]
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/fade-through.png"
-  }
+  ]
 }

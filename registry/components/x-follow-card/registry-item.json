@@ -11,8 +11,5 @@
       "target": "compositions/components/x-follow-card.html",
       "type": "hyperframes:snippet"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/x-follow-card.png"
-  }
+  ]
 }

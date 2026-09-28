@@ -59,8 +59,5 @@
       "step": 4,
       "unit": "px"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/menu-morph.png"
-  }
+  ]
 }

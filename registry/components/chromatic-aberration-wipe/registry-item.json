@@ -73,8 +73,5 @@
       "step": 0.1,
       "unit": "x"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/chromatic-aberration-wipe.png"
-  }
+  ]
 }

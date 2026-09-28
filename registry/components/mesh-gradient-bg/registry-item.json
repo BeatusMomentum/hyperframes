@@ -11,8 +11,5 @@
       "target": "compositions/components/mesh-gradient-bg.html",
       "type": "hyperframes:snippet"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/mesh-gradient-bg.png"
-  }
+  ]
 }

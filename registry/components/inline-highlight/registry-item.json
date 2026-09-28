@@ -53,8 +53,5 @@
         { "value": "center", "label": "Center" }
       ]
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/inline-highlight.png"
-  }
+  ]
 }

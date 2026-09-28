@@ -58,8 +58,5 @@
         { "value": "solid", "label": "Solid" }
       ]
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/panel-reveal.png"
-  }
+  ]
 }

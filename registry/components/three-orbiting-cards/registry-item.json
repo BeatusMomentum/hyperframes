@@ -11,8 +11,5 @@
       "target": "compositions/components/three-orbiting-cards.html",
       "type": "hyperframes:snippet"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/three-orbiting-cards.png"
-  }
+  ]
 }

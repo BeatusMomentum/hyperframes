@@ -60,8 +60,5 @@
       "description": "Comma separated pill labels. The list is laid down twice so the strip still reads as a continuous loop.",
       "default": "COMPONENTS, PRIMITIVES, TRANSITIONS, AGENTS"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/perspective-marquee.png"
-  }
+  ]
 }

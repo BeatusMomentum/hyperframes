@@ -57,8 +57,5 @@
       "target": "compositions/components/directional-wipe.html",
       "type": "hyperframes:snippet"
     }
-  ],
-  "preview": {
-    "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/directional-wipe.png"
-  }
+  ]
 }
