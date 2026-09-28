@@ -144,22 +144,17 @@ function collectHostWindows(html: string): Map<string, HostWindow> {
   return windows;
 }
 
-/**
- * Shift a scene-relative window onto the root timeline.
- * Returns null when the clip starts after its host has already ended, matching
- * the `start < absoluteEnd` drop the file-tree walk applied.
- */
+/** Shift a scene-relative window onto the root timeline, clamping its end to the host's. */
 function toAbsoluteWindow(
   start: number,
   end: number,
   window: HostWindow,
-): { start: number; end: number } | null {
+): { start: number; end: number } {
   const absoluteStart = resolveAbsoluteMediaStartSeconds({
     authoredStart: start,
     hostStart: window.offset,
     basis: window.basis,
   });
-  if (absoluteStart >= window.limit) return null;
   const absoluteEnd = resolveAbsoluteMediaStartSeconds({
     authoredStart: end,
     hostStart: window.offset,
@@ -168,22 +163,22 @@ function toAbsoluteWindow(
   return { start: absoluteStart, end: Math.min(absoluteEnd, window.limit) };
 }
 
+type MediaKind = "video" | "audio" | "image";
+
 /** A clip that starts at or after its host's end never plays; say so rather than drop it silently. */
 function warnStartsPastHostEnd(
   log: ProducerLogger,
+  kind: MediaKind,
   id: string,
-  authoredStart: number,
+  start: number,
   window: HostWindow,
 ): void {
-  const start = resolveAbsoluteMediaStartSeconds({
-    authoredStart,
-    hostStart: window.offset,
-    basis: window.basis,
-  });
+  const basisHint =
+    kind === "image" ? "" : '; mark a root-timeline start with data-hf-media-start-basis="global"';
   log.warn(
     `[Compiler] Media "${id}" starts at ${start}s, at or after its host "${window.limitHost}" ` +
       `ends at ${window.limit}s, so it is not rendered. data-start inside a sub-composition ` +
-      `is local to it; mark a root-timeline start with data-hf-media-start-basis="global".`,
+      `is local to it${basisHint}.`,
     { mediaId: id, host: window.limitHost, start, hostEnd: window.limit, basis: window.basis },
   );
 }
@@ -204,22 +199,24 @@ export interface RenderMedia {
  */
 export function collectRenderMedia(html: string, log: ProducerLogger = defaultLogger): RenderMedia {
   const windows = collectHostWindows(html);
-  const place = (id: string, start: number, end: number, reportDrop = true) => {
+  // The one drop decision: a clip that starts at or after its host's end is not rendered.
+  const place = (kind: MediaKind, id: string, start: number, end: number, reportDrop = true) => {
     const window = windows.get(id) ?? ROOT_WINDOW;
     const absolute = toAbsoluteWindow(start, end, window);
-    if (!absolute && reportDrop) warnStartsPastHostEnd(log, id, start, window);
-    return absolute;
+    if (absolute.start < window.limit) return absolute;
+    if (reportDrop) warnStartsPastHostEnd(log, kind, id, absolute.start, window);
+    return null;
   };
 
   const videos: VideoElement[] = [];
   for (const video of parseVideoElements(html)) {
-    const absolute = place(video.id, video.start, video.end);
+    const absolute = place("video", video.id, video.start, video.end);
     if (absolute) videos.push({ ...video, ...absolute });
   }
 
   const images: ImageElement[] = [];
   for (const image of parseImageElements(html)) {
-    const absolute = place(image.id, image.start, image.end);
+    const absolute = place("image", image.id, image.start, image.end);
     if (absolute) images.push({ ...image, ...absolute });
   }
 
@@ -232,7 +229,7 @@ export function collectRenderMedia(html: string, log: ProducerLogger = defaultLo
     // unbounded track must stay unbounded rather than collapse onto its start.
     const authoredEnd = audio.end > 0 ? audio.end : Infinity;
     // A video's own audio track is dropped with the video, which already warned.
-    const absolute = place(elementId, audio.start, authoredEnd, audio.type !== "video");
+    const absolute = place("audio", elementId, audio.start, authoredEnd, audio.type !== "video");
     if (!absolute) continue;
     audios.push({
       ...audio,

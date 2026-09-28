@@ -823,6 +823,36 @@ describe("detectRenderModeHints", () => {
     ).rejects.toThrow(/compositions\/intro\.html[\s\S]*compositions\/outro\.html/);
   });
 
+  it("compileForRender sends a clip dropped past its host's end to the supplied logger", async () => {
+    const projectDir = makeSubCompProject(
+      "hf-late-clip-",
+      [{ id: "intro", src: "compositions/intro.html" }],
+      {
+        "intro.html": validSubCompHtml("intro", "Intro").replace(
+          '<div class="title">Intro</div>',
+          '<video id="late" src="late.mp4" data-start="1" data-duration="1" muted></video>',
+        ),
+      },
+    );
+    writeFileSync(join(projectDir, "late.mp4"), "fake-mp4");
+    const warnings: string[] = [];
+    const log = { ...defaultLogger, warn: (message: string) => warnings.push(message) };
+
+    const compiled = await compileForRender(
+      projectDir,
+      join(projectDir, "index.html"),
+      projectDir,
+      {
+        log,
+      },
+    );
+
+    expect(compiled.videos).toHaveLength(0);
+    expect(
+      warnings.some((w) => w.includes('Media "late" starts at 1s') && w.includes('"intro"')),
+    ).toBe(true);
+  });
+
   it("compileForRender aborts when a data-composition-src reference points at a missing file", async () => {
     const projectDir = makeSubCompProject(
       "hf-missing-subcomp-",

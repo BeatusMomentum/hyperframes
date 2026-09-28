@@ -133,4 +133,18 @@ describe("collectRenderMedia host windows", () => {
       hostEnd: 6,
     });
   });
+
+  it("leaves the basis hint out for an image, where the basis does not apply", () => {
+    const html =
+      `<div data-composition-file="card.html" data-composition-id="card" data-start="3" data-duration="3">` +
+      `<img ${MEDIA_RENDER_ID_ATTR}="late-card" id="late-card" src="card.png" data-start="4" data-duration="1" />` +
+      `</div>`;
+
+    const { log, warnings } = captureLogger();
+    const { images } = collectRenderMedia(html, log);
+    expect(images).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain('Media "late-card" starts at 7s');
+    expect(warnings[0]?.message).not.toContain("data-hf-media-start-basis");
+  });
 });
