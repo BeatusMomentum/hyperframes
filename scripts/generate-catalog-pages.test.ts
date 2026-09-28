@@ -24,6 +24,7 @@ import { runInNewContext } from "node:vm";
 import { prepareSrcForElement } from "../packages/player/src/shader-options.ts";
 import {
   mdxStringAttribute,
+  recordedProps,
   stageProps,
   variableBootstrap,
   variablePreviewWrapper,
@@ -300,6 +301,19 @@ describe("stageProps recorded-clip guard", () => {
   it("offers the recorded fallback only when the manifest has a clip", () => {
     assert.ok(stageProps("block", frost).includes("  webgpu"));
     assert.deepEqual(stageProps("block", { ...frost, preview: undefined }), []);
+  });
+});
+
+describe("recordedProps", () => {
+  it("emits only the media the manifest links, never a guessed URL", () => {
+    const video = "https://cdn.example/a.mp4";
+    const poster = "https://cdn.example/a.png";
+    assert.deepEqual(recordedProps({ preview: { video, poster } }), [
+      `  video="${video}"`,
+      `  poster="${poster}"`,
+    ]);
+    assert.deepEqual(recordedProps({ preview: { poster } }), [`  poster="${poster}"`]);
+    assert.deepEqual(recordedProps({}), []);
   });
 });
 

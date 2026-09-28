@@ -592,15 +592,6 @@ export function variablePreviewWrapper(src: string): string[] {
   ];
 }
 
-function catalogPreviewFor(kind: ItemKind, manifest: RegistryItem): string | undefined {
-  // The manifest is the source of truth. Thirteen items declare a preview with
-  // a video and no poster, and that omission is deliberate — no .png was ever
-  // produced for them.
-  if (manifest.preview) return manifest.preview.poster;
-  const dir = typeDir(kind);
-  return `${catalogImageBase}/${dir}/${manifest.name}.png`;
-}
-
 function yamlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -860,18 +851,18 @@ export function stageProps(kind: ItemKind, manifest: RegistryItem): string[] {
   if (hasPayload(kind, manifest.name)) {
     // The recorded clip is the fallback for a browser with no WebGPU adapter.
     if (!manifest.preview?.video || !payloadUsesWebgpu(kind, manifest.name)) return [];
-    return [...recordedProps(kind, manifest), "  webgpu"];
+    return [...recordedProps(manifest), "  webgpu"];
   }
   const flag = unsupportedFlag(kind, manifest.name);
   // A recorded video still plays without the flag, so it wins over the notice.
   if (flag && !manifest.preview?.video) return [`  needsFlag="${flag}"`];
-  return recordedProps(kind, manifest);
+  return recordedProps(manifest);
 }
 
-function recordedProps(kind: ItemKind, manifest: RegistryItem): string[] {
-  const previewPath = `${catalogImageBase}/${typeDir(kind)}/${manifest.name}`;
-  const posterUrl = catalogPreviewFor(kind, manifest);
-  return [`  video="${previewPath}.mp4"`, ...(posterUrl ? [`  poster="${posterUrl}"`] : [])];
+/** The manifest's `preview` is the one record of which recorded media exist. */
+export function recordedProps(manifest: Pick<RegistryItem, "preview">): string[] {
+  const { video, poster } = manifest.preview ?? {};
+  return [...(video ? [`  video="${video}"`] : []), ...(poster ? [`  poster="${poster}"`] : [])];
 }
 
 /** How to use it. Empty when a human already wrote that section by hand. */
@@ -1179,7 +1170,7 @@ function main(): void {
       description: manifest.description,
       tags: manifest.tags ?? [],
       href: `/catalog/${dir}/${manifest.name}`,
-      preview: catalogPreviewFor(kind, manifest),
+      preview: manifest.preview?.poster,
     });
   }
 
