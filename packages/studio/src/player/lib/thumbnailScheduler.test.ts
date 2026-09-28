@@ -45,6 +45,21 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+function deferredVideo(key: string) {
+  const job: { signal?: AbortSignal; loadStarted?: () => void } = {};
+  const deferred = request(
+    key,
+    (signal, started) => {
+      job.signal ??= signal;
+      job.loadStarted ??= started;
+      return new Promise<ThumbnailLoadedResult>(() => {});
+    },
+    "visible",
+    { kind: "video", timeoutFromLoadStart: true },
+  );
+  return { request: deferred, job };
+}
+
 async function settle(): Promise<void> {
   for (let tick = 0; tick < 20; tick++) await Promise.resolve();
 }
@@ -414,29 +429,16 @@ describe("ThumbnailScheduler", () => {
     const scheduler = new ThumbnailScheduler(
       resolveTimelineViewportBudgets({ thumbnailLoadTimeoutMs: 10 }),
     );
-    let signal: AbortSignal | undefined;
-    let loadStarted: (() => void) | undefined;
-    const lease = scheduler.acquire(
-      request(
-        "waiting-for-connection",
-        (activeSignal, started) => {
-          signal ??= activeSignal;
-          loadStarted ??= started;
-          return new Promise<ThumbnailLoadedResult>(() => {});
-        },
-        "visible",
-        { kind: "video", timeoutFromLoadStart: true },
-      ),
-      vi.fn(),
-    );
+    const { request: deferred, job } = deferredVideo("waiting-for-connection");
+    const lease = scheduler.acquire(deferred, vi.fn());
 
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(signal?.aborted).toBe(false);
-    loadStarted?.();
+    expect(job.signal?.aborted).toBe(false);
+    job.loadStarted?.();
     await vi.advanceTimersByTimeAsync(9);
-    expect(signal?.aborted).toBe(false);
+    expect(job.signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(2);
-    expect(signal?.aborted).toBe(true);
+    expect(job.signal?.aborted).toBe(true);
     lease.release();
     vi.useRealTimers();
   });
@@ -505,25 +507,16 @@ describe("ThumbnailScheduler", () => {
     vi.useRealTimers();
   });
 
-  it("fails a video load that never starts at the cap and frees its slot", async () => {
+  it("fails a video load that gets no first response by the cap and frees its slot", async () => {
     vi.useFakeTimers();
     const scheduler = new ThumbnailScheduler(
       resolveTimelineViewportBudgets({
         concurrentVideoDecodes: 1,
         thumbnailLoadTimeoutMs: 10,
-        thumbnailLoadCapMs: 50,
+        thumbnailFirstResponseCapMs: 50,
       }),
     );
-    let signal: AbortSignal | undefined;
-    const stuck = request(
-      "stuck",
-      (activeSignal) => {
-        signal ??= activeSignal;
-        return new Promise<ThumbnailLoadedResult>(() => {});
-      },
-      "visible",
-      { kind: "video", timeoutFromLoadStart: true },
-    );
+    const { request: stuck, job } = deferredVideo("stuck");
     const nextLoad = vi.fn(async () => result("next"));
     scheduler.acquire(stuck, vi.fn());
     scheduler.acquire(request("next", nextLoad, "visible", { kind: "video" }), vi.fn());
@@ -532,7 +525,7 @@ describe("ThumbnailScheduler", () => {
     expect(nextLoad).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2);
     await settle();
-    expect(signal?.aborted).toBe(true);
+    expect(job.signal?.aborted).toBe(true);
     expect(nextLoad).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(51);
     await settle();
@@ -540,6 +533,27 @@ describe("ThumbnailScheduler", () => {
       status: "error",
       error: { message: "Thumbnail load timed out after 50ms" },
     });
+    vi.useRealTimers();
+  });
+
+  it("gives a load that starts just before the cap its full timeout", async () => {
+    vi.useFakeTimers();
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({
+        thumbnailLoadTimeoutMs: 30,
+        thumbnailFirstResponseCapMs: 50,
+      }),
+    );
+    const { request: deferred, job } = deferredVideo("late-start");
+    const lease = scheduler.acquire(deferred, vi.fn());
+
+    await vi.advanceTimersByTimeAsync(45);
+    job.loadStarted?.();
+    await vi.advanceTimersByTimeAsync(29);
+    expect(job.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(job.signal?.aborted).toBe(true);
+    lease.release();
     vi.useRealTimers();
   });
 });

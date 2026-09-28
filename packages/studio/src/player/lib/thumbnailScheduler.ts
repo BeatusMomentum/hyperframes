@@ -475,11 +475,13 @@ export class ThumbnailScheduler {
           controller.abort();
           reject(new ThumbnailTimeoutError(`Thumbnail load timed out after ${ms}ms`));
         }, ms);
-      cap = failAfter(this.budgets.thumbnailLoadCapMs);
+      if (entry.request.timeoutFromLoadStart) {
+        cap = failAfter(this.budgets.thumbnailFirstResponseCapMs);
+      }
       const startTimeout = () => {
-        if (!settled && timeout === undefined) {
-          timeout = failAfter(this.budgets.thumbnailLoadTimeoutMs);
-        }
+        if (settled || timeout !== undefined) return;
+        clearTimeout(cap);
+        timeout = failAfter(this.budgets.thumbnailLoadTimeoutMs);
       };
 
       let load: Promise<ThumbnailLoadedResult>;
