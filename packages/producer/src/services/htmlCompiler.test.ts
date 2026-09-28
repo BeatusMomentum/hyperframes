@@ -1546,17 +1546,41 @@ describe("template-wrapped sub-composition media offsets", () => {
 // `injectTextRenderingRule` in htmlCompiler.ts for full context.
 
 describe("lifted @import media", () => {
+  const sceneStyle = `<style>@import url("scene.css"); .t { color: red; }</style>`;
   it.each([
     [
       `<style media="print">@import url("p.css"); .p { color: blue; }</style>`,
-      `@import url("p.css") print;`,
+      "",
+      [
+        ["print", [`@import url("p.css");`]],
+        [null, [`@import url("scene.css");`]],
+      ],
     ],
     [
       `<style media="print">@import url("w.css") (min-width: 600px);</style>`,
-      `@import url("w.css") print and (min-width: 600px);`,
+      "",
+      [
+        ["print", [`@import url("w.css") (min-width: 600px);`]],
+        [null, [`@import url("scene.css");`]],
+      ],
     ],
-    [`<style type="text/x-template">@import url("t.css");</style>`, ""],
-  ])("places the @imports of %s as the scene-parts bundle does", async (head, lifted) => {
+    [
+      `<style type="text/x-template">@import url("t.css");</style>`,
+      "",
+      [
+        [null, [`@import url("t.css");`]],
+        [null, [`@import url("scene.css");`]],
+      ],
+    ],
+    [
+      "",
+      `<style media="print">@import url("c.css"); .c { color: red; }</style>`,
+      [
+        [null, [`@import url("scene.css");`]],
+        ["print", [`@import url("c.css");`]],
+      ],
+    ],
+  ])("places the @imports of %s%s as the scene-parts bundle does", async (head, extra, placed) => {
     const projectDir = mkdtempSync(join(tmpdir(), "hf-lifted-import-"));
     mkdirSync(join(projectDir, "compositions"));
     writeFileSync(
@@ -1568,8 +1592,7 @@ describe("lifted @import media", () => {
     );
     writeFileSync(
       join(projectDir, "compositions/a.html"),
-      `<template id="a-template"><div data-composition-id="a">
-  <style>@import url("scene.css"); .t { color: red; }</style></div></template>`,
+      `<template id="a-template"><div data-composition-id="a">${sceneStyle}${extra}</div></template>`,
     );
     const importsByStyle = (html: string) =>
       [...parseHTML(html).document.querySelectorAll("head style")]
@@ -1577,10 +1600,9 @@ describe("lifted @import media", () => {
         .filter(([, imports]) => imports!.length > 0);
 
     const render = await compileForRender(projectDir, join(projectDir, "index.html"), projectDir);
-    const expected = [lifted, `@import url("scene.css");`].filter(Boolean);
-    expect(importsByStyle(render.html)[0]).toEqual([null, expected]);
-    expect(importsByStyle(render.html)).toEqual(
-      importsByStyle(await bundleToSingleHtml(projectDir, { sceneParts: true })),
+    expect(importsByStyle(render.html)).toEqual(placed);
+    expect(importsByStyle(await bundleToSingleHtml(projectDir, { sceneParts: true }))).toEqual(
+      placed,
     );
   });
 

@@ -49,6 +49,7 @@ import {
   headStyleRuns,
   inlineScriptRuns,
   takeStyleImports,
+  joinCssHoistingImports,
   styleElementsFor,
   insertBeforeCloseTag,
 } from "@hyperframes/core/compiler";
@@ -768,15 +769,17 @@ function promoteCssImportsToLinkTags(html: string): string {
       styleEl,
       ({ url, layerSupports }) => /^https?:\/\//.test(url ?? "") && !layerSupports,
     );
+    const title = styleEl.getAttribute("title");
     for (const { url, media } of remoteWithoutLayerOrSupports) {
-      if (seen.has(`${url} ${media}`)) continue;
-      seen.add(`${url} ${media}`);
+      if (seen.has(`${url} ${media} ${title}`)) continue;
+      seen.add(`${url} ${media} ${title}`);
       for (const rel of ["preload", "stylesheet"]) {
         const link = document.createElement("link");
         link.setAttribute("rel", rel);
         link.setAttribute("href", url!);
         if (rel === "preload") link.setAttribute("as", "style");
         if (media) link.setAttribute("media", media);
+        if (title && rel === "stylesheet") link.setAttribute("title", title);
         head.appendChild(link);
       }
     }
@@ -851,29 +854,9 @@ function coalesceHeadStylesAndBodyScripts(html: string): string {
   if (!head) return html;
 
   const styleEls = Array.from(head.querySelectorAll("style"));
-  const importRe = /@import\s+url\([^)]*\)\s*;|@import\s+["'][^"']+["']\s*;/gi;
   const headSheets = Array.from(head.querySelectorAll("style, link"));
   for (const run of styleEls.length > 1 ? headStyleRuns(headSheets) : []) {
-    const imports: string[] = [];
-    const cssParts: string[] = [];
-    const seenImports = new Set<string>();
-
-    for (const el of run) {
-      const raw = (el.textContent || "").trim();
-      if (!raw) continue;
-      const nonImportCss = raw.replace(importRe, (match) => {
-        const cleaned = match.trim();
-        if (!seenImports.has(cleaned)) {
-          seenImports.add(cleaned);
-          imports.push(cleaned);
-        }
-        return "";
-      });
-      const trimmedCss = nonImportCss.trim();
-      if (trimmedCss) cssParts.push(trimmedCss);
-    }
-
-    const mergedCss = [...imports, ...cssParts].join("\n\n").trim();
+    const mergedCss = joinCssHoistingImports(run.map((el) => el.textContent || ""));
     if (!mergedCss) continue;
     run[0]!.textContent = mergedCss;
     for (const el of run.slice(1)) el.remove();

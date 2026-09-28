@@ -255,6 +255,39 @@ describe("preview/render semantic compilation parity", () => {
     expect(sheets(render.html)).toEqual(["p{color:red}", "x.css", "p{color:blue}"]);
   });
 
+  it("places head styles around a stylesheet link alike in bundle, render and scene-parts preview", async () => {
+    const dir = project({
+      "index.html": shell(
+        `<main data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1">
+  <div data-composition-id="a" data-composition-src="a.html" data-start="0" data-duration="1"></div></main>`,
+        `<style>p{color:red}</style><link rel="stylesheet" href="x.css" disabled><style>p{color:blue}</style>`,
+      ),
+      "a.html": `<template id="a-template"><div data-composition-id="a"><style>b{color:green}</style></div></template>`,
+      "x.css": "p{color:green}",
+    });
+    const sheets = (html: string) => {
+      const placed: string[] = [];
+      const head = new DOMParser().parseFromString(html, "text/html").head;
+      for (const el of head.querySelectorAll('style, link[rel="stylesheet"]')) {
+        if (el.hasAttribute("data-hyperframes-text-rendering")) continue;
+        const text = el.getAttribute("href") ?? (el.textContent ?? "").replace(/\s+/g, "");
+        const joinsPrevious =
+          el.tagName === "STYLE" && placed.length > 0 && placed.at(-1) !== "x.css";
+        if (joinsPrevious) placed[placed.length - 1] += text;
+        else placed.push(text);
+      }
+      return placed;
+    };
+    const bundle = sheets(await bundleToSingleHtml(dir));
+    const render = await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
+      allowSystemFontCapture: false,
+    });
+    expect(bundle).toHaveLength(3);
+    expect(bundle[1]).toBe("x.css");
+    expect(sheets(render.html)).toEqual(bundle);
+    expect(sheets(await bundleToSingleHtml(dir, { sceneParts: true }))).toEqual(bundle);
+  });
+
   it("keeps legacy end/layer timing semantically identical", async () => {
     const result = await contracts({
       "index.html":

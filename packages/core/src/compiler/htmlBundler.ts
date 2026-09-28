@@ -6,7 +6,7 @@ import {
   styleElementsFor,
   type CompositionStyle,
 } from "./scriptRuns";
-import { CSS_IMPORT_RE, hoistStyleImports } from "./styleImports";
+import { CSS_IMPORT_RE, hoistStyleImports, joinCssHoistingImports } from "./styleImports";
 import { SCENE_PART_ATTR } from "../sceneParts";
 import {
   ensureExternalScriptTag,
@@ -672,25 +672,12 @@ function autoHealMissingCompositionIds(document: Document): void {
   }
 }
 
-/** Join stylesheets into one, moving every distinct `@import` to the front, where CSS allows it. */
-function joinCssHoistingImports(sheets: string[]): string {
-  const imports = new Set<string>();
-  const cssParts: string[] = [];
-  for (const sheet of sheets) {
-    const rest = sheet.trim().replace(CSS_IMPORT_RE, (match) => {
-      imports.add(match.trim());
-      return "";
-    });
-    if (rest.trim()) cssParts.push(rest.trim());
-  }
-  return [...imports, ...cssParts].join("\n\n").trim();
-}
-
-// A render joins every head style into one sheet at the first one's place, each distinct @import first.
+// A render joins each run of same-condition head styles at its first one's place, its @imports first.
 function placeSceneStylesLikeRender(document: Document): void {
-  const styles = [...document.querySelectorAll("head style")];
-  styles.slice(1).reduce((previous, el) => (previous.after(el), el), styles[0]!);
-  hoistStyleImports(styles);
+  for (const run of headStyleRuns([...document.querySelectorAll("head style, head link")])) {
+    run.slice(1).reduce((previous, el) => (previous.after(el), el), run[0]!);
+    hoistStyleImports(run);
+  }
 }
 
 function isAlwaysAppliedStyle(el: Element): boolean {

@@ -69,7 +69,7 @@ export {
   type CompositionStyle,
   type InlineScriptRun,
 } from "./scriptRuns";
-export { hoistStyleImports, takeStyleImports } from "./styleImports";
+export { joinCssHoistingImports, takeStyleImports } from "./styleImports";
 
 // Static guard
 export {

@@ -1,4 +1,5 @@
 import { SCENE_PART_ATTR } from "../sceneParts";
+import { cssStyleMergeKey } from "./scriptRuns";
 
 export const CSS_IMPORT_RE =
   /@import\s+(?:url\(\s*(["']?)([^)"']+)\1\s*\)|(["'])([^"']+)\3)\s*([^;]*);\s*/g;
@@ -10,10 +11,8 @@ const TYPED_QUERY_RE = /^(?:only\s+)?([a-z-]+)(?:\s+and\s+([\s\S]+))?$/i;
 
 /** The media a style applies under: "" for always, undefined when the browser does not read it as CSS. */
 function styleMedia(el: Element): string | undefined {
-  const type = el.getAttribute("type") ?? "";
-  if (type !== "" && type.toLowerCase() !== "text/css") return undefined;
-  const media = (el.getAttribute("media") ?? "").trim();
-  return media.toLowerCase() === "all" ? "" : media;
+  const key = cssStyleMergeKey(el);
+  return key === undefined ? undefined : (JSON.parse(key) as [string, string])[0];
 }
 
 function mediaQueries(list: string): string[] {
@@ -59,8 +58,6 @@ function intersectMedia(outer: string, inner: string): string {
 }
 
 export interface StyleImport {
-  /** The whole rule, carrying the media its style applied under. */
-  rule: string;
   /** The `url(...)` target; undefined for the string form. */
   url?: string;
   layerSupports: string;
@@ -77,12 +74,10 @@ export function takeStyleImports(
   const taken: StyleImport[] = [];
   const rest = (el.textContent || "").replace(
     CSS_IMPORT_RE,
-    (match, q1, url, q2, path, conditions: string) => {
+    (match, _q1, url, _q2, _path, conditions: string) => {
       const layerSupports = IMPORT_LAYER_SUPPORTS_RE.exec(conditions)![0];
       const media = intersectMedia(styleApplies, conditions.slice(layerSupports.length).trim());
-      const target = url ? `url(${q1}${url}${q1})` : `${q2}${path}${q2}`;
-      const rule = styleApplies ? `@import ${target} ${layerSupports}${media};` : match.trim();
-      const found = { rule, url, layerSupports, media };
+      const found = { url, layerSupports, media };
       if (!take(found)) return match;
       taken.push(found);
       return "";
@@ -92,23 +87,34 @@ export function takeStyleImports(
   return taken;
 }
 
-/** Moves each distinct `@import` of the CSS `styles` to the front of the first,
- * keeping the media it applied under. */
-export function hoistStyleImports(styles: Element[]): void {
+function withoutImports(css: string, imports: Set<string>): string {
+  return css.replace(CSS_IMPORT_RE, (match) => (imports.add(match.trim()), "")).trim();
+}
+
+/** Joins same-condition sheets into one, each distinct `@import` moved to the front, where CSS allows it. */
+export function joinCssHoistingImports(sheets: string[]): string {
   const imports = new Set<string>();
-  for (const el of styles) {
-    const taken = takeStyleImports(el);
-    if (taken.length > 0) el.textContent = (el.textContent || "").trim();
-    for (const { rule } of taken) imports.add(rule);
-  }
+  const rest = sheets.map((sheet) => withoutImports(sheet, imports)).filter(Boolean);
+  return [...imports, ...rest].join("\n\n").trim();
+}
+
+/** Moves each distinct `@import` of a same-condition run to the front of its first style, or of a
+ * holder with the run's media and title before it when that first style is a swappable scene part. */
+export function hoistStyleImports(run: Element[]): void {
+  const imports = new Set<string>();
+  for (const el of run) el.textContent = withoutImports(el.textContent || "", imports);
   if (imports.size === 0) return;
   const hoisted = [...imports].join("\n\n");
-  const first = styles[0]!;
-  if (styleMedia(first) === "" && !first.hasAttribute(SCENE_PART_ATTR)) {
+  const first = run[0]!;
+  if (!first.hasAttribute(SCENE_PART_ATTR)) {
     first.textContent = [hoisted, first.textContent].filter(Boolean).join("\n\n");
     return;
   }
   const holder = first.ownerDocument.createElement("style");
+  for (const name of ["media", "title"]) {
+    const value = first.getAttribute(name);
+    if (value !== null) holder.setAttribute(name, value);
+  }
   holder.textContent = hoisted;
   first.before(holder);
 }

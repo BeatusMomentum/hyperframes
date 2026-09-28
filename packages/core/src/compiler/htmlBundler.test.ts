@@ -2472,34 +2472,37 @@ describe("bundleToSingleHtml sceneParts", () => {
   it.each([
     [
       `<style media="print">@import url("p.css"); .p { color: blue; }</style>`,
-      `@import url("p.css") print;`,
-      ".p { color: blue; }",
+      ["print", `@import url("p.css");\n\n.p { color: blue; }`],
     ],
     [
       `<style media="print">@import url("w.css") (min-width: 600px);</style>`,
-      `@import url("w.css") print and (min-width: 600px);`,
-      "",
+      ["print", `@import url("w.css") (min-width: 600px);`],
     ],
-    [`<style type="text/x-template">@import url("t.css");</style>`, "", `@import url("t.css");`],
-  ])("lifts the @imports of %s under the media each applied under", async (head, lifted, left) => {
-    const dir = makeTempProject({
-      "index.html": `<!doctype html><html><head>${head}</head><body>
+    [
+      `<style type="text/x-template">@import url("t.css");</style>`,
+      [null, `@import url("t.css");`],
+    ],
+  ])(
+    "keeps the @imports of %s at the top of their own sheet, as a render does",
+    async (head, own) => {
+      const dir = makeTempProject({
+        "index.html": `<!doctype html><html><head>${head}</head><body>
   <div data-composition-id="main" data-width="1920" data-height="1080" data-duration="2">
     <div data-composition-id="a" data-composition-src="compositions/a.html" data-start="0" data-duration="2"></div>
   </div></body></html>`,
-      "compositions/a.html": `<template id="a-template"><div data-composition-id="a">
+        "compositions/a.html": `<template id="a-template"><div data-composition-id="a">
   <style>@import url("scene.css"); .t { color: red; }</style></div></template>`,
-    });
-    const doc = parseHTML(await bundleToSingleHtml(dir, { sceneParts: true })).document;
-    const [holder, authored] = doc.querySelectorAll(
-      "head style:not([data-hyperframes-text-rendering])",
-    );
-    expect(holder?.attributes.length).toBe(0);
-    expect(holder?.textContent).toBe(
-      [lifted, `@import url("scene.css");`].filter(Boolean).join("\n\n"),
-    );
-    expect(authored?.textContent).toBe(left);
-  });
+      });
+      const doc = parseHTML(await bundleToSingleHtml(dir, { sceneParts: true })).document;
+      const shared = doc.querySelectorAll(
+        "head style:not([data-hf-scene]):not([data-hyperframes-text-rendering])",
+      );
+      expect([...shared].map((el) => [el.getAttribute("media"), el.textContent])).toEqual([
+        own,
+        [null, `@import url("scene.css");`],
+      ]);
+    },
+  );
 
   it("marks a scene whose own script leaves work running as not swappable, and only that scene", async () => {
     const dir = makeTempProject({
