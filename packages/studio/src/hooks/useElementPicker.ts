@@ -185,7 +185,9 @@ export function useElementPicker(
           el.style.setProperty(prop, value);
           const showStyle = (shown: string | undefined) =>
             setPickedElement((prev) =>
-              prev ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } } : null,
+              prev
+                ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } }
+                : null,
             );
           showStyle(value);
           syncToSource(
@@ -390,8 +392,10 @@ function patchByIdentity(
   const path = identityFile(files, hfId, id, ownFile);
   const before = path ? files[path] : undefined;
   const target = before ? identityTarget(before, hfId, id) : null;
-  if (path && before && target) return { path, before, after: applyPatchByTarget(before, target, op) };
-  const found = filesHolding(files, "data-hf-id", hfId).length || (id && filesHolding(files, "id", id).length);
+  if (path && before && target)
+    return { path, before, after: applyPatchByTarget(before, target, op) };
+  const found =
+    filesHolding(files, "data-hf-id", hfId).length || (id && filesHolding(files, "id", id).length);
   return found ? NOT_UNIQUE : null;
 }
 

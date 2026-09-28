@@ -714,11 +714,15 @@ describe("values with $ replacement codes", () => {
 
   it("are written as typed by a target patch", () => {
     const tagged = '<p data-hf-id="h" alt="old">x</p>';
-    const patched = applyPatchByTarget(tagged, { hfId: "h" }, {
-      type: "html-attribute",
-      property: "alt",
-      value,
-    });
+    const patched = applyPatchByTarget(
+      tagged,
+      { hfId: "h" },
+      {
+        type: "html-attribute",
+        property: "alt",
+        value,
+      },
+    );
     expect(patched).toBe('<p data-hf-id="h" alt="R$&amp;D $$ $`">x</p>');
   });
 });
