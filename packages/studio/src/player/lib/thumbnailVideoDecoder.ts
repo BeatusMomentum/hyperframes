@@ -115,13 +115,20 @@ function loadedResult(
 export async function decodeVideoThumbnail(
   request: VideoThumbnailDecodeRequest,
   signal: AbortSignal,
+  loadStarted: () => void = () => {},
   budgets: Readonly<TimelineViewportBudgets> = TIMELINE_VIEWPORT_BUDGETS,
 ): Promise<ThumbnailLoadedResult> {
   const mediabunny = await import("mediabunny");
   throwIfAborted(signal);
 
+  // A response means the request left the browser's per-host connection queue.
+  const fetchFn: typeof fetch = (url, init) =>
+    fetch(url, init).then((response) => {
+      loadStarted();
+      return response;
+    });
   const input = new mediabunny.Input({
-    source: new mediabunny.UrlSource(request.source),
+    source: new mediabunny.UrlSource(request.source, { fetchFn }),
     formats: mediabunny.ALL_FORMATS,
   });
   const resources: DecodedResources = { urls: [], canvases: new Set() };

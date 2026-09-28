@@ -23,7 +23,9 @@ export interface ThumbnailRequest {
   priority: ThumbnailPriority;
   /** Rich work is paused while the timeline is fast-scrolling. */
   rich?: boolean;
-  load: (signal: AbortSignal) => Promise<ThumbnailLoadedResult>;
+  /** Start the load timeout when the loader calls `loadStarted`, not when the job starts. */
+  timeoutFromLoadStart?: boolean;
+  load: (signal: AbortSignal, loadStarted: () => void) => Promise<ThumbnailLoadedResult>;
 }
 
 export type ThumbnailSnapshot =
@@ -67,6 +69,8 @@ interface ThumbnailEntry {
   snapshot: ThumbnailSnapshot;
   /** Aborted by the preview-reload hold, to run again once the hold lifts. */
   preempted: boolean;
+  /** A failed load is retried once while the entry stays leased. */
+  retried: boolean;
 }
 
 const PRIORITY_SCORE: Readonly<Record<ThumbnailPriority, number>> = {
@@ -159,6 +163,7 @@ export class ThumbnailScheduler {
         lastAccess: this.nextSequence++,
         snapshot: Object.freeze({ status: "queued" }),
         preempted: false,
+        retried: false,
       };
       this.entries.set(scopedKey, entry);
     }
@@ -305,6 +310,12 @@ export class ThumbnailScheduler {
           return;
         }
         if (this.requeuePreempted(entry)) return;
+        if (!entry.retried) {
+          entry.retried = true;
+          entry.lastAccess = this.nextSequence++;
+          this.requeue(entry);
+          return;
+        }
         entry.state = "error";
         entry.error = errorFrom(reason);
         entry.failedAt = this.now();
@@ -345,10 +356,14 @@ export class ThumbnailScheduler {
   private requeuePreempted(entry: ThumbnailEntry): boolean {
     if (!entry.preempted || this.entries.get(entry.scopedKey) !== entry) return false;
     entry.preempted = false;
+    this.requeue(entry);
+    return true;
+  }
+
+  private requeue(entry: ThumbnailEntry): void {
     entry.state = "queued";
     entry.snapshot = Object.freeze({ status: "queued" });
     this.notify(entry);
-    return true;
   }
 
   private validateResult(result: ThumbnailLoadedResult): void {
@@ -439,23 +454,35 @@ export class ThumbnailScheduler {
     entry: ThumbnailEntry,
     controller: AbortController,
   ): Promise<ThumbnailLoadedResult> {
-    let load: Promise<ThumbnailLoadedResult>;
-    try {
-      load = entry.request.load(controller.signal);
-    } catch (reason) {
-      load = Promise.reject(reason);
-    }
-
     return new Promise((resolve, reject) => {
       let settled = false;
-      const timeout = setTimeout(() => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const startTimeout = () => {
+        if (settled || timeout !== undefined) return;
+        timeout = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          controller.abort();
+          reject(
+            new Error(`Thumbnail load timed out after ${this.budgets.thumbnailLoadTimeoutMs}ms`),
+          );
+        }, this.budgets.thumbnailLoadTimeoutMs);
+      };
+      // A loader still waiting for its first byte may never settle; abort must free the slot anyway.
+      controller.signal.addEventListener("abort", () => {
         if (settled) return;
         settled = true;
-        controller.abort();
-        reject(
-          new Error(`Thumbnail load timed out after ${this.budgets.thumbnailLoadTimeoutMs}ms`),
-        );
-      }, this.budgets.thumbnailLoadTimeoutMs);
+        clearTimeout(timeout);
+        reject(controller.signal.reason);
+      });
+
+      let load: Promise<ThumbnailLoadedResult>;
+      try {
+        load = entry.request.load(controller.signal, startTimeout);
+      } catch (reason) {
+        load = Promise.reject(reason);
+      }
+      if (!entry.request.timeoutFromLoadStart) startTimeout();
 
       load.then(
         (result) => {

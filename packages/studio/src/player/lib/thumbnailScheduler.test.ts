@@ -45,6 +45,10 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+}
+
 describe("ThumbnailScheduler", () => {
   it("deduplicates identical requests and releases subscribers independently", async () => {
     const scheduler = new ThumbnailScheduler();
@@ -245,6 +249,7 @@ describe("ThumbnailScheduler", () => {
     const load = vi
       .fn<ThumbnailRequest["load"]>()
       .mockRejectedValueOnce(new Error("temporary"))
+      .mockRejectedValueOnce(new Error("temporary retry"))
       .mockResolvedValue(result("recovered"));
     const failed = request("retry", load);
     let reacquireOnNotify = false;
@@ -254,14 +259,14 @@ describe("ThumbnailScheduler", () => {
       reacquireOnNotify = false;
       nestedLease = scheduler.acquire(failed, vi.fn());
     });
-    await flush();
+    await settle();
     vi.advanceTimersByTime(11);
     reacquireOnNotify = true;
 
     const outerLease = scheduler.acquire(failed, vi.fn());
-    await flush();
+    await settle();
 
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(3);
     expect(scheduler.getSnapshot(failed)).toMatchObject({
       status: "ready",
       value: { url: "recovered" },
@@ -287,6 +292,7 @@ describe("ThumbnailScheduler", () => {
     const hungRequest = request(
       "hung",
       (activeSignal) => {
+        if (signal) return new Promise<ThumbnailLoadedResult>(() => {});
         signal = activeSignal;
         return hung.promise;
       },
@@ -302,7 +308,7 @@ describe("ThumbnailScheduler", () => {
     await flush();
     expect(signal?.aborted).toBe(true);
     expect(nextLoad).toHaveBeenCalledTimes(1);
-    expect(scheduler.getSnapshot(hungRequest).status).toBe("error");
+    expect(scheduler.getSnapshot(hungRequest).status).toBe("loading");
 
     hung.resolve(result("late", 1, dispose));
     await flush();
@@ -336,7 +342,7 @@ describe("ThumbnailScheduler", () => {
       throw new Error("sync failure");
     });
     const lease = scheduler.acquire(bad, vi.fn());
-    await flush();
+    await settle();
     expect(scheduler.getSnapshot(bad)).toMatchObject({ status: "error" });
     expect(scheduler.getDiagnostics().active).toBe(0);
     lease.release();
@@ -392,17 +398,114 @@ describe("ThumbnailScheduler", () => {
     });
 
     const first = scheduler.acquire(request("failed", load), vi.fn());
-    await flush();
+    await settle();
     first.release();
     const second = scheduler.acquire(request("failed", load), vi.fn());
-    expect(load).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
     second.release();
 
     vi.advanceTimersByTime(101);
     scheduler.acquire(request("failed", load), vi.fn());
-    await flush();
-    expect(load).toHaveBeenCalledTimes(2);
+    await settle();
+    expect(load).toHaveBeenCalledTimes(4);
     vi.useRealTimers();
+  });
+
+  it("retries a failed load exactly once while it stays leased", async () => {
+    const scheduler = new ThumbnailScheduler();
+    const load = vi.fn(async () => {
+      throw new Error("stalled");
+    });
+    const failed = request("once", load);
+    const listener = vi.fn();
+    const lease = scheduler.acquire(failed, listener);
+
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(scheduler.getSnapshot(failed)).toMatchObject({
+      status: "error",
+      error: { message: "stalled" },
+    });
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+    lease.release();
+  });
+
+  it("queues the retry behind work that was already waiting", async () => {
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({ concurrentMetadataJobs: 1 }),
+    );
+    const starts: string[] = [];
+    const failing = request("failing", async () => {
+      starts.push("failing");
+      throw new Error("stalled");
+    });
+    const waiting = request("waiting", async () => {
+      starts.push("waiting");
+      return result("waiting");
+    });
+    scheduler.acquire(failing, vi.fn());
+    scheduler.acquire(waiting, vi.fn());
+
+    await settle();
+    expect(starts).toEqual(["failing", "waiting", "failing"]);
+  });
+
+  it("starts a deferred timeout only once the loader reports that loading started", async () => {
+    vi.useFakeTimers();
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({ thumbnailLoadTimeoutMs: 10 }),
+    );
+    let signal: AbortSignal | undefined;
+    let loadStarted: (() => void) | undefined;
+    const lease = scheduler.acquire(
+      request(
+        "waiting-for-connection",
+        (activeSignal, started) => {
+          signal ??= activeSignal;
+          loadStarted ??= started;
+          return new Promise<ThumbnailLoadedResult>(() => {});
+        },
+        "visible",
+        { kind: "video", timeoutFromLoadStart: true },
+      ),
+      vi.fn(),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signal?.aborted).toBe(false);
+    loadStarted?.();
+    await vi.advanceTimersByTimeAsync(9);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(signal?.aborted).toBe(true);
+    lease.release();
+    vi.useRealTimers();
+  });
+
+  it("frees the slot of a released job whose loader never settles", async () => {
+    const scheduler = new ThumbnailScheduler(
+      resolveTimelineViewportBudgets({ concurrentVideoDecodes: 1 }),
+    );
+    const stuck = scheduler.acquire(
+      request("stuck", () => new Promise<ThumbnailLoadedResult>(() => {}), "visible", {
+        kind: "video",
+        timeoutFromLoadStart: true,
+      }),
+      vi.fn(),
+    );
+    const nextLoad = vi.fn(async () => result("next"));
+    const next = scheduler.acquire(
+      request("next", nextLoad, "visible", { kind: "video" }),
+      vi.fn(),
+    );
+    expect(nextLoad).not.toHaveBeenCalled();
+
+    stuck.release();
+    await settle();
+    expect(nextLoad).toHaveBeenCalledTimes(1);
+    next.release();
   });
 });
 

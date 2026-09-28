@@ -10,11 +10,17 @@ const input = {
   getPrimaryVideoTrack: vi.fn(),
   dispose,
 };
+const urlSources: { url: string; options?: { fetchFn?: typeof fetch } }[] = [];
 
 vi.mock("mediabunny", () => ({
   ALL_FORMATS: {},
   UrlSource: class {
-    constructor(readonly url: string) {}
+    constructor(
+      readonly url: string,
+      readonly options?: { fetchFn?: typeof fetch },
+    ) {
+      urlSources.push(this);
+    }
   },
   Input: class {
     getPrimaryVideoTrack = input.getPrimaryVideoTrack;
@@ -41,6 +47,7 @@ function recordDecodes(decoded: number[][]): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  urlSources.length = 0;
   getKeyPacket.mockImplementation(async () => null);
   vi.spyOn(URL, "createObjectURL").mockReturnValueOnce("blob:one").mockReturnValueOnce("blob:two");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
@@ -219,5 +226,26 @@ describe("decodeVideoThumbnail", () => {
     expect(getDurationFromMetadata).not.toHaveBeenCalled();
     expect(canvasesAtTimestamps).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports load start when a source fetch gets its response, not when it is sent", async () => {
+    let respond!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((resolve) => (respond = resolve))),
+    );
+    recordDecodes([]);
+    const loadStarted = vi.fn();
+    await decodeVideoThumbnail(
+      { source: "/clip.mp4", frameCount: 1 },
+      new AbortController().signal,
+      loadStarted,
+    );
+    const fetching = urlSources[0]?.options?.fetchFn?.("/clip.mp4");
+    expect(loadStarted).not.toHaveBeenCalled();
+    respond(new Response("bytes"));
+    await fetching;
+    expect(loadStarted).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

@@ -49,7 +49,8 @@ function createVideoThumbnailRequest(
     kind: "video" as const,
     priority,
     rich,
-    load: (signal: AbortSignal) =>
+    timeoutFromLoadStart: true,
+    load: (signal: AbortSignal, loadStarted: () => void) =>
       decodeVideoThumbnail(
         {
           source: videoSrc,
@@ -59,6 +60,7 @@ function createVideoThumbnailRequest(
           fit: "cover",
         },
         signal,
+        loadStarted,
       ),
   };
 }

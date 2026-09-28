@@ -74,12 +74,28 @@ describe("VideoThumbnail", () => {
       1,
       expect.objectContaining({ frameCount: 1 }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(decodeVideoThumbnail).toHaveBeenCalledWith(
       expect.objectContaining({ frameCount: 8 }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(host.querySelectorAll("img").length).toBeGreaterThan(0);
+  });
+
+  it("starts each decode's timeout from its first response, not from when it is scheduled", async () => {
+    vi.mocked(decodeVideoThumbnail).mockResolvedValue({
+      value: { kind: "image", url: "blob:poster", aspect: 16 / 9 },
+      weight: 128,
+    });
+    const acquire = vi.spyOn(thumbnailScheduler, "acquire");
+
+    await render(440);
+
+    expect(acquire).toHaveBeenCalled();
+    expect(acquire.mock.calls.every(([request]) => request.timeoutFromLoadStart)).toBe(true);
+    acquire.mockRestore();
   });
 
   it("spreads the frames across every tile so the strip reaches the clip's end", async () => {
