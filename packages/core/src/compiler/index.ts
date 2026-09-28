@@ -61,6 +61,7 @@ export { addScenePartsManifest } from "./scenePartsManifest";
 
 // Script ordering shared by the bundler and the producer coalescers
 export {
+  appendMissingLinks,
   compositionStyle,
   cssStyleMergeKey,
   headStyleRuns,

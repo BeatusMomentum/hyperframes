@@ -35,6 +35,7 @@ import {
 } from "@hyperframes/core";
 import { MAX_AUDIO_GAIN } from "@hyperframes/core/audio-gain";
 import {
+  appendMissingLinks,
   assignBundledRuntimeCompositionIds,
   assignMediaRenderIds,
   type BundledHostCompositionIdentity,
@@ -997,19 +998,7 @@ function inlineSubCompositions(
     }
   }
 
-  if (result.externalLinks.length && head) {
-    for (const link of result.externalLinks) {
-      const escapedHref = link.href.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      if (document.querySelector(`link[href="${escapedHref}"]`)) continue;
-      const el = document.createElement("link");
-      el.setAttribute("rel", link.rel);
-      el.setAttribute("href", link.href);
-      if (link.crossorigin != null) el.setAttribute("crossorigin", link.crossorigin);
-      if (link.media != null) el.setAttribute("media", link.media);
-      if (link.title != null) el.setAttribute("title", link.title);
-      head.appendChild(el);
-    }
-  }
+  if (head) appendMissingLinks(document, result.externalLinks);
 
   // Append collected styles to <head>
   if (head) {

@@ -1,3 +1,5 @@
+import type { ExternalLink } from "./inlineSubCompositions";
+
 export interface InlineScriptRun {
   members: Element[];
   /** First later script that executes on its own; the merged run must stay before it. Null: end of body. */
@@ -91,4 +93,20 @@ export function styleElementsFor(
     run[0]!.textContent = join(run.map((el) => el.textContent || ""));
     return run[0]!;
   });
+}
+
+/** Appends each composition link the document lacks to `<head>`, keeping rel, href, crossorigin, media and title. */
+export function appendMissingLinks(document: Document, links: readonly ExternalLink[]): void {
+  for (const link of links) {
+    const escapedHref = link.href.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    if (document.querySelector(`link[href="${escapedHref}"]`)) continue;
+    const el = document.createElement("link");
+    el.setAttribute("rel", link.rel);
+    el.setAttribute("href", link.href);
+    for (const name of ["crossorigin", "media", "title"] as const) {
+      const value = link[name];
+      if (value != null) el.setAttribute(name, value);
+    }
+    document.head.appendChild(el);
+  }
 }
