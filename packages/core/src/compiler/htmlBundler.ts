@@ -11,6 +11,7 @@ export { FLATTENED_INNER_ROOT_STRIP_ATTRS } from "../runtime/flattenedRoot";
 import { parseHostVariableValues, warnUnknownEnumValues } from "../runtime/getVariables";
 import { sanitizeCssValue } from "../runtime/applyVariableBindings";
 import { cssVariableName } from "../tokenSlug";
+import { AsyncLocalStorage } from "async_hooks";
 import { readFileSync, existsSync, statSync } from "fs";
 import { resolve, relative, dirname, isAbsolute, sep } from "path";
 import { CSS_URL_RE, isNonRelativeUrl } from "./assetPaths.js";
@@ -25,6 +26,7 @@ import {
 // rewriteSubCompPaths functions are used by inlineSubCompositions (shared module)
 import {
   buildVariablesByCompScript,
+  dedupeFontFaceRules,
   scopeCssToComposition,
   wrapInlineScriptWithErrorBoundary,
   wrapScopedCompositionScript,
@@ -86,7 +88,14 @@ function isRelativeUrl(url: string): boolean {
   return !isNonRelativeUrl(url) && !isAbsolute(url);
 }
 
+const bundleReads = new AsyncLocalStorage<(filePath: string) => void>();
+
+function noteRead(filePath: string): void {
+  bundleReads.getStore()?.(filePath);
+}
+
 function safeReadFile(filePath: string): string | null {
+  noteRead(filePath);
   if (!existsSync(filePath)) return null;
   try {
     return readFileSync(filePath, "utf-8");
@@ -257,6 +266,7 @@ function inlineCssFile(
 }
 
 function safeReadFileBuffer(filePath: string): Buffer | null {
+  noteRead(filePath);
   if (!existsSync(filePath)) return null;
   try {
     return readFileSync(filePath);
@@ -693,6 +703,15 @@ function placeSceneStylesLikeRender(document: Document): void {
   first.before(holder);
 }
 
+function isAlwaysAppliedStyle(el: Element): boolean {
+  const type = el.getAttribute("type")?.trim().toLowerCase();
+  return (
+    !el.hasAttribute("media") &&
+    (!type || type === "text/css") &&
+    !el.closest("template, noscript, svg")
+  );
+}
+
 type PartRun<T> = { scene?: string; chunks: T[] };
 
 function pushRun<T>(runs: PartRun<T>[], scene: string | undefined, chunk: T): void {
@@ -828,6 +847,7 @@ export interface BundleOptions {
   sceneParts?: boolean;
   /** Warn when the compiled HTML breaks the HyperFrames contract (default true). */
   staticGuard?: boolean;
+  onRead?: (filePath: string) => void;
 }
 
 /**
@@ -938,10 +958,12 @@ function hoistCompositionScripts(
   }
 }
 
-export async function bundleToSingleHtml(
-  projectDir: string,
-  options?: BundleOptions,
-): Promise<string> {
+export function bundleToSingleHtml(projectDir: string, options?: BundleOptions): Promise<string> {
+  const bundle = () => bundleProject(projectDir, options);
+  return options?.onRead ? bundleReads.run(options.onRead, bundle) : bundle();
+}
+
+async function bundleProject(projectDir: string, options?: BundleOptions): Promise<string> {
   const entryFile = options?.entryFile ?? "index.html";
   const indexPath = resolveWithinProject(projectDir, entryFile);
   if (!indexPath || !existsSync(indexPath)) {
@@ -954,6 +976,7 @@ export async function bundleToSingleHtml(
   };
 
   const readSource = options?.stampHfIds ? ensureHfIds : (html: string) => html;
+  noteRead(indexPath);
   const rawHtml = readSource(readFileSync(indexPath, "utf-8"));
   const compiled = await compileHtml(rawHtml, sourceDir, options?.probeMediaDuration);
 
@@ -1040,6 +1063,7 @@ export async function bundleToSingleHtml(
     // document; project-root refs with no such sibling stay as authored.
     assetExists: (path: string) => {
       const resolved = resolveEntryPath(path);
+      if (resolved) noteRead(resolved);
       return resolved !== null && existsSync(resolved);
     },
     flattenInnerRoot: prepareFlattenedInnerRoot,
@@ -1302,6 +1326,14 @@ export async function bundleToSingleHtml(
     const srcset = el.getAttribute("srcset");
     if (srcset)
       el.setAttribute("srcset", rewriteSrcsetWithInlinedAssets(srcset, projectDir, inlineAssets));
+  }
+  // Before inlining, so postcss reads paths not font bytes; scene parts keep copies to swap alone.
+  if (!options?.sceneParts) {
+    const liveStyles = [...document.querySelectorAll("style")].filter(isAlwaysAppliedStyle);
+    const dedupedStyles = dedupeFontFaceRules(liveStyles.map((el) => el.textContent || ""));
+    liveStyles.forEach((el, i) => {
+      el.textContent = dedupedStyles[i] ?? "";
+    });
   }
   for (const styleEl of document.querySelectorAll("style")) {
     styleEl.textContent = rewriteCssUrlsWithInlinedAssets(

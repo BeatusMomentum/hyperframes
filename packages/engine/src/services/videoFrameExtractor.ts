@@ -34,6 +34,7 @@ import { isKnownInactiveTimelineWindow } from "./mediaTimelineWindow.js";
 import {
   extractFinalVideoFrameTimestamp,
   extractMediaMetadata,
+  type VideoColorSpace,
   type VideoMetadata,
 } from "../utils/ffprobe.js";
 import {
@@ -48,7 +49,8 @@ import {
   UrlDownloadError,
   writeUrlDownloadTelemetry,
 } from "../utils/urlDownloader.js";
-import { runFfmpeg } from "../utils/runFfmpeg.js";
+import { runFfmpeg, runFfmpegPipeline, type RunFfmpegResult } from "../utils/runFfmpeg.js";
+import { isFfmpegFilterAvailable } from "../utils/psnrFilterAvailability.js";
 import { DEFAULT_CONFIG, type EngineConfig } from "../config.js";
 import { unwrapTemplate } from "../utils/htmlTemplate.js";
 import {
@@ -220,7 +222,30 @@ const GC_STALENESS_MS = 24 * 60 * 60 * 1000;
 const SDR_TO_HDR_COLORSPACE_FILTER = "colorspace=all=bt2020:iall=bt709:range=tv";
 const HDR_TO_SDR_TONEMAP_FILTER =
   "zscale=t=linear:npl=100,tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv";
-const HDR_TO_SDR_TRANSFORM_KEY = "hdr2sdr-hable-bt709";
+const HDR_TO_SDR_ZSCALE_TRANSFORM_KEY = "hdr2sdr-hable-srgb";
+const HDR_TO_SDR_VIDEOTOOLBOX_TRANSFORM_KEY = "hdr2sdr-videotoolbox-hdr";
+const SDR_CANVAS_PASSTHROUGH_FILTER = "setparams=color_primaries=bt709:color_trc=iec61966-2-1";
+const SDR_JPEG_AS_BT601_FULL_RANGE_FILTER =
+  "scale=flags=neighbor,format=gbrp,scale=out_color_matrix=bt601:out_range=pc:flags=neighbor,format=yuv420p";
+
+let warnedMissingZscale = false;
+
+async function toneMapsWithZscale(): Promise<boolean> {
+  return process.platform !== "darwin" || isFfmpegFilterAvailable("zscale");
+}
+
+async function hdrToSdrTransformKey(): Promise<string> {
+  if (await toneMapsWithZscale()) return HDR_TO_SDR_ZSCALE_TRANSFORM_KEY;
+  if (!warnedMissingZscale) {
+    warnedMissingZscale = true;
+    process.stderr.write(
+      "[hyperframes:render] WARNING: this ffmpeg has no zscale filter, so forced-SDR HDR footage " +
+        "is tone-mapped by Chrome instead of the hable curve used on Linux and in Studio, and " +
+        "renders darker. Install an ffmpeg built with libzimg to match.\n",
+    );
+  }
+  return HDR_TO_SDR_VIDEOTOOLBOX_TRANSFORM_KEY;
+}
 
 function sdrToHdrTransformKey(transfer: HdrTransfer): string {
   return `sdr2hdr-${transfer}`;
@@ -751,6 +776,104 @@ export function parseImageElements(html: string): ImageElement[] {
   return images;
 }
 
+/** zscale reads each frame's own tags; set only those the first frame lacks, from ffprobe or BT.2020. */
+function hdrFrameColourTags(metadata: VideoMetadata, frame: Partial<VideoColorSpace>): string[] {
+  const known = (value: string | undefined) =>
+    value && value !== "unknown" && value !== "reserved" ? value : undefined;
+  const probed = metadata.colorSpace;
+  const fill = (key: keyof VideoColorSpace, fallback?: string) =>
+    known(frame[key]) ? undefined : (known(probed?.[key]) ?? fallback);
+  const tags = [
+    ["colorspace", fill("colorSpace", "bt2020nc")],
+    ["color_primaries", fill("colorPrimaries", "bt2020")],
+    ["color_trc", fill("colorTransfer")],
+  ].filter(([, value]) => value);
+  return tags.length
+    ? [`setparams=${tags.map(([key, value]) => `${key}=${value}`).join(":")}`]
+    : [];
+}
+
+/** The first shown frame's tags, read by ffmpeg, which decodes past the edit-list pre-roll ffprobe counts. */
+async function readFirstFrameColour(
+  videoPath: string,
+  signal?: AbortSignal,
+): Promise<Partial<VideoColorSpace>> {
+  const result = await runFfmpeg(
+    [
+      ...["-hide_banner", "-nostats", "-i", videoPath, "-map", "0:v:0", "-frames:v", "1"],
+      ...["-vf", "showinfo", "-f", "null", "-"],
+    ],
+    { signal },
+  );
+  const tags = / color_space:(\S+) color_primaries:(\S+) color_trc:(\S+)/.exec(result.stderr);
+  return tags ? { colorSpace: tags[1], colorPrimaries: tags[2], colorTransfer: tags[3] } : {};
+}
+
+/** Chrome plays untagged VP9 and AV1 as BT.601, H.264 and VP8 as BT.709 from 720 coded lines (assumed for the rest). */
+const CHROME_BT601_UNTAGGED_CODECS = new Set(["vp9", "av1"]);
+
+function chromeGuessForUntaggedMatrix(metadata: VideoMetadata): string[] {
+  const matrix = metadata.colorSpace?.colorSpace;
+  if (matrix && matrix !== "unknown") return [];
+  const hd = metadata.height >= 720 && !CHROME_BT601_UNTAGGED_CODECS.has(metadata.videoCodec);
+  return [`setparams=colorspace=${hd ? "bt709" : "smpte170m"}`];
+}
+
+/** Pixel formats nut carries as raw video unchanged on ffmpeg 5.1 to 8.1 (yuvj only loses its range). */
+const NUT_RAW_PIXEL_FORMATS = new Set([
+  "yuv420p",
+  "yuvj420p",
+  "yuv422p",
+  "yuvj422p",
+  "yuv444p",
+  "yuvj444p",
+  "yuva420p",
+  "yuva444p",
+  "yuv440p",
+  "yuv411p",
+  "yuv410p",
+  "yuva422p",
+  "yuv420p10le",
+  "yuv422p10le",
+  "yuv444p10le",
+  "yuva420p10le",
+  "yuva444p10le",
+  "yuv420p12le",
+  "nv12",
+  "nv21",
+  "yuyv422",
+  "uyvy422",
+  "gray",
+  "gray10le",
+  "ya8",
+  "gbrp",
+  "gbrap",
+  "gbrp10le",
+  "gbrp12le",
+  "gbrap10le",
+  "rgb24",
+  "bgr24",
+  "rgba",
+  "bgra",
+  "argb",
+  "abgr",
+  "rgb48le",
+  "rgba64le",
+]);
+
+/** nut drops colour tags, so raw frames get the source's back before any other filter reads them. */
+function restoreSourceColourFilter(metadata: VideoMetadata): string[] {
+  const tags = [
+    ["range", metadata.colorRange],
+    ["colorspace", metadata.colorSpace?.colorSpace],
+    ["color_primaries", metadata.colorSpace?.colorPrimaries],
+    ["color_trc", metadata.colorSpace?.colorTransfer],
+  ].filter(([, value]) => value && value !== "unknown" && value !== "reserved");
+  return tags.length > 0
+    ? [`setparams=${tags.map(([key, value]) => `${key}=${value}`).join(":")}`]
+    : [];
+}
+
 export async function extractVideoFramesRange(
   videoPath: string,
   videoId: string,
@@ -759,12 +882,7 @@ export async function extractVideoFramesRange(
   options: ExtractionOptions,
   signal?: AbortSignal,
   config?: Partial<Pick<EngineConfig, "ffmpegProcessTimeout">>,
-  /**
-   * Override the output directory for this extraction. When provided, frames
-   * are written directly into `outputDirOverride` (no per-videoId subdir).
-   * Used by the cache layer to materialize frames straight into the keyed
-   * cache entry directory.
-   */
+  /** Frames go straight here, with no per-videoId subdir (the cache layer's keyed entry). */
   outputDirOverride?: string,
 ): Promise<ExtractedFrames> {
   const ffmpegProcessTimeout = config?.ffmpegProcessTimeout ?? DEFAULT_CONFIG.ffmpegProcessTimeout;
@@ -803,14 +921,18 @@ export async function extractVideoFramesRange(
   const framePattern = `${FRAME_FILENAME_PREFIX}%05d.${format}`;
   const outputPattern = join(videoOutputDir, framePattern);
 
-  // Forced-SDR extraction tone-maps HDR before the intermediate frames reach Chrome.
-  // macOS: VideoToolbox hardware decoder does HDR→SDR natively on Apple Silicon.
-  // Linux: use the same zscale/tonemap policy as Studio proxies.
+  // Forced-SDR extraction tone-maps HDR with zscale, the Studio proxy policy. A macOS ffmpeg
+  // without zscale falls back to VideoToolbox, whose frames stay HDR and are tone-mapped by
+  // Chrome instead (darker), and the render warns once.
   const isHdr = isHdrColorSpaceUtil(metadata.colorSpace);
   const isMacOS = process.platform === "darwin";
+  const toneMappedToSdr = options.toneMapHdrToSdr === true && isHdr && (await toneMapsWithZscale());
+  const decodeWithVideoToolbox = isHdr && isMacOS && !toneMappedToSdr;
+
+  const sampleCfrAtOutputFps = !options.finalFrameOnly && !metadata.isVFR;
 
   const args: string[] = [];
-  if (isHdr && isMacOS) {
+  if (decodeWithVideoToolbox) {
     args.push("-hwaccel", "videotoolbox");
   }
   // Always force the alpha-aware decoder on codecs that can carry alpha. The
@@ -832,16 +954,23 @@ export async function extractVideoFramesRange(
     // a negative timestamp base) can seek to EOF and emit zero frames.
     args.push("-i", videoPath, "-ss", String(startTime), "-frames:v", "1");
   } else {
+    // An accurate seek drops the frame on screen at startTime; the fps sampling below needs it.
+    if (sampleCfrAtOutputFps) args.push("-noaccurate_seek");
     args.push("-ss", String(startTime), "-i", videoPath, "-t", String(duration));
   }
 
   const vfFilters: string[] = [];
-  if (isHdr && isMacOS) {
-    // VideoToolbox tone-maps during decode; force output to bt709 SDR format
+  if (decodeWithVideoToolbox) {
     vfFilters.push("format=nv12");
   }
-  if (!options.finalFrameOnly && !metadata.isVFR) {
-    vfFilters.push(`fps=${ffmpegFps}`);
+  if (sampleCfrAtOutputFps) {
+    // Each slot takes the last frame starting at or before its time. Ticks of 2 ms or finer
+    // first shift half a tick, absorbing container rounding (WebM/MKV use whole ms).
+    vfFilters.push(
+      "settb=intb/2",
+      "setpts=PTS-lte(TB\\,0.001)",
+      `fps=${ffmpegFps}:start_time=0:round=up`,
+    );
   }
   if (options.sdrToHdrTransfer) {
     // Ordering intent: fps sampling runs BEFORE the colorspace remap so only
@@ -853,20 +982,53 @@ export async function extractVideoFramesRange(
     // remap only applies to SDR sources, nv12 only to HDR sources).
     vfFilters.push(SDR_TO_HDR_COLORSPACE_FILTER);
   }
-  if (options.toneMapHdrToSdr && isHdr && !isMacOS) {
-    vfFilters.push(HDR_TO_SDR_TONEMAP_FILTER);
+  if (toneMappedToSdr) {
+    const frameColour = await readFirstFrameColour(videoPath, signal);
+    vfFilters.push(...hdrFrameColourTags(metadata, frameColour), HDR_TO_SDR_TONEMAP_FILTER);
   }
-  if (vfFilters.length > 0) args.push("-vf", vfFilters.join(","));
-  if (!options.finalFrameOnly && metadata.isVFR) {
-    args.push("-fps_mode", "cfr", "-r", ffmpegFps);
+  if (toneMappedToSdr || (!isHdr && !options.sdrToHdrTransfer)) {
+    vfFilters.push(
+      ...(isHdr ? [] : chromeGuessForUntaggedMatrix(metadata)),
+      SDR_CANVAS_PASSTHROUGH_FILTER,
+    );
+    if (format === "jpg") vfFilters.push(SDR_JPEG_AS_BT601_FULL_RANGE_FILTER);
   }
-
-  args.push("-q:v", format === "jpg" ? String(Math.ceil((100 - quality) / 3)) : "0");
+  const encodeArgs = ["-q:v", format === "jpg" ? String(Math.ceil((100 - quality) / 3)) : "0"];
   // Render-scoped temp frames are read once; level 1 measured 3-5x faster for ~14% larger files.
-  if (format === "png") args.push("-compression_level", "1");
-  args.push("-y", outputPattern);
+  if (format === "png") encodeArgs.push("-compression_level", "1");
+  encodeArgs.push("-y", outputPattern);
 
-  const processResult = await runFfmpeg(args, { signal, timeout: ffmpegProcessTimeout });
+  const runOptions = { signal, timeout: ffmpegProcessTimeout };
+  const resampleVfrToCfr = !options.finalFrameOnly && metadata.isVFR;
+  if (resampleVfrToCfr) args.push("-fps_mode", "cfr", "-r", ffmpegFps);
+  let processResult: RunFfmpegResult;
+  if (
+    resampleVfrToCfr &&
+    vfFilters.length > 0 &&
+    !isHdr &&
+    NUT_RAW_PIXEL_FORMATS.has(metadata.pixelFormat ?? "")
+  ) {
+    // ffmpeg <6.1 ignores frame durations in CFR resampling once any -vf is set,
+    // cutting a trailing still short, so the SDR filters run in a second process.
+    processResult = await runFfmpegPipeline(
+      [...args, "-an", "-sn", "-dn", "-c:v", "rawvideo", "-f", "nut", "pipe:1"],
+      [
+        "-f",
+        "nut",
+        "-i",
+        "pipe:0",
+        "-vf",
+        [...restoreSourceColourFilter(metadata), ...vfFilters].join(","),
+        "-fps_mode",
+        "passthrough",
+        ...encodeArgs,
+      ],
+      runOptions,
+    );
+  } else {
+    if (vfFilters.length > 0) args.push("-vf", vfFilters.join(","));
+    processResult = await runFfmpeg([...args, ...encodeArgs], runOptions);
+  }
   if (processResult.failureReason === "external_interruption") {
     throw new VideoSourceExtractionError(
       "external_interruption",
@@ -1320,7 +1482,7 @@ type PreparedExtraction = {
   finalFrameOnly: boolean;
   format: CacheFrameFormat;
   sdrToHdrTransfer?: HdrTransfer;
-  toneMapHdrToSdr: boolean;
+  hdrToSdrTransformKey?: string;
   dedupeKey: string;
 };
 
@@ -1384,7 +1546,7 @@ function supersetGroupingKey(work: PreparedExtraction, fps: number): string {
     String(fps),
     work.format,
     work.sdrToHdrTransfer ?? "",
-    work.toneMapHdrToSdr ? HDR_TO_SDR_TRANSFORM_KEY : "",
+    work.hdrToSdrTransformKey ?? "",
     work.finalFrameOnly ? "final" : "range",
   ].join("\0");
 }
@@ -1817,7 +1979,7 @@ export async function extractAllVideoFrames(
       ...options,
       format: work.format,
       sdrToHdrTransfer: work.sdrToHdrTransfer,
-      toneMapHdrToSdr: work.toneMapHdrToSdr,
+      toneMapHdrToSdr: work.hdrToSdrTransformKey !== undefined,
       finalFrameOnly: work.finalFrameOnly,
     };
   }
@@ -1839,7 +2001,7 @@ export async function extractAllVideoFrames(
     if (!keyInput) return { work };
     const transformParts = [
       work.sdrToHdrTransfer ? sdrToHdrTransformKey(work.sdrToHdrTransfer) : undefined,
-      work.toneMapHdrToSdr ? HDR_TO_SDR_TRANSFORM_KEY : undefined,
+      work.hdrToSdrTransformKey,
       work.finalFrameOnly ? "final-frame" : undefined,
     ].filter((part): part is string => part !== undefined);
     const transform = transformParts.length > 0 ? transformParts.join("+") : undefined;
@@ -2059,10 +2221,12 @@ export async function extractAllVideoFrames(
 
         const format = resolveFrameFormat(metadata, options.format);
         const sdrToHdrTransfer = sdrToHdrTransfers[index];
-        const toneMapHdrToSdr =
-          options.toneMapHdrToSdr === true && isHdrColorSpaceUtil(metadata.colorSpace);
+        const hdrToSdrTransform =
+          options.toneMapHdrToSdr === true && isHdrColorSpaceUtil(metadata.colorSpace)
+            ? await hdrToSdrTransformKey()
+            : undefined;
         const finalFrameOnly = window.finalFrameOnly === true;
-        const dedupeKey = `${videoPath}\0${extractionMediaStart}\0${videoDuration}\0${fpsKey}\0${format}\0${sdrToHdrTransfer ?? ""}\0${toneMapHdrToSdr ? HDR_TO_SDR_TRANSFORM_KEY : ""}\0${finalFrameOnly ? "final" : "range"}`;
+        const dedupeKey = `${videoPath}\0${extractionMediaStart}\0${videoDuration}\0${fpsKey}\0${format}\0${sdrToHdrTransfer ?? ""}\0${hdrToSdrTransform ?? ""}\0${finalFrameOnly ? "final" : "range"}`;
 
         return {
           work: {
@@ -2075,7 +2239,7 @@ export async function extractAllVideoFrames(
             finalFrameOnly,
             format,
             sdrToHdrTransfer,
-            toneMapHdrToSdr,
+            hdrToSdrTransformKey: hdrToSdrTransform,
             dedupeKey,
           },
         };

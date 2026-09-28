@@ -26,6 +26,7 @@ import {
 } from "../helpers/fileVersion.js";
 import { affectsProjectSignature, listProjectFiles } from "../helpers/projectSignature.js";
 import { openBlobStore, type BlobStore } from "./blobStore.js";
+import { pruneGoneProjectHistoriesDaily } from "./pruneHistories.js";
 import {
   ID_PATH,
   isRecordedFolder,
@@ -76,6 +77,8 @@ export interface ProjectHistoryOptions {
   ownerWaitMs?: number;
   /** A CLI turn's window from an earlier open: writes since, within its idle limit, become the entry with its id. */
   closedWindow?: ClosedWindow;
+  undoScope?: "own" | "everyone";
+  pruneGoneProjectsBudgetMs?: number;
 }
 
 interface ClaimOptions {
@@ -146,7 +149,7 @@ export interface ProjectHistory {
   /** A watcher saw `path` change (project-relative or absolute). */
   noteChange(path: string): void;
   list(): HistoryListItem[];
-  /** Cmd+Z (back) and Cmd+Shift+Z (forward) over `who`'s own and outside changes; `writeToken` labels the echo. */
+  /** Cmd+Z (back) and Cmd+Shift+Z (forward) over `who`'s own and outside changes, or all (undoScope everyone). */
   step(direction: "back" | "forward", who: HistoryWho, options?: Writing): Promise<HistoryResult>;
   /** The entry `who`'s next step reverts, pending changes included, as of the last scan (a step scans first). */
   next(direction: "back" | "forward", who: HistoryWho): HistoryEntry | undefined;
@@ -187,6 +190,7 @@ interface Group {
   lastWriteAt?: number;
   idleTimer?: NodeJS.Timeout;
   entry?: HistoryEntry | null;
+  parts?: Set<string>;
 }
 
 /**
@@ -625,6 +629,7 @@ class Engine {
       part.changes.set(path, window.changes.get(path)!);
       window.changes.delete(path);
     }
+    (window.parts ??= new Set()).add(part.id);
     window.entry = await this.commit(part);
   }
 
@@ -936,7 +941,14 @@ class Engine {
       (group) => group?.changes.size && mine(group.who),
     );
     if (pending) return direction === "back" ? this.pendingEntry(pending) : undefined;
-    return stepTarget(this.log.entries, direction, (entry) => mine(entry.who));
+    const everyone = this.options.undoScope === "everyone";
+    const ofOpenTurn = (entry: HistoryEntry) =>
+      this.windows.some((open) => open.parts?.has(entry.id));
+    return stepTarget(
+      this.log.entries,
+      direction,
+      (entry) => mine(entry.who) || (everyone && !ofOpenTurn(entry)),
+    );
   }
 
   /** A pending group as the entry it becomes once committed (a window's part gets a fresh id). */
@@ -1108,6 +1120,10 @@ export async function openProjectHistory(options: ProjectHistoryOptions): Promis
     const blobs = await openBlobStore(join(options.historyRoot, projectId, "blobs"));
     const engine = new Engine(options, projectId, blobs);
     await engine.queue(() => engine.start());
+    pruneGoneProjectHistoriesDaily(options.historyRoot, engine.now(), {
+      onError: options.onError,
+      budgetMs: options.pruneGoneProjectsBudgetMs,
+    });
     const api = engine.api();
     return {
       ...api,
