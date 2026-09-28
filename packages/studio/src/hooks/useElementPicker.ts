@@ -349,10 +349,12 @@ function patchByIdentity(
   const target = before ? identityTarget(before, hfId, id) : null;
   if (path && before && target)
     return { path, before, after: applyPatchByTarget(before, target, op) };
-  const found =
-    (hfId && filesHolding(files, "data-hf-id", hfId).length) ||
-    (id && filesHolding(files, "id", id).length);
-  return found ? NOT_UNIQUE : null;
+  return heldAnywhere(files, hfId, id) ? NOT_UNIQUE : null;
+}
+
+function heldAnywhere(files: Record<string, string>, hfId: string | null, id?: string | null) {
+  if (hfId && filesHolding(files, "data-hf-id", hfId).length) return true;
+  return Boolean(id && filesHolding(files, "id", id).length);
 }
 
 function filesHolding(files: Record<string, string>, attr: string, value: string): string[] {
