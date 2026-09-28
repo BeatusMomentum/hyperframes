@@ -1,4 +1,5 @@
 import { inlineScriptRuns } from "./scriptRuns";
+import { CSS_IMPORT_RE, hoistStyleImports } from "./styleImports";
 import { SCENE_PART_ATTR } from "../sceneParts";
 import {
   ensureExternalScriptTag,
@@ -103,9 +104,6 @@ function safeReadFile(filePath: string): string | null {
     return null;
   }
 }
-
-const CSS_IMPORT_RE =
-  /@import\s+(?:url\(\s*(["']?)([^)"']+)\1\s*\)|(["'])([^"']+)\3)\s*([^;]*);\s*/g;
 
 const CSS_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 
@@ -684,23 +682,8 @@ function joinCssHoistingImports(sheets: string[]): string {
 // A render joins every head style into one sheet at the first one's place, each distinct @import first.
 function placeSceneStylesLikeRender(document: Document): void {
   const styles = [...document.querySelectorAll("head style")];
-  const imports = new Set<string>();
-  for (const el of styles) {
-    el.textContent = (el.textContent || "")
-      .replace(CSS_IMPORT_RE, (match) => (imports.add(match.trim()), ""))
-      .trim();
-  }
   styles.slice(1).reduce((previous, el) => (previous.after(el), el), styles[0]!);
-  if (imports.size === 0) return;
-  const hoisted = [...imports].join("\n\n");
-  const first = styles[0]!;
-  if (!first.hasAttribute(SCENE_PART_ATTR)) {
-    first.textContent = [hoisted, first.textContent].filter(Boolean).join("\n\n");
-    return;
-  }
-  const holder = document.createElement("style");
-  holder.textContent = hoisted;
-  first.before(holder);
+  hoistStyleImports(styles);
 }
 
 function isAlwaysAppliedStyle(el: Element): boolean {
