@@ -12,7 +12,6 @@ interface StudioToastProps {
 const focusRing =
   "outline-hidden focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent";
 
-/** Using the action dismisses the toast first, so a second click finds it leaving. */
 export function StudioToast({ message, tone, leaving, action, onDismiss }: StudioToastProps) {
   const isError = tone === "error";
   return (
