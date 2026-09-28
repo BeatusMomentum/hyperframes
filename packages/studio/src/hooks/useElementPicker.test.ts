@@ -95,6 +95,12 @@ function mountOnPage(saved: string, selector: string, id: string) {
   });
 }
 
+function expectRefusedStyleEdit({ picker, synced, toasts }: ReturnType<typeof mountPicker>) {
+  act(() => picker().setStyle("color", "red"));
+  expect(synced).toEqual([]);
+  expect(toasts).toHaveLength(1);
+}
+
 describe("an edit to a picked element without an id", () => {
   it("writes only that edit into the saved file", () => {
     const { picker, synced } = mountPicker({ "index.html": SAVED });
@@ -221,10 +227,7 @@ describe("an edit that cannot be saved, put back exactly", () => {
   it("refuses an id-only element whose id repeats in its file instead of writing the first", () => {
     const saved =
       '<div data-composition-id="main"><span id="dupe">a</span><span id="dupe">b</span></div>';
-    const { picker, synced, toasts } = mountOnPage(saved, "span:nth-of-type(2)", "dupe");
-    act(() => picker().setStyle("color", "red"));
-    expect(synced).toEqual([]);
-    expect(toasts).toHaveLength(1);
+    expectRefusedStyleEdit(mountOnPage(saved, "span:nth-of-type(2)", "dupe"));
   });
 });
 
@@ -283,16 +286,12 @@ describe("an edit to a picked element whose id another scene shares", () => {
   it("reverts and says why when the scene is unknown and the hf-id is in two files", () => {
     const first = '<span id="dupe" data-hf-id="hf-x">a</span>';
     const second = '<span id="dupe" data-hf-id="hf-x">b</span>';
-    const { picker, synced, toasts } = mountPicker(
-      { "one.html": first, "two.html": second },
-      "#dupe",
-      "",
-      true,
-      { page: `<!doctype html><html><body>${first}</body></html>`, id: "dupe" },
+    expectRefusedStyleEdit(
+      mountPicker({ "one.html": first, "two.html": second }, "#dupe", "", true, {
+        page: `<!doctype html><html><body>${first}</body></html>`,
+        id: "dupe",
+      }),
     );
-    act(() => picker().setStyle("color", "red"));
-    expect(synced).toEqual([]);
-    expect(toasts).toHaveLength(1);
   });
 
   it("still saves an element that has an id but no hf-id, by its id", () => {
