@@ -55,7 +55,7 @@ function deferredVideo(key: string) {
       return new Promise<ThumbnailLoadedResult>(() => {});
     },
     "visible",
-    { kind: "video", timeoutFromLoadStart: true },
+    { kind: "video", networkVideoLoad: true },
   );
   return { request: deferred, job };
 }
@@ -457,7 +457,7 @@ describe("ThumbnailScheduler", () => {
         return new Promise<ThumbnailLoadedResult>(() => {});
       },
       "visible",
-      { kind: "video", timeoutFromLoadStart: true },
+      { kind: "video", networkVideoLoad: true },
     );
     const waiting = request(
       "waiting",
@@ -496,7 +496,7 @@ describe("ThumbnailScheduler", () => {
     });
     const render = vi.fn(() => new Promise<ThumbnailLoadedResult>(() => {}));
     scheduler.acquire(
-      request("no-track", noTrack, "visible", { kind: "video", timeoutFromLoadStart: true }),
+      request("no-track", noTrack, "visible", { kind: "video", networkVideoLoad: true }),
       vi.fn(),
     );
     scheduler.acquire(request("scene", render, "visible", { kind: "composition" }), vi.fn());

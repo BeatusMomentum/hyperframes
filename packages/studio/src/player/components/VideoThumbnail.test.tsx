@@ -84,7 +84,7 @@ describe("VideoThumbnail", () => {
     expect(host.querySelectorAll("img").length).toBeGreaterThan(0);
   });
 
-  it("asks the scheduler to time each decode from its first response", async () => {
+  it("marks each decode as a network video load", async () => {
     vi.mocked(decodeVideoThumbnail).mockResolvedValue({
       value: { kind: "image", url: "blob:poster", aspect: 16 / 9 },
       weight: 128,
@@ -94,7 +94,7 @@ describe("VideoThumbnail", () => {
     await render(440);
 
     expect(acquire).toHaveBeenCalled();
-    expect(acquire.mock.calls.every(([request]) => request.timeoutFromLoadStart)).toBe(true);
+    expect(acquire.mock.calls.every(([request]) => request.networkVideoLoad)).toBe(true);
     acquire.mockRestore();
   });
 

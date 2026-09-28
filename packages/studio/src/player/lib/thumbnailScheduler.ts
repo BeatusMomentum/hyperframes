@@ -23,7 +23,7 @@ export interface ThumbnailRequest {
   priority: ThumbnailPriority;
   /** Rich work is paused while the timeline is fast-scrolling. */
   rich?: boolean;
-  timeoutFromLoadStart?: boolean;
+  networkVideoLoad?: boolean;
   load: (signal: AbortSignal, loadStarted: () => void) => Promise<ThumbnailLoadedResult>;
 }
 
@@ -312,7 +312,7 @@ export class ThumbnailScheduler {
         if (this.requeuePreempted(entry)) return;
         if (
           !entry.retried &&
-          entry.request.timeoutFromLoadStart &&
+          entry.request.networkVideoLoad &&
           reason instanceof ThumbnailTimeoutError
         ) {
           entry.retried = true;
@@ -475,7 +475,7 @@ export class ThumbnailScheduler {
           controller.abort();
           reject(new ThumbnailTimeoutError(`Thumbnail load timed out after ${ms}ms`));
         }, ms);
-      if (entry.request.timeoutFromLoadStart) {
+      if (entry.request.networkVideoLoad) {
         cap = failAfter(this.budgets.thumbnailFirstResponseCapMs);
       }
       const startTimeout = () => {
@@ -490,7 +490,7 @@ export class ThumbnailScheduler {
       } catch (reason) {
         load = Promise.reject(reason);
       }
-      if (!entry.request.timeoutFromLoadStart) startTimeout();
+      if (!entry.request.networkVideoLoad) startTimeout();
 
       load.then(
         (result) => {

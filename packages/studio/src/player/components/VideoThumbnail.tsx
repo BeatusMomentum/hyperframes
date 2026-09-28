@@ -49,7 +49,7 @@ function createVideoThumbnailRequest(
     kind: "video" as const,
     priority,
     rich,
-    timeoutFromLoadStart: true,
+    networkVideoLoad: true,
     load: (signal: AbortSignal, loadStarted: () => void) =>
       decodeVideoThumbnail(
         {

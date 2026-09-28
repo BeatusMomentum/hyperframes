@@ -52,6 +52,18 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
+function abortWhenEither(first: AbortSignal, second: AbortSignal): AbortSignal {
+  const either = new AbortController();
+  const signals = [first, second];
+  const abort = () => {
+    for (const signal of signals) signal.removeEventListener("abort", abort);
+    either.abort(signals.find((signal) => signal.aborted)?.reason);
+  };
+  if (signals.some((signal) => signal.aborted)) abort();
+  else for (const signal of signals) signal.addEventListener("abort", abort);
+  return either.signal;
+}
+
 function releaseDecodedResources(resources: DecodedResources): void {
   for (const url of resources.urls.splice(0)) URL.revokeObjectURL(url);
   for (const canvas of resources.canvases) {
@@ -124,7 +136,7 @@ export async function decodeVideoThumbnail(
   const fetchReportingResponse: typeof fetch = (url, init) =>
     fetch(url, {
       ...init,
-      signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+      signal: init?.signal ? abortWhenEither(init.signal, signal) : signal,
     }).then((response) => {
       loadStarted();
       return response;

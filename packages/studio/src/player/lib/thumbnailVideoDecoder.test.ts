@@ -249,6 +249,62 @@ describe("decodeVideoThumbnail", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reads and cancels without AbortSignal.any, which older WebCodecs browsers lack", async () => {
+    const ownAny = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+    Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true });
+    const pending: { signal?: AbortSignal; respond: (response: Response) => void }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((respond, reject) => {
+            const signal = init?.signal ?? undefined;
+            signal?.addEventListener("abort", () => reject(signal.reason));
+            pending.push({ signal, respond });
+          }),
+      ),
+    );
+    try {
+      recordDecodes([]);
+      const loadStarted = vi.fn();
+      await decodeVideoThumbnail(
+        { source: "/clip.mp4", frameCount: 1 },
+        new AbortController().signal,
+        loadStarted,
+      );
+      const reading = urlSources[0]?.options?.fetchFn?.("/clip.mp4", {
+        signal: new AbortController().signal,
+      });
+      pending[0]?.respond(new Response("bytes"));
+      await reading;
+      expect(loadStarted).toHaveBeenCalledTimes(1);
+
+      input.getPrimaryVideoTrack.mockImplementation(() =>
+        urlSources[1]?.options?.fetchFn?.("/clip.mp4", { signal: new AbortController().signal }),
+      );
+      const controller = new AbortController();
+      const decoding = decodeVideoThumbnail(
+        { source: "/clip.mp4", frameCount: 1 },
+        controller.signal,
+      );
+      await vi.waitFor(() => expect(pending[1]).toBeDefined());
+      controller.abort();
+      expect(pending[1]?.signal?.aborted).toBe(true);
+      await expect(decoding).rejects.toMatchObject({ name: "AbortError" });
+
+      const cancelled = new AbortController();
+      cancelled.abort();
+      void urlSources[0]?.options
+        ?.fetchFn?.("/clip.mp4", { signal: cancelled.signal })
+        .catch(() => {});
+      expect(pending[2]?.signal?.aborted).toBe(true);
+    } finally {
+      if (ownAny) Object.defineProperty(AbortSignal, "any", ownAny);
+      else Reflect.deleteProperty(AbortSignal, "any");
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cancels a decode waiting for its first response: aborts the fetch and disposes the input", async () => {
     let fetchSignal: AbortSignal | undefined;
     vi.stubGlobal(
