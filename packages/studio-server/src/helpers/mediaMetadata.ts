@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import {
   firstFrameColourArgs,
   parseFirstFrameColour,
-  type ToneMapSourceColour,
+  type FirstFrameColour,
 } from "@hyperframes/core";
 import { findFfBinary } from "@hyperframes/parsers/ff-binaries";
 
@@ -186,7 +186,7 @@ export function classifyMediaColor(stream: FfprobeStream | null | undefined): Me
 export async function probeFirstFrameColour(
   filePath: string,
   runner: FfprobeRunner = execFileRunner,
-): Promise<ToneMapSourceColour> {
+): Promise<FirstFrameColour> {
   const ffmpegPath =
     findFfBinary("ffmpeg", { configuredMustExist: true }) ??
     (runner === execFileRunner ? undefined : "ffmpeg");

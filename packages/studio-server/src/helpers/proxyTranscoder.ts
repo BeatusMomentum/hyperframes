@@ -26,7 +26,7 @@ import { realpath } from "./safePath.js";
  * entry still lands for the next request.
  */
 
-export const PROXY_PARAMS_VERSION = "v5";
+export const PROXY_PARAMS_VERSION = "v6";
 
 const CACHE_DIR_NAME = ".transcode-cache";
 

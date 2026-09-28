@@ -3578,7 +3578,8 @@ describe.skipIf(!HAS_ZSCALE)("forced-SDR HDR extraction", () => {
       "-t",
       "0.616666",
       "-vf",
-      "zscale=t=linear:npl=100,tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,setparams=color_primaries=bt709:color_trc=iec61966-2-1",
+      // The file's MaxCLL is 4000 nits: peak 40 on every ffmpeg, though 8.0+ no longer reads it from frames.
+      "zscale=t=linear:npl=100,tonemap=hable:desat=0:peak=40,zscale=p=bt709:t=bt709:m=bt709:r=tv,setparams=color_primaries=bt709:color_trc=iec61966-2-1",
       "-fps_mode",
       "cfr",
       "-r",

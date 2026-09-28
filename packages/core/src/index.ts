@@ -256,6 +256,7 @@ export {
   firstFrameColourArgs,
   hdrToSdrToneMapFilter,
   parseFirstFrameColour,
+  type FirstFrameColour,
   type ToneMapSourceColour,
 } from "./hdrToneMap";
 
