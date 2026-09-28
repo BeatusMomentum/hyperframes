@@ -3,14 +3,17 @@
  * Removes registry block and component `preview` links whose object is gone.
  *
  * For each item this HEADs every URL in its `preview` and drops the ones the CDN
- * answers with 403 or 404. It never adds or changes a link.
+ * answers with 403 or 404. It never adds or changes a link. `--check` fails when
+ * a manifest changed since a ref links a URL that does not answer 200.
  *
  * Usage:
  *   npx tsx scripts/prune-catalog-previews.ts                   # every item
  *   npx tsx scripts/prune-catalog-previews.ts my-block my-comp  # named items
  *   npx tsx scripts/prune-catalog-previews.ts --dry-run         # report changes only
+ *   npx tsx scripts/prune-catalog-previews.ts --check origin/main
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +127,57 @@ export async function pruneItem(item: Item, head: Head, write = true): Promise<s
   return urls(current).filter((url) => !kept.includes(url));
 }
 
+/** Why an item's preview fails the check: every URL it links must answer 200. */
+export async function previewProblems(preview: unknown, head: Head): Promise<string[]> {
+  return (await Promise.all(urls(preview).map((url) => missingObject(url, head)))).flat();
+}
+
+async function missingObject(url: string, head: Head): Promise<string[]> {
+  const status = await statusOf(url, head);
+  return status === 200 ? [] : [`${url} answers ${status || "no response"}`];
+}
+
+const MANIFEST_PATH = /^registry\/(?:blocks|components)\/([^/]+)\/registry-item\.json$/;
+
+/** Item names whose manifest appears in `git diff --name-only` output. */
+export function namesFromDiff(diffOutput: string): string[] {
+  return diffOutput.split("\n").flatMap((line) => MANIFEST_PATH.exec(line.trim())?.[1] ?? []);
+}
+
+function changedItems(ref: string): Item[] {
+  const diff = execFileSync(
+    "git",
+    ["diff", "--name-only", "--diff-filter=ACMR", "--merge-base", ref, "--", "registry"],
+    { encoding: "utf8", cwd: repoRoot },
+  );
+  const names = namesFromDiff(diff);
+  return names.length ? registryItems(join(repoRoot, "registry"), names) : [];
+}
+
+async function reportProblems(item: Item, head: Head): Promise<boolean> {
+  const preview = JSON.parse(readFileSync(item.manifestPath, "utf8")).preview;
+  const problems = await previewProblems(preview, head);
+  for (const problem of problems) console.error(`✗ ${item.kind}/${item.name}: ${problem}`);
+  return problems.length > 0;
+}
+
+const CHECK_BATCH = 8;
+
+/** Checks items eight at a time, so a CDN that never answers fails the job in minutes. */
+export async function check(items: Item[], head: Head): Promise<void> {
+  let failed = 0;
+  for (let at = 0; at < items.length; at += CHECK_BATCH) {
+    const batch = items.slice(at, at + CHECK_BATCH);
+    const results = await Promise.all(batch.map((item) => reportProblems(item, head)));
+    failed += results.filter(Boolean).length;
+  }
+  if (failed)
+    throw new Error(
+      `${failed} item(s) link a preview that does not answer 200. Run \`npx tsx scripts/prune-catalog-previews.ts <name>\` to drop missing ones.`,
+    );
+  console.log(`Preview links verified for ${items.length} changed item(s).`);
+}
+
 async function prune(names: string[], write: boolean, head: Head): Promise<void> {
   let items = 0;
   let removed = 0;
@@ -139,6 +193,8 @@ async function prune(names: string[], write: boolean, head: Head): Promise<void>
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  const at = args.indexOf("--check");
+  if (at !== -1) return check(changedItems(args[at + 1] ?? "origin/main"), fetchHead);
   const names = args.filter((arg) => !arg.startsWith("--"));
   return prune(names, !args.includes("--dry-run"), fetchHead);
 }

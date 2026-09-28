@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import {
+  check,
+  namesFromDiff,
+  previewProblems,
   pruneItem,
   registryItems,
   withPreview,
@@ -134,4 +137,60 @@ describe("prune-catalog-previews in-place rewrite", () => {
       assert.deepEqual(JSON.parse(out), { ...JSON.parse(text), preview: next });
     });
   }
+});
+
+describe("prune-catalog-previews check", () => {
+  it("passes URLs that answer 200 on any path, and items without a preview", async () => {
+    assert.deepEqual(await previewProblems({ video: olderPath, poster }, cdn({})), []);
+    assert.deepEqual(await previewProblems(undefined, cdn({})), []);
+  });
+
+  it("rejects a dead link and a link that does not answer", async () => {
+    const head = cdn({ [video]: 403, [poster]: "throw" });
+    assert.deepEqual(await previewProblems({ video, poster }, head), [
+      `${video} answers 403`,
+      `${poster} answers no response`,
+    ]);
+    assert.deepEqual(await previewProblems(olderPath, cdn({ [olderPath]: 503 })), [
+      `${olderPath} answers 503`,
+    ]);
+  });
+
+  it("fails the run when any changed item fails, and passes when none does", async (t) => {
+    const { items } = registry(t, [
+      { kind: "blocks", name: "demo-block", text: manifestText("demo-block", { video }) },
+      { kind: "components", name: "demo-comp", text: manifestText("demo-comp", { poster }) },
+    ]);
+    const head = cdn({ [video]: 404 });
+    await assert.rejects(check(items, head), /1 item\(s\) link a preview that does not answer 200/);
+    await check(items.slice(1), head);
+  });
+
+  it("checks at most eight items at a time", async (t) => {
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      kind: "blocks",
+      name: `item-${i}`,
+      text: manifestText(`item-${i}`, { poster: `${CDN}/blocks/item-${i}.png` }),
+    }));
+    const { items } = registry(t, many);
+    let open = 0;
+    let peak = 0;
+    await check(items, async () => {
+      peak = Math.max(peak, ++open);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      open--;
+      return 200;
+    });
+    assert.equal(peak, 8);
+  });
+
+  it("reads changed manifests out of a git diff", () => {
+    const diff = [
+      "registry/blocks/demo-block/registry-item.json",
+      "registry/components/demo-comp/demo-comp.html",
+      "registry/examples/demo-example/registry-item.json",
+      "registry/components/demo-comp/registry-item.json",
+    ].join("\n");
+    assert.deepEqual(namesFromDiff(diff), ["demo-block", "demo-comp"]);
+  });
 });
