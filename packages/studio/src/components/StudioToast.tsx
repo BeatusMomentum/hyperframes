@@ -9,6 +9,10 @@ interface StudioToastProps {
   onDismiss?: () => void;
 }
 
+const focusRing =
+  "outline-hidden focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent";
+
+/** Using the action dismisses the toast first, so a second click finds it leaving. */
 export function StudioToast({ message, tone, leaving, action, onDismiss }: StudioToastProps) {
   const isError = tone === "error";
   return (
@@ -41,8 +45,11 @@ export function StudioToast({ message, tone, leaving, action, onDismiss }: Studi
           <button
             type="button"
             disabled={leaving}
-            onClick={action.run}
-            className="shrink-0 rounded-md px-2 py-1 font-medium text-neutral-100 transition-colors hover:bg-white/10"
+            onClick={() => {
+              onDismiss?.();
+              action.run();
+            }}
+            className={`shrink-0 rounded-md px-2 py-1 font-medium text-neutral-100 transition-colors hover:bg-white/10 ${focusRing}`}
           >
             {action.label}
           </button>
@@ -51,7 +58,7 @@ export function StudioToast({ message, tone, leaving, action, onDismiss }: Studi
           <button
             type="button"
             onClick={onDismiss}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-300"
+            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-300 ${focusRing}`}
             aria-label="Dismiss"
           >
             <svg

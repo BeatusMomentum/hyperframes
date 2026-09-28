@@ -47,6 +47,15 @@ it("the same offer again replaces the one showing instead of stacking", async ()
   act(() => root.unmount());
 });
 
+it("a plain toast with the same text leaves the offer showing", async () => {
+  const { toast, root } = await mount();
+  const shown = offer();
+  act(() => toast().showToast("Can't undo", "info", shown));
+  act(() => toast().showToast("Can't undo", "info"));
+  expect(toast().toasts.map((item) => item.action)).toEqual([shown, undefined]);
+  act(() => root.unmount());
+});
+
 it("switching projects drops the offers and keeps other toasts", async () => {
   const { toast, render, root } = await mount("a");
   act(() => {
@@ -69,5 +78,22 @@ it("an offer's button does nothing once its toast is leaving", async () => {
   );
   act(() => host.querySelector("button")!.click());
   expect(run).not.toHaveBeenCalled();
+  act(() => root.unmount());
+});
+
+it("using an offer dismisses its toast, and both buttons show a keyboard focus ring", async () => {
+  const run = vi.fn();
+  const onDismiss = vi.fn();
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      createElement(StudioToast, { message: "Can't undo", action: offer(run), onDismiss }),
+    ),
+  );
+  const buttons = [...host.querySelectorAll("button")];
+  act(() => buttons[0]!.click());
+  expect([run, onDismiss].map((fn) => fn.mock.calls.length)).toEqual([1, 1]);
+  for (const button of buttons) expect(button.className).toContain("focus-visible:outline-solid");
   act(() => root.unmount());
 });

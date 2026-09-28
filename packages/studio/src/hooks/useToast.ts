@@ -58,7 +58,8 @@ export function useToast(projectId?: string | null) {
     (message: string, tone: AppToast["tone"] = "error", action?: ToastAction): number => {
       const id = nextToastId++;
       setToasts((prev) => {
-        const withoutRepeat = prev.filter((toast) => !(toast.action && toast.message === message));
+        const repeats = (toast: ToastItem) => action && toast.action && toast.message === message;
+        const withoutRepeat = prev.filter((toast) => !repeats(toast));
         const next = [...withoutRepeat, { id, message, tone, action }];
         // Cap the stack; drop the oldest (and its pending timer).
         while (next.length > MAX_TOASTS) {
