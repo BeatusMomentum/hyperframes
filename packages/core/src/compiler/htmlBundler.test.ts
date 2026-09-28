@@ -1434,6 +1434,14 @@ describe("bundleToSingleHtml", () => {
       ).toEqual([]);
     });
 
+    it("does not inline a disabled linked sheet", async () => {
+      expect(
+        await bundledHeadStyles(`<link rel="stylesheet" href="a.css" disabled>`, {
+          "a.css": "p{color:blue}",
+        }),
+      ).toEqual([]);
+    });
+
     it("merges a titled style only with styles of the same title", async () => {
       expect(
         await bundledHeadStyles(

@@ -1001,6 +1001,7 @@ async function bundleProject(projectDir: string, options?: BundleOptions): Promi
   for (const el of [...document.querySelectorAll('link[rel="stylesheet"]')]) {
     const href = el.getAttribute("href");
     if (!href || !isRelativeUrl(href) || cssStyleMergeKey(el) === undefined) continue;
+    if (el.hasAttribute("disabled")) continue;
     const cssPath = resolveEntryPath(href);
     if (!cssPath) continue;
     const css = safeReadFile(cssPath);
