@@ -873,7 +873,8 @@ function coalesceHeadStylesAndBodyScripts(html: string): string {
 
   const styleEls = Array.from(head.querySelectorAll("style"));
   const importRe = /@import\s+url\([^)]*\)\s*;|@import\s+["'][^"']+["']\s*;/gi;
-  for (const run of styleEls.length > 1 ? headStyleRuns(styleEls) : []) {
+  const headSheets = Array.from(head.querySelectorAll("style, link"));
+  for (const run of styleEls.length > 1 ? headStyleRuns(headSheets) : []) {
     const imports: string[] = [];
     const cssParts: string[] = [];
     const seenImports = new Set<string>();

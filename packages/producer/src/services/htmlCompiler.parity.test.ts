@@ -234,6 +234,27 @@ describe("preview/render semantic compilation parity", () => {
     expect(render).toEqual(preview);
   });
 
+  it("keeps a stylesheet link between the head styles it separates in render", async () => {
+    const dir = project({
+      "index.html": shell(
+        `<main data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1"></main>`,
+        `<style>p{color:red}</style><link rel="stylesheet" href="x.css"><style>p{color:blue}</style>`,
+      ),
+      "x.css": "p{color:green}",
+    });
+    const sheets = (html: string) =>
+      [...new DOMParser().parseFromString(html, "text/html").head.querySelectorAll("style, link")]
+        .filter((el) => !el.hasAttribute("data-hyperframes-text-rendering"))
+        .map((el) => el.getAttribute("href") ?? (el.textContent ?? "").trim());
+    expect(sheets(await bundleToSingleHtml(dir))).toEqual([
+      "p{color:red}\n\np{color:green}\n\np{color:blue}",
+    ]);
+    const render = await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
+      allowSystemFontCapture: false,
+    });
+    expect(sheets(render.html)).toEqual(["p{color:red}", "x.css", "p{color:blue}"]);
+  });
+
   it("keeps legacy end/layer timing semantically identical", async () => {
     const result = await contracts({
       "index.html":

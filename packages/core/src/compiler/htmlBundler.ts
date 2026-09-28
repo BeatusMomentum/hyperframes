@@ -720,7 +720,8 @@ function pushRun<T>(runs: PartRun<T>[], scene: string | undefined, chunk: T): vo
 function coalesceHeadStylesAndBodyScripts(document: Document): void {
   const allHeadStyles = [...document.querySelectorAll("head style")];
   const isScenePart = (el: Element) => el.hasAttribute(SCENE_PART_ATTR);
-  for (const run of allHeadStyles.length > 1 ? headStyleRuns(allHeadStyles, isScenePart) : []) {
+  const headSheets = [...document.querySelectorAll("head style, head link")];
+  for (const run of allHeadStyles.length > 1 ? headStyleRuns(headSheets, isScenePart) : []) {
     const merged = joinCssHoistingImports(run.map((el) => el.textContent || ""));
     if (!merged) continue;
     run[0]!.textContent = merged;

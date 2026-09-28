@@ -1481,6 +1481,18 @@ describe("bundleToSingleHtml", () => {
       }
     });
 
+    it("does not merge styles across a stylesheet link", async () => {
+      expect(
+        await bundledHeadStyles(
+          `<style>p{color:red}</style><link rel="stylesheet" href="https://example.com/x.css">` +
+            `<link rel="preconnect" href="https://example.com"><style>p{color:blue}</style>`,
+        ),
+      ).toEqual([
+        { media: null, type: null, css: "p{color:red}" },
+        { media: null, type: null, css: "p{color:blue}" },
+      ]);
+    });
+
     it("keeps rule order across a conditional style", async () => {
       expect(
         await bundledHeadStyles(
