@@ -214,14 +214,14 @@ function patchInlineStyleInTag(
       tag.slice(0, styleMatch.index) +
       `style=${quote}${newStyle}${quote}` +
       tag.slice(styleMatch.index + styleMatch[0].length);
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   } else {
     // No existing style attribute
     if (value === null) return html; // nothing to remove
     const selfClosing = tag.endsWith("/");
     const base = selfClosing ? tag.slice(0, -1).trimEnd() : tag;
     const newTag = `${base} style="${prop}: ${escapeStyleAttributeValue(value, '"')}"${selfClosing ? " /" : ""}`;
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   }
 }
 
@@ -350,7 +350,7 @@ function patchAttributeByTarget(
 
   const escaped = escapeHtmlAttribute(value);
   if (attrPattern.test(tag)) {
-    const newTag = tag.replace(attrPattern, `${fullAttr}="${escaped}"`);
+    const newTag = tag.replace(attrPattern, () => `${fullAttr}="${escaped}"`);
     return replaceTagAtMatch(html, match, newTag);
   }
 
@@ -383,18 +383,18 @@ function patchAttribute(
     if (!boolAttrPattern.test(tag)) return html;
     const removePattern = new RegExp(`\\s+${escapeRegex(fullAttr)}(?:=(["'])[^"']*\\1)?`);
     const newTag = tag.replace(removePattern, "");
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   }
 
   const escaped = escapeHtmlAttribute(value);
   if (attrPattern.test(tag)) {
     // Update existing attribute
-    const newTag = tag.replace(attrPattern, `${fullAttr}="${escaped}"`);
-    return html.replace(tag, newTag);
+    const newTag = tag.replace(attrPattern, () => `${fullAttr}="${escaped}"`);
+    return html.replace(tag, () => newTag);
   } else {
     // Add new attribute
     const newTag = tag + ` ${fullAttr}="${escaped}"`;
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   }
 }
 
@@ -473,11 +473,11 @@ function patchHtmlAttributeInTag(
       if (!hasBoolAttr) return html;
       const removePattern = new RegExp(`\\s+${escapedAttr}(?:=(["'])[^"']*\\1)?`);
       const newTag = tag.replace(removePattern, "");
-      return html.replace(tag, newTag);
+      return html.replace(tag, () => newTag);
     }
     if (hasBoolAttr) return html;
     const newTag = tag + ` ${attr}`;
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   }
 
   const attrPattern = new RegExp(`(?<![\\w-])${escapeRegex(attr)}=(["'])([^"']*)\\1`);
@@ -485,17 +485,17 @@ function patchHtmlAttributeInTag(
     if (!attrPattern.test(tag)) return html;
     const removePattern = new RegExp(`\\s+${escapeRegex(attr)}=(["'])[^"']*\\1`);
     const newTag = tag.replace(removePattern, "");
-    return html.replace(tag, newTag);
+    return html.replace(tag, () => newTag);
   }
 
   const escaped = escapeHtmlAttribute(value);
   if (attrPattern.test(tag)) {
-    const newTag = tag.replace(attrPattern, `${attr}="${escaped}"`);
-    return html.replace(tag, newTag);
+    const newTag = tag.replace(attrPattern, () => `${attr}="${escaped}"`);
+    return html.replace(tag, () => newTag);
   }
 
   const newTag = tag + ` ${attr}="${escaped}"`;
-  return html.replace(tag, newTag);
+  return html.replace(tag, () => newTag);
 }
 
 function patchHtmlAttribute(

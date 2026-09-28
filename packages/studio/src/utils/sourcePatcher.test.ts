@@ -695,3 +695,30 @@ describe("attribute names inside longer ones", () => {
     expect(style).toContain('<span data-class="c" style="color: blue">');
   });
 });
+
+describe("values with $ replacement codes", () => {
+  const html = '<div id="i" data-label="old" alt="old" style="color: blue">x</div>';
+  const value = "R$&D $$ $`";
+
+  it("are written as typed by an id patch", () => {
+    expect(applyPatch(html, "i", { type: "attribute", property: "label", value })).toContain(
+      'data-label="R$&amp;D $$ $`"',
+    );
+    expect(applyPatch(html, "i", { type: "html-attribute", property: "alt", value })).toContain(
+      'alt="R$&amp;D $$ $`"',
+    );
+    expect(
+      applyPatch(html, "i", { type: "inline-style", property: "font-family", value: "A$&B" }),
+    ).toContain("font-family: A$&B");
+  });
+
+  it("are written as typed by a target patch", () => {
+    const tagged = '<p data-hf-id="h" alt="old">x</p>';
+    const patched = applyPatchByTarget(tagged, { hfId: "h" }, {
+      type: "html-attribute",
+      property: "alt",
+      value,
+    });
+    expect(patched).toBe('<p data-hf-id="h" alt="R$&amp;D $$ $`">x</p>');
+  });
+});
