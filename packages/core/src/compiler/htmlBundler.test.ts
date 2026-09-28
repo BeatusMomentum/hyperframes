@@ -1377,17 +1377,6 @@ describe("bundleToSingleHtml", () => {
       }));
     }
 
-    it("keeps a print-media style print-only", async () => {
-      expect(
-        await bundledHeadStyles(
-          `<style>p{color:red}</style><style media="print">p{color:blue}</style>`,
-        ),
-      ).toEqual([
-        { media: null, type: null, css: "p{color:red}" },
-        { media: "print", type: null, css: "p{color:blue}" },
-      ]);
-    });
-
     it("does not merge a non-CSS style into CSS", async () => {
       expect(
         await bundledHeadStyles(
@@ -1403,11 +1392,16 @@ describe("bundleToSingleHtml", () => {
       expect(
         await bundledHeadStyles(
           `<style>a{color:red}</style><style type="text/css">b{color:red}</style>` +
-            `<style media="all">i{color:red}</style>` +
+            `<style media="all">i{color:red}</style><style type="TEXT/CSS">u{color:red}</style>` +
+            `<style media=" ALL ">s{color:red}</style>` +
             `<style media="print">a{color:blue}</style><style media="print">b{color:blue}</style>`,
         ),
       ).toEqual([
-        { media: null, type: null, css: "a{color:red}\n\nb{color:red}\n\ni{color:red}" },
+        {
+          media: null,
+          type: null,
+          css: "a{color:red}\n\nb{color:red}\n\ni{color:red}\n\nu{color:red}\n\ns{color:red}",
+        },
         { media: "print", type: null, css: "a{color:blue}\n\nb{color:blue}" },
       ]);
     });
