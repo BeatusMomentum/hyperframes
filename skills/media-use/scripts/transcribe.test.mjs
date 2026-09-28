@@ -75,15 +75,19 @@ function failedRunError(tail) {
     const input = join(root, "in.wav");
     writeFileSync(input, "");
     const script = fileURLToPath(new URL("./transcribe.mjs", import.meta.url));
-    const res = spawnSync(process.execPath, [script, "--input", input, "--engine", "whisper", "--json"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        HYPERFRAMES_MEDIA_HOME: join(root, "home"),
-        HYPERFRAMES_NO_TELEMETRY: "1",
+    const res = spawnSync(
+      process.execPath,
+      [script, "--input", input, "--engine", "whisper", "--json"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          HYPERFRAMES_MEDIA_HOME: join(root, "home"),
+          HYPERFRAMES_NO_TELEMETRY: "1",
+        },
       },
-    });
+    );
     return JSON.parse(res.stdout.trim()).error;
   } finally {
     rmSync(root, { recursive: true, force: true });

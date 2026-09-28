@@ -75,7 +75,10 @@ describe.each(["linux", "win32"])("ensureWhisper on a %s host", (hostPlatform) =
     state.parakeetBlocked = "Parakeet needs glibc 2.32 or newer; this system has glibc 2.31.";
     const { ensureWhisper } = await import("./manager.js");
 
-    const err = await ensureWhisper().catch((e: Error) => e);
+    const err: Error = await ensureWhisper().then(
+      () => new Error("resolved"),
+      (e: Error) => e,
+    );
     expect(err).toMatchObject({ code: "WHISPER_UNAVAILABLE" });
     expect(err.message).toMatch(/Install whisper-cpp: brew install whisper-cpp$/);
     expect(err.message).not.toContain("parakeet");
