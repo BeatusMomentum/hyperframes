@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { useMountEffect } from "../../hooks/useMountEffect";
 import { isTypingTarget } from "../../utils/typingTarget";
+import { timelineOwnsKey } from "../../utils/timelineOwnsKey";
 import { acquireCanvasNudgeKeys } from "../../utils/canvasNudgeGate";
 import type { DomEditSelection } from "./domEditing";
 import {
@@ -125,12 +126,12 @@ function resolveSingleNudgeTarget(
 
 /**
  * True when a keydown must not start/extend a nudge: canvas movement disabled,
- * a pointer gesture already owns the element, or the user is typing in a field.
+ * a gesture owns the element, the timeline owns the key, or the user is typing.
  */
 function shouldIgnoreNudgeKey(p: UseDomEditNudgeParams, event: KeyboardEvent): boolean {
   if (!p.allowCanvasMovement || event.defaultPrevented) return true;
   if (p.gestureRef.current || p.groupGestureRef.current || p.blockedMoveRef.current) return true;
-  return isTypingTarget(event.target);
+  return timelineOwnsKey(event) || isTypingTarget(event.target);
 }
 
 export function useDomEditNudge(params: UseDomEditNudgeParams): { flushNudge: () => void } {

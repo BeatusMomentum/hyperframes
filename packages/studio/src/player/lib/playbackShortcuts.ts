@@ -7,6 +7,7 @@
  */
 
 import { isTypingTarget } from "../../utils/typingTarget";
+import { timelineOwnsKey } from "../../utils/timelineOwnsKey";
 
 const PLAYBACK_FRAME_STEP_CODES = new Set(["ArrowLeft", "ArrowRight"]);
 
@@ -80,8 +81,8 @@ export function shouldIgnorePlaybackShortcutEvent(
   if (isModalDialogOpen()) return true;
   return (
     PLAYBACK_FRAME_STEP_CODES.has(event.code) &&
-    captionState.isCaptionEditMode &&
-    captionState.selectedCaptionSegmentCount > 0
+    (timelineOwnsKey(event) ||
+      (captionState.isCaptionEditMode && captionState.selectedCaptionSegmentCount > 0))
   );
 }
 

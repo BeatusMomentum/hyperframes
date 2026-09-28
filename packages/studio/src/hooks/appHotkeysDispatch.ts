@@ -5,6 +5,7 @@ import type { DomEditSelection } from "../components/editor/domEditing";
 import { useDockLayoutStore } from "../components/dock/dockLayoutStore";
 import { isTypingTarget } from "../utils/typingTarget";
 import { isEditableTarget } from "../utils/timelineDiscovery";
+import { timelineOwnsKey } from "../utils/timelineOwnsKey";
 import { shouldIgnoreHistoryShortcut } from "../utils/studioHelpers";
 import { canSplitElement } from "../utils/timelineElementSplit";
 import { trackStudioEvent } from "../utils/studioTelemetry";
@@ -56,10 +57,6 @@ export interface HotkeyCallbacks {
   domEditSelectionRef: React.MutableRefObject<DomEditSelection | null>;
   showToast: (message: string, tone?: "error" | "info") => void;
   readOnlyPreview: boolean;
-}
-
-function timelineOwnsKey(event: KeyboardEvent): boolean {
-  return event.target instanceof Element && event.target.closest("[data-studio-timeline]") !== null;
 }
 
 /** Exported for tests, like dispatchPlainKey below: lets the Cmd+C/Cmd+V
