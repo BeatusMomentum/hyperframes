@@ -65,6 +65,7 @@ import {
   fetchCaptionOverrides,
 } from "./captionOverrides";
 import {
+  SCENE_HOST_NAMED_ATTR,
   SCENE_NO_SWAP_ATTR,
   SCENE_PART_ATTR,
   SCENE_PARTS_META,
@@ -3350,7 +3351,7 @@ export function initSandboxRuntimeModular(): void {
     [host, ...host.querySelectorAll("[data-composition-id]")].flatMap(
       (el) => el.getAttribute("data-composition-id") || [],
     );
-  // gsap binds a tween to elements, so one from outside the scene would go on moving the replaced copy.
+  // gsap binds a tween to elements, so one from outside would go on moving a replaced copy (a named host is kept).
   const refuseOutsideTweens = (
     name: string,
     host: Element,
@@ -3361,8 +3362,9 @@ export function initSandboxRuntimeModular(): void {
       compositionIdsIn(host).flatMap((id) => [timelines[id], ...(sceneAnimations[id] ?? [])]),
     );
     const inScene = new Set<unknown>([host, ...host.querySelectorAll("*")]);
+    const keptHost = host.hasAttribute(SCENE_HOST_NAMED_ATTR) ? host : null;
     for (const tween of window.gsap?.globalTimeline?.getChildren?.(true, true, false) ?? []) {
-      if (!tween.targets?.().some((target) => inScene.has(target))) continue;
+      if (!tween.targets?.().some((target) => target !== keptHost && inScene.has(target))) continue;
       let owner: RuntimeTimelineChildLike | undefined = tween;
       while (owner && !own.has(owner)) owner = owner.parent;
       if (!owner) {
@@ -3543,11 +3545,13 @@ export function initSandboxRuntimeModular(): void {
         .filter((el) => el.tagName === "STYLE")
         .forEach((el, i) => el.replaceWith(document.importNode(newStyles[i]!, true)));
       for (const el of oldParts) if (el !== oldHost) el.remove();
-      const host = document.importNode(newHost, true);
+      const imported = document.importNode(newHost, true);
       const scripts = (parts: Element[]) =>
         parts.flatMap((el) => (el.tagName === "SCRIPT" ? el.outerHTML : [])).join("");
-      keepUnchangedMedia(oldHost, host, scripts(oldParts) === scripts(newParts));
-      oldHost.replaceWith(host);
+      keepUnchangedMedia(oldHost, imported, scripts(oldParts) === scripts(newParts));
+      const host = oldHost.hasAttribute(SCENE_HOST_NAMED_ATTR) ? oldHost : imported;
+      if (host === oldHost) oldHost.replaceChildren(...imported.childNodes);
+      else oldHost.replaceWith(imported);
       swappedHosts.push(host);
       if (host.querySelector(".caption-group")) captionHosts.push(host);
     }

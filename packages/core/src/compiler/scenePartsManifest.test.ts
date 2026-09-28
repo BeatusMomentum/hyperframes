@@ -39,6 +39,19 @@ describe("addScenePartsManifest", () => {
     expect(sig.shared).not.toBe(manifestOf(addScenePartsManifest(doc("one", "<h1>t</h1>"))).shared);
   });
 
+  it("shares the markup of a host a script outside the scene names, which a swap keeps", () => {
+    const host = '<div data-composition-id="a" data-hf-scene="a">';
+    const shared = (attrs: string) =>
+      manifestOf(
+        addScenePartsManifest(
+          doc("one", "<h1>t</h1>").replace(host, host.replace(">", `${attrs}>`)),
+        ),
+      ).shared;
+    const named = ' data-hf-scene-host-named="a script outside the scene selects #a"';
+    expect(shared(`${named} style="left: 9px"`)).not.toBe(shared(named));
+    expect(shared(' style="left: 9px"')).toBe(shared(""));
+  });
+
   it.each([
     ["a double-quoted >", '<html><head data-title="a>b">'],
     ["a single-quoted >", "<html><head data-title='a>b'>"],

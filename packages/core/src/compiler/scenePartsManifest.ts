@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { SCENE_PART_ATTR, SCENE_PARTS_META, type SceneParts } from "../sceneParts";
+import {
+  SCENE_HOST_NAMED_ATTR,
+  SCENE_PART_ATTR,
+  SCENE_PARTS_META,
+  type SceneParts,
+} from "../sceneParts";
 import { injectTagsAtHeadStart, parseHTMLContent } from "./htmlDocument";
 
 const hash = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 16);
@@ -17,9 +22,13 @@ export function addScenePartsManifest(html: string, ignore: readonly string[] = 
     const scene = el.getAttribute(SCENE_PART_ATTR) ?? "";
     byScene.set(scene, [...(byScene.get(scene) ?? []), el.outerHTML]);
   }
-  // A marker keeps each part's place in `shared`, so moving or reordering a scene changes it.
-  for (const el of parts)
-    el.replaceWith(doc.createComment(`hf-scene:${el.getAttribute(SCENE_PART_ATTR)}`));
+  // Markers keep each part's place in `shared`, and the markup of a named host, which a swap keeps.
+  for (const el of parts) {
+    const kept = el.hasAttribute(SCENE_HOST_NAMED_ATTR)
+      ? (el.cloneNode(false) as Element).outerHTML
+      : "";
+    el.replaceWith(doc.createComment(`hf-scene:${el.getAttribute(SCENE_PART_ATTR)}${kept}`));
+  }
   for (const el of ignore.flatMap((sel) => [...doc.querySelectorAll(sel)])) el.remove();
   const manifest: SceneParts = {
     shared: hash(doc.toString()),

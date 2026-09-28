@@ -2486,6 +2486,27 @@ describe("bundleToSingleHtml sceneParts", () => {
     ]);
   });
 
+  it("marks a scene whose host alone a script outside it names as kept, and refuses one it reaches into", async () => {
+    const dir = makeTempProject({
+      "index.html": `<!doctype html><html><head></head><body>
+  <div data-composition-id="main" data-width="1920" data-height="1080" data-duration="2">
+    <div id="sa" data-composition-id="a" data-composition-src="compositions/a.html" data-start="0" data-duration="1"></div>
+    <div id="sb" data-composition-id="b" data-composition-src="compositions/b.html" data-start="1" data-duration="1"></div>
+  </div><script>const tl = gsap.timeline({ paused: true });
+  tl.fromTo("#sa", { opacity: 1 }, { opacity: 0, immediateRender: false }, 0.6);
+  tl.to("#sb .late", { opacity: 0 }, 1.6); document.getElementById("sa").dataset.seen = "1";</script></body></html>`,
+      "compositions/a.html": `<template id="a-template"><div data-composition-id="a"><p>A</p></div></template>`,
+      "compositions/b.html": `<template id="b-template"><div data-composition-id="b"><p class="late">B</p></div></template>`,
+    });
+    const doc = parseHTML(await bundleToSingleHtml(dir, { sceneParts: true })).document;
+    const marks = (id: string) =>
+      ["data-hf-scene-no-swap", "data-hf-scene-host-named"].map((attr) =>
+        doc.querySelector(`div[data-hf-scene="${id}"]`)?.getAttribute(attr),
+      );
+    expect(marks("a")).toEqual([null, selects("#sa")]);
+    expect(marks("b")).toEqual([selects("#sb .late"), null]);
+  });
+
   it("runs a scene's local script file in source order with its inline scripts, as a render does", async () => {
     const dir = makeTempProject({
       "index.html": `<!doctype html><html><head></head><body>

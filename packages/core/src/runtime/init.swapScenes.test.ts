@@ -943,6 +943,55 @@ describe("__hfSwapScenes", () => {
     expect(made.a1!.kill).not.toHaveBeenCalled();
   });
 
+  const namedHost = (s: Scene): Scene => ({
+    ...s,
+    extraAttrs: ' id="sa" data-hf-scene-host-named="a script outside the scene selects #sa"',
+  });
+
+  it("keeps a named host the root timeline fades, faded and still bound, and swaps what is inside it", async () => {
+    const exports: { gsap?: RealGsap & { timeline: (vars: object) => Tl } } = {};
+    const frame = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    new Function("exports", "module", readFileSync(vendoredGsap(), "utf8"))(exports, { exports });
+    window.requestAnimationFrame = frame;
+    vi.stubGlobal("gsap", exports.gsap);
+    boot([namedHost(A1), B], trackingRoot().root);
+    await tick();
+    const host = sceneHost("a");
+    const fade = exports.gsap!.timeline({ paused: true });
+    (fade as unknown as { fromTo: (...a: unknown[]) => void }).fromTo(
+      "#sa",
+      { opacity: 1 },
+      { opacity: 0, duration: 1, ease: "none" },
+      0,
+    );
+    fade.totalTime!(0.5);
+
+    await window.__hfSwapScenes!(preview([namedHost(A2), B]).html);
+
+    expect(sceneHost("a")).toBe(host);
+    expect(host.textContent).toBe("A two");
+    expect(exports.gsap!.getProperty(host, "opacity")).toBe(0.5);
+    fade.totalTime!(0.75);
+    expect(exports.gsap!.getProperty(host, "opacity")).toBe(0.25);
+  });
+
+  it("refuses, changing nothing, when the root timeline tweens inside a named host", async () => {
+    const { root } = trackingRoot();
+    const tween = { parent: root, targets: () => [sceneHost("a").querySelector("p")] };
+    (window as unknown as { gsap: unknown }).gsap = {
+      set: () => {},
+      globalTimeline: { getChildren: () => [tween] },
+    };
+    boot([namedHost(A1), B], root);
+    await tick();
+    const before = document.documentElement.innerHTML;
+    await expect(window.__hfSwapScenes!(preview([namedHost(A2), B]).html)).rejects.toThrow(
+      "scene a cannot be swapped: an animation outside it moves its elements",
+    );
+    expect(document.documentElement.innerHTML).toBe(before);
+  });
+
   it("swaps a scene whose elements only its own and its nested scenes' timelines tween", async () => {
     const { root } = trackingRoot();
     const nested = (s: Scene): Scene => ({

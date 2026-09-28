@@ -33,7 +33,7 @@ import {
   planCompositionAssembly,
   EXTRACTED_COMPOSITION_ASSET_SELECTOR,
 } from "./compositionAssembly";
-import { SCENE_NO_SWAP_ATTR, SCENE_PART_ATTR } from "../sceneParts";
+import { SCENE_HOST_NAMED_ATTR, SCENE_NO_SWAP_ATTR, SCENE_PART_ATTR } from "../sceneParts";
 
 // Anything a scene script can leave running, pending or registered outside its timeline, or that
 // throws when run again: only the timeline is torn down when a scene is swapped, so when unsure, refuse.
@@ -69,12 +69,17 @@ const isGsapBuild = (script: string) =>
     .split("\n")
     .filter((line) => line.trim() && !line.startsWith("//# sourceMappingURL=")).length === 1;
 
-/** Marks each scene whose nodes a script outside it names by selector, id or class: a swap would strand it. */
+/**
+ * Marks each scene whose nodes a script outside it names by selector, id or class: a swap would strand it.
+ * A scene whose host alone is named is marked as such instead; a swap keeps that host.
+ */
 export function refuseSwapsReachedByRootScripts(document: Document, rootScripts: string[]): void {
   const hosts = [...document.querySelectorAll(`[${SCENE_PART_ATTR}]`)];
-  const byName = new Map<string, Set<Element>>();
+  const inside = new Map<string, Set<Element>>();
+  const onHost = new Map<string, Set<Element>>();
   for (const host of hosts) {
     for (const el of [host, ...host.querySelectorAll("*")]) {
+      const byName = el === host ? onHost : inside;
       for (const name of [
         el.localName,
         el.id && `#${el.id}`,
@@ -94,7 +99,8 @@ export function refuseSwapsReachedByRootScripts(document: Document, rootScripts:
           .every(
             (part) =>
               !/^[a-z][\w-]*$/i.test(part) ||
-              byName.has(part.toLowerCase()) ||
+              inside.has(part.toLowerCase()) ||
+              onHost.has(part.toLowerCase()) ||
               document.querySelector(part) !== null,
           ),
       );
@@ -111,27 +117,34 @@ export function refuseSwapsReachedByRootScripts(document: Document, rootScripts:
     const open = hosts.filter((host) => !host.hasAttribute(SCENE_NO_SWAP_ATTR));
     if (open.length === 0) return;
     // Tag names match in any case; ids and classes do not.
-    const reached =
+    const named = (byName: Map<string, Set<Element>>) =>
+      [literal.toLowerCase(), `#${literal}`, `.${literal}`].flatMap((name) => [
+        ...(byName.get(name) ?? []),
+      ]);
+    const [reachedInside, reachedHost] =
       literal.trim() === "*"
-        ? open
+        ? [open, []]
         : /^[A-Za-z_][\w-]*$/.test(literal)
-          ? [literal.toLowerCase(), `#${literal}`, `.${literal}`].flatMap((name) => [
-              ...(byName.get(name) ?? []),
-            ])
+          ? [named(inside), named(onHost)]
           : /[#.[:>]|[\w\]*] *[\s,]+ *[\w*]/.test(literal) &&
               literal.length <= 120 &&
               namesKnown(literal)
-            ? open.filter((host) => reaches(host, literal))
-            : [];
-    for (const host of reached)
-      if (!host.hasAttribute(SCENE_NO_SWAP_ATTR))
-        host.setAttribute(SCENE_NO_SWAP_ATTR, `a script outside the scene selects ${literal}`);
+            ? [
+                open.filter((host) => safely(() => host.querySelector(literal) !== null)),
+                open.filter((host) => safely(() => host.matches(literal))),
+              ]
+            : [[], []];
+    const why = `a script outside the scene selects ${literal}`;
+    for (const host of reachedInside)
+      if (!host.hasAttribute(SCENE_NO_SWAP_ATTR)) host.setAttribute(SCENE_NO_SWAP_ATTR, why);
+    for (const host of reachedHost)
+      if (!host.hasAttribute(SCENE_HOST_NAMED_ATTR)) host.setAttribute(SCENE_HOST_NAMED_ATTR, why);
   }
 }
 
-const reaches = (host: Element, selector: string) => {
+const safely = (query: () => boolean) => {
   try {
-    return host.matches(selector) || host.querySelector(selector) !== null;
+    return query();
   } catch {
     return false;
   }
