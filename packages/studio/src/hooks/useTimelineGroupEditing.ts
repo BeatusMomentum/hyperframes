@@ -15,12 +15,12 @@ import {
   patchIframeDomTiming,
   patchTimelineMoveTiming,
   patchTimelineResizeTiming,
-  playbackStartAttributeForElement,
   persistTimelineBatchEdit,
   type PersistTimelineBatchChange,
   type PersistTimelineBatchEditInput,
   type RecordEditInput,
 } from "./timelineEditingHelpers";
+import { playbackStartAttributeForElement } from "../player/lib/timelineElementHelpers";
 import {
   finishGroupTimingGsapFallback,
   readFileContent,
