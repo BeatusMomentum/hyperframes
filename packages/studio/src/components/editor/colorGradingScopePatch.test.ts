@@ -92,3 +92,12 @@ describe("patchMediaColorGradingInHtml", () => {
     );
   });
 });
+
+describe("patchMediaColorGradingInHtml with $ replacement codes", () => {
+  it("writes the grading value as typed", () => {
+    expect(patchMediaColorGradingInHtml('<img data-color-grading="old" />', "a$&b $$")).toEqual({
+      html: '<img data-color-grading="a$&amp;b $$" />',
+      count: 1,
+    });
+  });
+});

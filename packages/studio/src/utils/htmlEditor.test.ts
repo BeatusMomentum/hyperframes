@@ -40,3 +40,12 @@ describe("mergeStyleIntoTag", () => {
     );
   });
 });
+
+describe("mergeStyleIntoTag with $ replacement codes", () => {
+  it("writes the values as typed, with or without an existing style", () => {
+    expect(mergeStyleIntoTag('<p style="color: blue">', "font-family: A$&B")).toBe(
+      '<p style="color: blue; font-family: A$&B">',
+    );
+    expect(mergeStyleIntoTag("<p>", "font-family: A$'B")).toBe(`<p style="font-family: A$'B">`);
+  });
+});

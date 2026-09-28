@@ -36,7 +36,7 @@ function patchMediaTag(tag: string, value: string | null): string {
 
   const nextAttr = ` data-color-grading="${escapeHtmlAttribute(value)}"`;
   if (COLOR_GRADING_ATTR_RE.test(tag)) {
-    return tag.replace(COLOR_GRADING_ATTR_RE, nextAttr);
+    return tag.replace(COLOR_GRADING_ATTR_RE, () => nextAttr);
   }
   return tag.replace(/\s*\/?>$/, (end) => `${nextAttr}${end}`);
 }

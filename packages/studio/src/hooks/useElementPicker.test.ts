@@ -191,13 +191,47 @@ describe("an edit that cannot be saved", () => {
       true,
       { page, id: "dupe" },
     );
+    const shownBefore = picker().pickedElement;
     act(() => picker().setDataAttr("tone", "cold"));
     act(() => picker().setTextContent("changed"));
     const live = iframe.contentDocument?.querySelector("span") as HTMLElement;
     expect([live.getAttribute("data-tone"), live.textContent]).toEqual(["warm", "a"]);
-    expect(picker().pickedElement?.textContent).toBe("a");
+    expect(picker().pickedElement?.textContent).toBe(shownBefore?.textContent);
+    expect(picker().pickedElement?.dataAttributes).toEqual(shownBefore?.dataAttributes);
     expect(synced).toEqual([]);
     expect(toasts).toHaveLength(2);
+  });
+});
+
+describe("an edit that cannot be saved, put back exactly", () => {
+  it("restores an important inline style and child elements as they were", () => {
+    const saved =
+      '<div data-composition-id="main"><p id="dupe" data-hf-id="hf-x" style="color: blue !important">' +
+      '<b>bold</b> text</p><p id="dupe" data-hf-id="hf-x">b</p></div>';
+    const { picker, iframe } = mountPicker({ "index.html": saved }, "p:nth-of-type(1)", "", true, {
+      page: `<!doctype html><html><body>${saved}</body></html>`,
+      id: "dupe",
+    });
+    const live = iframe.contentDocument?.querySelector("p") as HTMLElement;
+    act(() => picker().setStyle("color", "red"));
+    act(() => picker().setTextContent("flat"));
+    expect(live.getAttribute("style")).toBe("color: blue !important");
+    expect(live.innerHTML).toBe("<b>bold</b> text");
+  });
+
+  it("refuses an id-only element whose id repeats in its file instead of writing the first", () => {
+    const saved =
+      '<div data-composition-id="main"><span id="dupe">a</span><span id="dupe">b</span></div>';
+    const { picker, synced, toasts } = mountPicker(
+      { "index.html": saved },
+      "span:nth-of-type(2)",
+      "",
+      true,
+      { page: `<!doctype html><html><body>${saved}</body></html>`, id: "dupe" },
+    );
+    act(() => picker().setStyle("color", "red"));
+    expect(synced).toEqual([]);
+    expect(toasts).toHaveLength(1);
   });
 });
 

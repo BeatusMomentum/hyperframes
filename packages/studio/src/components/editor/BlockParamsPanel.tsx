@@ -77,7 +77,10 @@ export const BlockParamsPanel = memo(function BlockParamsPanel({
           trackBlockParamCommit({ tone: "error", blockName, key });
           return;
         }
-        await fileManager.writeProjectFile(compositionPath, content.replace(matcher, nextValue));
+        await fileManager.writeProjectFile(
+          compositionPath,
+          content.replace(matcher, () => nextValue),
+        );
         appliedRef.current[key] = nextValue;
         setCommitState({ tone: "saved" });
         trackBlockParamCommit({ tone: "saved", blockName, key });

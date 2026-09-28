@@ -40,7 +40,7 @@ export function mergeStyleIntoTag(tag: string, newStyles: string): string {
     const serialized = Object.entries(merged)
       .map(([k, v]) => `${k}: ${v}`)
       .join("; ");
-    return tag.replace(styleAttrRe, `style=${quote}${serialized}${quote}`);
+    return tag.replace(styleAttrRe, () => `style=${quote}${serialized}${quote}`);
   }
 
   // No style attribute — insert one before the closing `>`
@@ -48,7 +48,7 @@ export function mergeStyleIntoTag(tag: string, newStyles: string): string {
     .map(([k, v]) => `${k}: ${v}`)
     .join("; ");
   // Handle self-closing tags (`/>`) and regular closing (`>`)
-  return tag.replace(/(\/?>)$/, ` style="${serialized}"$1`);
+  return tag.replace(/(\/?>)$/, (_tag, end: string) => ` style="${serialized}"${end}`);
 }
 
 /**

@@ -1,12 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useMountEffect } from "./useMountEffect";
-import {
-  resolveSourceFile,
-  applyPatch,
-  applyPatchByTarget,
-  countTagsWithAttr,
-  type PatchOperation,
-} from "../utils/sourcePatcher";
+import { applyPatchByTarget, countTagsWithAttr, type PatchOperation } from "../utils/sourcePatcher";
 import {
   acceptStudioRuntimeMessage,
   postRuntimeControlMessage,
@@ -180,68 +174,64 @@ export function useElementPicker(
     [pickedElement, getActiveIframe],
   );
 
+  const restorePicked = useCallback(
+    (snapshot: PickedElement, field: "computedStyles" | "dataAttributes" | "textContent") =>
+      setPickedElement((prev) => (prev ? { ...prev, [field]: snapshot[field] } : null)),
+    [],
+  );
+
   const setStyle = useCallback(
     (prop: string, value: string) =>
       editPicked((el, iframe, picked) => {
-        const before = el.style.getPropertyValue(prop);
-        const shownBefore = picked.computedStyles[prop];
+        const styleBefore = el.getAttribute("style");
         el.style.setProperty(prop, value);
-        const showStyle = (shown: string | undefined) =>
-          setPickedElement((prev) =>
-            prev
-              ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } }
-              : null,
-          );
-        showStyle(value);
+        setPickedElement((prev) =>
+          prev ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: value } } : null,
+        );
         syncToSource(picked, el, iframe, { type: "inline-style", property: prop, value }, () => {
-          el.style.setProperty(prop, before);
-          showStyle(shownBefore);
+          if (styleBefore === null) el.removeAttribute("style");
+          else el.setAttribute("style", styleBefore);
+          restorePicked(picked, "computedStyles");
         });
       }),
-    [editPicked, syncToSource],
+    [editPicked, syncToSource, restorePicked],
   );
 
   const setDataAttr = useCallback(
     (attr: string, value: string) =>
       editPicked((el, iframe, picked) => {
         const before = el.getAttribute(`data-${attr}`);
-        const showAttr = (shown: string | null) => {
-          if (shown === null) el.removeAttribute(`data-${attr}`);
-          else el.setAttribute(`data-${attr}`, shown);
-          setPickedElement((prev) => {
-            if (!prev) return null;
-            const dataAttributes = { ...prev.dataAttributes };
-            if (shown === null) delete dataAttributes[attr];
-            else dataAttributes[attr] = shown;
-            return { ...prev, dataAttributes };
-          });
-        };
-        showAttr(value);
-        syncToSource(picked, el, iframe, { type: "attribute", property: attr, value }, () =>
-          showAttr(before),
+        el.setAttribute(`data-${attr}`, value);
+        setPickedElement((prev) =>
+          prev ? { ...prev, dataAttributes: { ...prev.dataAttributes, [attr]: value } } : null,
         );
+        syncToSource(picked, el, iframe, { type: "attribute", property: attr, value }, () => {
+          if (before === null) el.removeAttribute(`data-${attr}`);
+          else el.setAttribute(`data-${attr}`, before);
+          restorePicked(picked, "dataAttributes");
+        });
       }),
-    [editPicked, syncToSource],
+    [editPicked, syncToSource, restorePicked],
   );
 
   const setTextContent = useCallback(
     (text: string) =>
       editPicked((el, iframe, picked) => {
-        const before = el.textContent;
-        const showText = (shown: string | null) => {
-          el.textContent = shown;
-          setPickedElement((prev) => (prev ? { ...prev, textContent: shown ?? "" } : null));
-        };
-        showText(text);
+        const childrenBefore = [...el.childNodes];
+        el.textContent = text;
+        setPickedElement((prev) => (prev ? { ...prev, textContent: text } : null));
         syncToSource(
           picked,
           el,
           iframe,
           { type: "text-content", property: "textContent", value: text },
-          () => showText(before),
+          () => {
+            el.replaceChildren(...childrenBefore);
+            restorePicked(picked, "textContent");
+          },
         );
       }),
-    [editPicked, syncToSource],
+    [editPicked, syncToSource, restorePicked],
   );
 
   // Ref-like object that always points to the active iframe (override or primary)
@@ -330,17 +320,6 @@ interface SourcePatch {
   after: string;
 }
 
-function patchById(
-  files: Record<string, string>,
-  id: string,
-  selector: string,
-  op: PatchOperation,
-): SourcePatch | null {
-  const path = resolveSourceFile(id, selector, files);
-  const before = path ? files[path] : undefined;
-  return path && before ? { path, before, after: applyPatch(before, id, op) } : null;
-}
-
 function ownSourceFile(live: HTMLElement, iframe: HTMLIFrameElement): string {
   const previewed = compositionPathOfPreviewUrl(iframe.getAttribute("src") ?? "");
   return getSourceFileForElement(live, previewed).sourceFile;
@@ -355,13 +334,12 @@ function sourcePatchFor(
   op: PatchOperation,
 ): SourcePatch | typeof NOT_UNIQUE | null {
   const hfId = live.getAttribute("data-hf-id");
-  if (hfId) return patchByIdentity(files, hfId, picked.id, ownSourceFile(live, iframe), op);
-  return picked.id ? patchById(files, picked.id, picked.selector, op) : null;
+  return patchByIdentity(files, hfId, picked.id, ownSourceFile(live, iframe), op);
 }
 
 function patchByIdentity(
   files: Record<string, string>,
-  hfId: string,
+  hfId: string | null,
   id: string | null | undefined,
   ownFile: string,
   op: PatchOperation,
@@ -372,7 +350,8 @@ function patchByIdentity(
   if (path && before && target)
     return { path, before, after: applyPatchByTarget(before, target, op) };
   const found =
-    filesHolding(files, "data-hf-id", hfId).length || (id && filesHolding(files, "id", id).length);
+    (hfId && filesHolding(files, "data-hf-id", hfId).length) ||
+    (id && filesHolding(files, "id", id).length);
   return found ? NOT_UNIQUE : null;
 }
 
@@ -382,19 +361,20 @@ function filesHolding(files: Record<string, string>, attr: string, value: string
 
 function identityFile(
   files: Record<string, string>,
-  hfId: string,
+  hfId: string | null,
   id: string | null | undefined,
   ownFile: string,
 ): string | undefined {
-  const withHfId = filesHolding(files, "data-hf-id", hfId);
+  const withHfId = hfId ? filesHolding(files, "data-hf-id", hfId) : [];
   if (withHfId.includes(ownFile)) return ownFile;
   if (withHfId.length === 1) return withHfId[0];
   const withId = id ? filesHolding(files, "id", id) : [];
+  if (withId.includes(ownFile)) return ownFile;
   return withId.length === 1 ? withId[0] : undefined;
 }
 
-function identityTarget(html: string, hfId: string, id: string | null | undefined) {
-  if (countTagsWithAttr(html, "data-hf-id", hfId) === 1) return { hfId };
+function identityTarget(html: string, hfId: string | null, id: string | null | undefined) {
+  if (hfId && countTagsWithAttr(html, "data-hf-id", hfId) === 1) return { hfId };
   if (id && countTagsWithAttr(html, "id", id) === 1) return { id };
   return null;
 }

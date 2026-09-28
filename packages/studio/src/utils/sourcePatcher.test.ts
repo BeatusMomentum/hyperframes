@@ -724,5 +724,25 @@ describe("values with $ replacement codes", () => {
       },
     );
     expect(patched).toBe('<p data-hf-id="h" alt="R$&amp;D $$ $`">x</p>');
+    const labelled = applyPatchByTarget(
+      tagged,
+      { hfId: "h" },
+      {
+        type: "attribute",
+        property: "label",
+        value: "a$'b",
+      },
+    );
+    expect(labelled).toBe(`<p data-hf-id="h" alt="old" data-label="a$'b">x</p>`);
+    const styled = applyPatchByTarget(
+      tagged,
+      { hfId: "h" },
+      {
+        type: "inline-style",
+        property: "font-family",
+        value: "A$&B",
+      },
+    );
+    expect(styled).toBe('<p data-hf-id="h" alt="old" style="font-family: A$&B">x</p>');
   });
 });
