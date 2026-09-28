@@ -43,6 +43,7 @@ function mountPicker(
 ) {
   const iframe = mountPreview(mounted, preview?.page);
   const synced: Record<string, string>[] = [];
+  const toasts: [string, string | undefined][] = [];
   let api: ReturnType<typeof useElementPicker> | null = null;
   let setHostFiles: (next: Record<string, string>) => void = () => {};
   // Like a Studio host: it holds the files in state and rerenders after each write.
@@ -57,6 +58,7 @@ function mountPicker(
           synced.push(changed);
           if (hostAppliesWrites) setFiles((prev) => ({ ...prev, ...changed }));
         },
+        showToast: (message, tone) => toasts.push([message, tone]),
       },
     );
     return null;
@@ -80,6 +82,8 @@ function mountPicker(
   return {
     picker,
     synced,
+    toasts,
+    iframe,
     setHostFiles: (next: Record<string, string>) => act(() => setHostFiles(next)),
   };
 }
@@ -173,6 +177,30 @@ describe("an edit to a picked element without an id", () => {
   });
 });
 
+describe("an edit that cannot be saved", () => {
+  const saved =
+    '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-x" data-tone="warm">a</span>' +
+    '<span id="dupe" data-hf-id="hf-x">b</span></div>';
+  const page = `<!doctype html><html><body>${saved}</body></html>`;
+
+  it("puts a data attribute and text back as the file has them", () => {
+    const { picker, synced, toasts, iframe } = mountPicker(
+      { "index.html": saved },
+      "span:nth-of-type(1)",
+      "",
+      true,
+      { page, id: "dupe" },
+    );
+    act(() => picker().setDataAttr("tone", "cold"));
+    act(() => picker().setTextContent("changed"));
+    const live = iframe.contentDocument?.querySelector("span") as HTMLElement;
+    expect([live.getAttribute("data-tone"), live.textContent]).toEqual(["warm", "a"]);
+    expect(picker().pickedElement?.textContent).toBe("a");
+    expect(synced).toEqual([]);
+    expect(toasts).toHaveLength(2);
+  });
+});
+
 describe("an edit to a picked element whose id another scene shares", () => {
   it("writes the scene it was picked in, not the first file with that id", () => {
     const first =
@@ -217,11 +245,11 @@ describe("an edit to a picked element whose id another scene shares", () => {
     expect(synced[0]?.["index.html"]).toContain('id="intro" data-hf-id="hf-x" style="color: red"');
   });
 
-  it("writes nothing when neither the hf-id nor the id picks one element", () => {
+  it("reverts the preview and says why when neither the hf-id nor the id picks one element", () => {
     const saved =
       '<div data-composition-id="main"><span id="dupe" data-hf-id="hf-x">a</span>' +
       '<span id="dupe" data-hf-id="hf-x">b</span></div>';
-    const { picker, synced } = mountPicker(
+    const { picker, synced, toasts, iframe } = mountPicker(
       { "index.html": saved },
       "span:nth-of-type(2)",
       "",
@@ -233,12 +261,17 @@ describe("an edit to a picked element whose id another scene shares", () => {
     );
     act(() => picker().setStyle("color", "red"));
     expect(synced).toEqual([]);
+    const live = iframe.contentDocument?.querySelectorAll("span")[1] as HTMLElement;
+    expect(live.style.color).toBe("");
+    expect(toasts).toEqual([
+      ["Couldn't save that change: the element isn't uniquely identifiable in its file.", "error"],
+    ]);
   });
 
-  it("writes nothing by a shared id when the scene is unknown and the hf-id is in two files", () => {
+  it("reverts and says why when the scene is unknown and the hf-id is in two files", () => {
     const first = '<span id="dupe" data-hf-id="hf-x">a</span>';
     const second = '<span id="dupe" data-hf-id="hf-x">b</span>';
-    const { picker, synced } = mountPicker(
+    const { picker, synced, toasts } = mountPicker(
       { "one.html": first, "two.html": second },
       "#dupe",
       "",
@@ -247,6 +280,7 @@ describe("an edit to a picked element whose id another scene shares", () => {
     );
     act(() => picker().setStyle("color", "red"));
     expect(synced).toEqual([]);
+    expect(toasts).toHaveLength(1);
   });
 
   it("still saves an element that has an id but no hf-id, by its id", () => {

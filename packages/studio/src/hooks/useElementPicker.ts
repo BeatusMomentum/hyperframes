@@ -49,7 +49,12 @@ interface PickerOptions {
   workspaceFiles?: Record<string, string>;
   /** Callback to sync patched files to the project */
   onSyncFiles?: (files: Record<string, string>) => void;
+  showToast?: (message: string, tone?: "error" | "info") => void;
 }
+
+const NOT_UNIQUE = "not-unique";
+const NOT_UNIQUE_MESSAGE =
+  "Couldn't save that change: the element isn't uniquely identifiable in its file.";
 
 /**
  * Hook for element picking via the HyperFrame runtime's picker API.
@@ -137,7 +142,13 @@ export function useElementPicker(
 
   // Sync immediately (not debounced) — save on every change for reliability
   const syncToSource = useCallback(
-    (picked: PickedElement, live: HTMLElement, iframe: HTMLIFrameElement, op: PatchOperation) => {
+    (
+      picked: PickedElement,
+      live: HTMLElement,
+      iframe: HTMLIFrameElement,
+      op: PatchOperation,
+      revertLive: () => void,
+    ) => {
       const opts = optionsRef.current;
       if (!opts?.workspaceFiles || !opts.onSyncFiles) return;
       // The hf-id names the element in the file it was served from; an id can repeat across scenes.
@@ -149,6 +160,11 @@ export function useElementPicker(
         : picked.id
           ? patchById(files, picked.id, picked.selector, op)
           : null;
+      if (patch === NOT_UNIQUE) {
+        revertLive();
+        opts.showToast?.(NOT_UNIQUE_MESSAGE, "error");
+        return;
+      }
       if (!patch || patch.after === patch.before) return;
       recordPendingWrite(pending, patch.path, opts.workspaceFiles[patch.path], patch.after);
       opts.onSyncFiles({ [patch.path]: patch.after });
@@ -164,20 +180,24 @@ export function useElementPicker(
         const doc = activeIframe.contentDocument;
         const el = doc?.querySelector(pickedElement.selector) as HTMLElement | null;
         if (el) {
+          const before = el.style.getPropertyValue(prop);
+          const shownBefore = pickedElement.computedStyles[prop];
           el.style.setProperty(prop, value);
-          setPickedElement((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  computedStyles: { ...prev.computedStyles, [prop]: value },
-                }
-              : null,
+          const showStyle = (shown: string | undefined) =>
+            setPickedElement((prev) =>
+              prev ? { ...prev, computedStyles: { ...prev.computedStyles, [prop]: shown ?? "" } } : null,
+            );
+          showStyle(value);
+          syncToSource(
+            pickedElement,
+            el,
+            activeIframe,
+            { type: "inline-style", property: prop, value },
+            () => {
+              el.style.setProperty(prop, before);
+              showStyle(shownBefore);
+            },
           );
-          syncToSource(pickedElement, el, activeIframe, {
-            type: "inline-style",
-            property: prop,
-            value,
-          });
         }
       } catch {
         /* cross-origin */
@@ -194,6 +214,7 @@ export function useElementPicker(
         const doc = activeIframe.contentDocument;
         const el = doc?.querySelector(pickedElement.selector);
         if (el) {
+          const before = el.getAttribute(`data-${attr}`);
           el.setAttribute(`data-${attr}`, value);
           setPickedElement((prev) =>
             prev
@@ -203,11 +224,23 @@ export function useElementPicker(
                 }
               : null,
           );
-          syncToSource(pickedElement, el as HTMLElement, activeIframe, {
-            type: "attribute",
-            property: attr,
-            value,
-          });
+          syncToSource(
+            pickedElement,
+            el as HTMLElement,
+            activeIframe,
+            { type: "attribute", property: attr, value },
+            () => {
+              if (before === null) el.removeAttribute(`data-${attr}`);
+              else el.setAttribute(`data-${attr}`, before);
+              setPickedElement((prev) => {
+                if (!prev) return null;
+                const dataAttributes = { ...prev.dataAttributes };
+                if (before === null) delete dataAttributes[attr];
+                else dataAttributes[attr] = before;
+                return { ...prev, dataAttributes };
+              });
+            },
+          );
         }
       } catch {
         /* cross-origin */
@@ -224,13 +257,19 @@ export function useElementPicker(
         const doc = activeIframe.contentDocument;
         const el = doc?.querySelector(pickedElement.selector);
         if (el) {
+          const before = el.textContent;
           el.textContent = text;
           setPickedElement((prev) => (prev ? { ...prev, textContent: text } : null));
-          syncToSource(pickedElement, el as HTMLElement, activeIframe, {
-            type: "text-content",
-            property: "textContent",
-            value: text,
-          });
+          syncToSource(
+            pickedElement,
+            el as HTMLElement,
+            activeIframe,
+            { type: "text-content", property: "textContent", value: text },
+            () => {
+              el.textContent = before;
+              setPickedElement((prev) => (prev ? { ...prev, textContent: before ?? "" } : null));
+            },
+          );
         }
       } catch {
         /* cross-origin */
@@ -347,13 +386,17 @@ function patchByIdentity(
   id: string | null | undefined,
   ownFile: string,
   op: PatchOperation,
-): SourcePatch | null {
+): SourcePatch | typeof NOT_UNIQUE | null {
   const path = identityFile(files, hfId, id, ownFile);
   const before = path ? files[path] : undefined;
   const target = before ? identityTarget(before, hfId, id) : null;
-  return path && before && target
-    ? { path, before, after: applyPatchByTarget(before, target, op) }
-    : null;
+  if (path && before && target) return { path, before, after: applyPatchByTarget(before, target, op) };
+  const found = filesHolding(files, "data-hf-id", hfId).length || (id && filesHolding(files, "id", id).length);
+  return found ? NOT_UNIQUE : null;
+}
+
+function filesHolding(files: Record<string, string>, attr: string, value: string): string[] {
+  return Object.keys(files).filter((file) => countTagsWithAttr(files[file] ?? "", attr, value) > 0);
 }
 
 function identityFile(
@@ -362,12 +405,10 @@ function identityFile(
   id: string | null | undefined,
   ownFile: string,
 ): string | undefined {
-  const holding = (attr: string, value: string) =>
-    Object.keys(files).filter((file) => countTagsWithAttr(files[file] ?? "", attr, value) > 0);
-  const withHfId = holding("data-hf-id", hfId);
+  const withHfId = filesHolding(files, "data-hf-id", hfId);
   if (withHfId.includes(ownFile)) return ownFile;
   if (withHfId.length === 1) return withHfId[0];
-  const withId = id ? holding("id", id) : [];
+  const withId = id ? filesHolding(files, "id", id) : [];
   return withId.length === 1 ? withId[0] : undefined;
 }
 
