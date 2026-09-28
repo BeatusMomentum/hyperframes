@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useId, useRef, memo } from "react";
+import { Fragment, useState, useCallback, useEffect, useId, useRef, memo } from "react";
 import { formatTime, frameToSeconds } from "../lib/time";
 import { Tooltip } from "../../components/ui";
 import { useContextMenuDismiss } from "../../hooks/useContextMenuDismiss";
@@ -241,17 +241,17 @@ export const ShortcutsPanel = memo(function ShortcutsPanel({
                 <p className="text-[9px] font-medium text-neutral-500 uppercase tracking-wider mb-1.5">
                   {section.title}
                 </p>
-                <div className="flex flex-col gap-1">
+                <div className="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-1">
                   {section.hints.map((hint, hintIndex) => (
-                    <div key={hintIndex} className="flex items-center gap-3">
+                    <Fragment key={hintIndex}>
                       <span
-                        className="font-mono text-[10px] rounded-sm border border-neutral-700 px-1.5 py-0.5 text-neutral-300 min-w-[36px] text-center"
+                        className="justify-self-start font-mono text-[10px] rounded-sm border border-neutral-700 px-1.5 py-0.5 text-neutral-300 min-w-[36px] text-center"
                         style={{ background: "rgba(255,255,255,0.05)" }}
                       >
                         {hint.key}
                       </span>
                       <span className="text-[10px] text-neutral-400">{hint.label}</span>
-                    </div>
+                    </Fragment>
                   ))}
                 </div>
               </div>
