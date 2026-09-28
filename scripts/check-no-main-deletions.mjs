@@ -1093,6 +1093,10 @@ export const ALLOWED_DELETIONS = new Map([
   ],
   ["docs/images/preview-reload-evidence/after.webm", "evidence video no page referenced"],
   ["docs/images/preview-reload-evidence/before.webm", "evidence video no page referenced"],
+  [
+    "scripts/backfill-block-previews.ts",
+    "replaced by prune-catalog-previews.ts, which only removes preview links whose object is gone",
+  ],
 ]);
 
 export function parseBase(argv, fallback = "origin/main") {
