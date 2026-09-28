@@ -11,7 +11,7 @@ export interface EditingFile {
   content: string | null;
 }
 
-/** A later change as a phrase: `Claude's "Bigger title"`, `your "Moved Title"`, or an outside edit. */
+/** A later change as a phrase: `Scout's "Bigger title"`, `your "Moved Title"`, or an outside edit. */
 export function changeName({ label, who }: Pick<HistoryName, "label" | "who">): string {
   if (who.kind === "outside") return "an edit outside the app";
   return who.kind === "agent" ? `${who.name}'s "${label}"` : `your "${label}"`;

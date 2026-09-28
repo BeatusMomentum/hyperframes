@@ -223,8 +223,8 @@ describe("resolveElementTrack", () => {
 describe("changeName", () => {
   it("says who made the later change", () => {
     const label = "Bigger title";
-    expect(changeName({ label, who: { kind: "agent", name: "Claude" } })).toBe(
-      `Claude's "Bigger title"`,
+    expect(changeName({ label, who: { kind: "agent", name: "Scout" } })).toBe(
+      `Scout's "Bigger title"`,
     );
     expect(changeName({ label, who: { kind: "person", name: "You" } })).toBe(`your "Bigger title"`);
     expect(

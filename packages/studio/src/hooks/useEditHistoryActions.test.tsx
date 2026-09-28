@@ -10,7 +10,7 @@ import { useEditHistoryActions, type EditHistoryHandle } from "./useEditHistoryA
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
-const claude = { kind: "agent", name: "Claude" } as const;
+const scout = { kind: "agent", name: "Scout" } as const;
 afterEach(() => act(() => root?.unmount()));
 
 function mount(result: {
@@ -80,13 +80,13 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["index.html"],
-      changedSince: { id: "turn-1", label: "Bigger title", who: claude, paths: ["index.html"] },
+      changedSince: { id: "turn-1", label: "Bigger title", who: scout, paths: ["index.html"] },
     });
     await act(() => actions.undo());
     expect(deps.showToast).toHaveBeenCalledWith(
-      `Can't undo: Claude's "Bigger title" changed index.html since that edit.`,
+      `Can't undo: Scout's "Bigger title" changed index.html since that edit.`,
       "info",
-      { label: `Undo Claude's "Bigger title"`, run: expect.any(Function) },
+      { label: `Undo Scout's "Bigger title"`, run: expect.any(Function) },
     );
     const [, , offer] = deps.showToast.mock.calls[0]!;
     await act(async () => offer.run());
@@ -103,7 +103,7 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["scene.html"],
-      changedSince: { id: "turn-1", label: "Agent turn", who: claude, paths: ["scene.html"] },
+      changedSince: { id: "turn-1", label: "Agent turn", who: scout, paths: ["scene.html"] },
     });
     deps.editHistory.undoEntry.mockResolvedValue({
       ok: true,
@@ -123,7 +123,7 @@ describe("useEditHistoryActions", () => {
       ok: false,
       reason: "content-mismatch",
       paths: ["index.html"],
-      changedSince: { id: "turn-1", label: "Agent turn", who: claude, paths: ["index.html"] },
+      changedSince: { id: "turn-1", label: "Agent turn", who: scout, paths: ["index.html"] },
     });
     await act(() => actions.redo());
     expect(deps.showToast).toHaveBeenCalledWith(
