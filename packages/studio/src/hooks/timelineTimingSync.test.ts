@@ -877,7 +877,7 @@ describe("the length is re-decided once the preview converged", () => {
 
     const written = AFTER.replace(`data-duration="5"`, `data-duration="3"`);
     expect(reloadPreview).not.toHaveBeenCalled();
-    expect(lengthAfterEdit).toHaveBeenCalledWith({ clips: 3, animation: 3 });
+    expect(lengthAfterEdit).toHaveBeenCalledWith({ clips: 3, animation: 3 }, "index.html");
     expect(writeProjectFile).toHaveBeenCalledWith("index.html", written, AFTER);
     expect(recordEdit).toHaveBeenCalledTimes(2);
     expect(recordEdit).toHaveBeenLastCalledWith({

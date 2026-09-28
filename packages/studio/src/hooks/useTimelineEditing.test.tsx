@@ -1908,7 +1908,9 @@ describe("useTimelineEditing re-decides the length once the preview converged", 
 
   async function editConverging(
     root: string,
-    edit: keyof typeof edits | ((hook: Hook, a: TimelineElement) => Promise<unknown>),
+    edit:
+      | keyof typeof edits
+      | ((hook: Hook, a: TimelineElement, files: Record<string, string>) => Promise<unknown>),
     sdk: boolean,
     {
       file = "",
@@ -1971,7 +1973,7 @@ describe("useTimelineEditing re-decides the length once the preview converged", 
       publishSdkSession: vi.fn<TimelinePublishSdkSession>(() => "published"),
     });
     await act(async () => {
-      await (typeof edit === "function" ? edit : edits[edit]!)(hook, a);
+      await (typeof edit === "function" ? edit(hook, a, files) : edits[edit]!(hook, a));
       await flushAsyncWork();
     });
     hook.unmount();
@@ -2106,17 +2108,46 @@ describe("useTimelineEditing re-decides the length once the preview converged", 
       });
     }
 
+    // Another writer retypes the length in the file.
+    const retype = (from: number, to: number) => (files: Record<string, string>) => {
+      files["index.html"] = files["index.html"]!.replace(
+        `data-duration="${from}"`,
+        `data-duration="${to}"`,
+      );
+    };
+
     it(`keeps a length changed on disk before the ${path} path converged`, async () => {
       const result = await editConverging(`data-duration="5"`, "move", sdk, {
-        onConverge: (files) => {
-          files["index.html"] = files["index.html"]!.replace(
-            `data-duration="5"`,
-            `data-duration="7"`,
-          );
-        },
+        onConverge: retype(5, 7),
       });
       expect([result.file, result.live, result.duration]).toEqual(["7", "7", 7]);
     });
+
+    it(`keeps a length set back to the old one before the ${path} path converged`, async () => {
+      const moveTo4 = (hook: Hook, a: TimelineElement) => edits.move!(hook, a, 4);
+      const result = await editConverging(`data-duration="5"`, moveTo4, sdk, {
+        onConverge: retype(6, 5),
+      });
+      expect([result.file, result.live, result.duration]).toEqual(["5", "5", 5]);
+    });
+
+    // The retype lands after the gesture starts but before its save reads the file.
+    it.each(Object.keys(edits))(
+      `keeps a length changed on disk before the ${path} path's %s saved`,
+      async (name) => {
+        const retypedDuringEdit = (
+          hook: Hook,
+          a: TimelineElement,
+          files: Record<string, string>,
+        ) => {
+          const saved = edits[name]!(hook, a);
+          retype(5, 7)(files);
+          return saved;
+        };
+        const result = await editConverging(`data-duration="5"`, retypedDuringEdit, sdk);
+        expect([result.file, result.live, result.duration]).toEqual(["7", "7", 7]);
+      },
+    );
 
     // The first edit's readout puts a length on the live root; a file without one still has none.
     const twice = (edit: Edit, to: number) => async (hook: Hook, a: TimelineElement) => {

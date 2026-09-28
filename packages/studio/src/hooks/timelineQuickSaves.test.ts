@@ -18,8 +18,8 @@ const SOURCE =
 
 // Refuses a write whose base is stale, like the server's If-Match; one write can be held mid-flight.
 // A GSAP shift lands 10 ms after it is posted and releases the held write.
-function fakeProject() {
-  let file = SOURCE;
+function fakeProject(source = SOURCE) {
+  let file = source;
   const refused: string[] = [];
   let writes = 0;
   let release = () => {};
@@ -116,6 +116,20 @@ describe("two quick timeline saves on one file", () => {
     );
 
     expect(project.read()).toContain('id="a" class="clip" data-start="3"');
+    expect(project.read()).toContain('id="b" class="clip" data-start="4"');
+  });
+
+  it("decides the second move's length from the file the first move saved", async () => {
+    // The length follows the clips (a 1-6, b 2-7); moving b to 4 grows it to 9.
+    const root = '<div id="root" data-composition-id="main" data-duration="7">';
+    const project = fakeProject(SOURCE.replace('<div id="root">', root));
+    await expectBothLand(
+      project,
+      () => move(project, "b", 4),
+      () => move(project, "a", 0),
+    );
+
+    expect(project.read()).toContain('data-composition-id="main" data-duration="9"');
     expect(project.read()).toContain('id="b" class="clip" data-start="4"');
   });
 

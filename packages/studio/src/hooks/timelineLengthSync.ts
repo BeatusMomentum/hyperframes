@@ -52,6 +52,7 @@ export interface LengthSync {
 
 // Re-decides the previewed file's length once the preview has converged, in the gesture's undo step.
 // Unconverged, or if another writer changed the length since, the readout takes the file's length.
+// Failures log; they never reach the gesture.
 export async function syncEditLength(input: {
   converged: boolean;
   iframe: HTMLIFrameElement | null;
@@ -78,10 +79,11 @@ export async function syncEditLength(input: {
           decided.next = onDiskLength;
           return onDisk;
         }
-        decided.next = lengthSync.lengthAfterEdit({
-          clips: furthestClipEndFromDocument(doc),
-          animation: readLiveAnimationEnd(iframe),
-        });
+        decided.next =
+          lengthSync.lengthAfterEdit(
+            { clips: furthestClipEndFromDocument(doc), animation: readLiveAnimationEnd(iframe) },
+            targetPath,
+          ) ?? onDiskLength;
         return writeRootLength(onDisk, decided.next);
       },
       targetPath,

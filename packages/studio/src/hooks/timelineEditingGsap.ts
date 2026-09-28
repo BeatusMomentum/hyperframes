@@ -1,7 +1,10 @@
 import { formatTimelineAttributeNumber } from "../player/components/timelineEditing";
 import type { IframeWindow } from "../player/lib/playbackTypes";
-import { furthestClipEndFromDocument } from "../player/lib/timelineElementHelpers";
-import { readDocumentRootDuration, readRootCompositionDuration } from "../utils/rootDuration";
+import {
+  furthestClipEndFromDocument,
+  parseCompositionSource,
+} from "../player/lib/timelineElementHelpers";
+import { readDocumentRootDuration } from "../utils/rootDuration";
 import { roundToCenti } from "../utils/rounding";
 import type { RecordEditInput } from "../utils/studioFileHistory";
 import { resolveRootLength, type ContentEnd } from "../utils/timelineAssetDrop";
@@ -41,7 +44,7 @@ export function animationEndFor(
   return isPreviewedFile(path, activeCompPath) ? readLiveAnimationEnd(iframe) : 0;
 }
 
-export type LengthAfterEdit = ((after?: ContentEnd) => number | null) & {
+export type LengthAfterEdit = ((after?: ContentEnd, path?: string) => number | null) & {
   isOwnLength: (length: number | null, path: string) => boolean;
 };
 
@@ -55,15 +58,26 @@ export function captureLiveLength(
   const before = liveContentEnd(iframe);
   const firstDecision: Array<number | null> = [];
   let firstWrite: RecordEditInput["files"] | undefined;
-  const decide = (after = liveContentEnd(iframe)) => {
-    const next = resolveRootLength(length, before, after);
+  const savedDoc = (side: "before" | "after", path?: string) => {
+    const file = path === undefined ? undefined : firstWrite?.[path];
+    return file ? parseCompositionSource(file[side]) : null;
+  };
+  const decide = (after = liveContentEnd(iframe), path?: string) => {
+    const doc = savedDoc("before", path);
+    const next = doc
+      ? resolveRootLength(
+          readDocumentRootDuration(doc),
+          { clips: furthestClipEndFromDocument(doc), animation: before.animation },
+          after,
+        )
+      : resolveRootLength(length, before, after);
     if (firstDecision.length === 0) firstDecision.push(next ?? length);
     return next;
   };
   const centi = (value: number | null) => (value == null ? null : roundToCenti(value));
   const isOwnLength = (onDisk: number | null, path: string) => {
-    const file = firstWrite?.[path];
-    const own = file ? [...firstDecision, readRootCompositionDuration(file.before)] : firstDecision;
+    const doc = savedDoc("after", path);
+    const own = doc ? [readDocumentRootDuration(doc)] : firstDecision;
     return own.some((value) => centi(value) === centi(onDisk));
   };
   const record: RecordEdit = (edit) => {
