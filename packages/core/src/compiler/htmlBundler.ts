@@ -1,4 +1,4 @@
-import { inlineScriptRuns } from "./scriptRuns";
+import { cssStyleMergeKey, headStyleRuns, inlineScriptRuns } from "./scriptRuns";
 import { SCENE_PART_ATTR } from "../sceneParts";
 import {
   ensureExternalScriptTag,
@@ -710,32 +710,16 @@ function pushRun<T>(runs: PartRun<T>[], scene: string | undefined, chunk: T): vo
   else runs.push({ scene, chunks: [chunk] });
 }
 
-function cssStyleMergeKey(el: Element): string | undefined {
-  const type = el.getAttribute("type") ?? "";
-  if (type !== "" && type.toLowerCase() !== "text/css") return undefined;
-  const media = (el.getAttribute("media") ?? "").trim().toLowerCase();
-  return JSON.stringify([media === "all" ? "" : media, el.getAttribute("title") ?? ""]);
-}
-
 function coalesceHeadStylesAndBodyScripts(document: Document): void {
   const allHeadStyles = [...document.querySelectorAll("head style")];
-  const runs: Element[][] = [];
-  let previousKey: string | undefined;
-  for (const el of allHeadStyles) {
-    const key = el.hasAttribute(SCENE_PART_ATTR) ? undefined : cssStyleMergeKey(el);
-    if (key !== undefined && key === previousKey) runs.at(-1)!.push(el);
-    else if (key !== undefined) runs.push([el]);
-    previousKey = key;
-  }
-  for (const run of allHeadStyles.length > 1 ? runs : []) {
+  const isScenePart = (el: Element) => el.hasAttribute(SCENE_PART_ATTR);
+  for (const run of allHeadStyles.length > 1 ? headStyleRuns(allHeadStyles, isScenePart) : []) {
     const merged = joinCssHoistingImports(run.map((el) => el.textContent || ""));
     if (!merged) continue;
     run[0]!.textContent = merged;
     for (const el of run.slice(1)) el.remove();
   }
-  if (allHeadStyles.some((el) => el.hasAttribute(SCENE_PART_ATTR))) {
-    placeSceneStylesLikeRender(document);
-  }
+  if (allHeadStyles.some(isScenePart)) placeSceneStylesLikeRender(document);
 
   const isPinned = (el: Element) =>
     el.hasAttribute(RUNTIME_BOOTSTRAP_ATTR) || el.hasAttribute(SCENE_PART_ATTR);

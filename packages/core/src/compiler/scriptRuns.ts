@@ -37,3 +37,27 @@ export function inlineScriptRuns(
   if (members.length > 0) runs.push({ members, anchor: null });
   return runs;
 }
+
+/** Undefined for a type the browser never applies as CSS; `media="all"` and an empty title count as none. */
+export function cssStyleMergeKey(el: Element): string | undefined {
+  const type = el.getAttribute("type") ?? "";
+  if (type !== "" && type.toLowerCase() !== "text/css") return undefined;
+  const media = (el.getAttribute("media") ?? "").trim().toLowerCase();
+  return JSON.stringify([media === "all" ? "" : media, el.getAttribute("title") ?? ""]);
+}
+
+/** Groups head styles into runs of adjacent styles with one merge key, so merging a run never reorders rules. */
+export function headStyleRuns(
+  styles: readonly Element[],
+  isPinned: (el: Element) => boolean = () => false,
+): Element[][] {
+  const runs: Element[][] = [];
+  let previousKey: string | undefined;
+  for (const el of styles) {
+    const key = isPinned(el) ? undefined : cssStyleMergeKey(el);
+    if (key !== undefined && key === previousKey) runs.at(-1)!.push(el);
+    else if (key !== undefined) runs.push([el]);
+    previousKey = key;
+  }
+  return runs;
+}

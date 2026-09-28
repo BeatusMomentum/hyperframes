@@ -119,6 +119,42 @@ describe("preview/render semantic compilation parity", () => {
     expect(result.render).toEqual(result.preview);
   });
 
+  it("keeps conditional head styles apart the same way in preview and render", async () => {
+    const dir = project({
+      "index.html": shell(
+        `<main data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1"></main>`,
+        `<style>p{color:red}</style><style media="print">p{color:blue}</style>` +
+          `<style type="text/x-tpl">{{ a }}</style><style title="alt">p{color:green}</style>` +
+          `<style>h1{color:black}</style><style>h2{color:black}</style>`,
+      ),
+    });
+    const headStyles = (html: string) =>
+      [...new DOMParser().parseFromString(html, "text/html").head.querySelectorAll("style")]
+        .filter((el) => !el.hasAttribute("data-hyperframes-text-rendering"))
+        .map((el) => [
+          el.getAttribute("media"),
+          el.getAttribute("type"),
+          el.getAttribute("title"),
+          el.textContent,
+        ]);
+    const preview = headStyles(await bundleToSingleHtml(dir));
+    const render = headStyles(
+      (
+        await compileForRender(dir, join(dir, "index.html"), join(dir, ".downloads"), {
+          allowSystemFontCapture: false,
+        })
+      ).html,
+    );
+    expect(preview).toEqual([
+      [null, null, null, "p{color:red}"],
+      ["print", null, null, "p{color:blue}"],
+      [null, "text/x-tpl", null, "{{ a }}"],
+      [null, null, "alt", "p{color:green}"],
+      [null, null, null, "h1{color:black}\n\nh2{color:black}"],
+    ]);
+    expect(render).toEqual(preview);
+  });
+
   it("keeps legacy end/layer timing semantically identical", async () => {
     const result = await contracts({
       "index.html":
