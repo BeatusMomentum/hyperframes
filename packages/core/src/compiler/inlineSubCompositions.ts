@@ -61,6 +61,14 @@ const isNotASelector = (script: string, at: number, literal: string) =>
   CREATES_ELEMENT_RE.test(script.slice(Math.max(0, at - 60), at)) ||
   (literal.trim() === "*" && /,\s*$/.test(script.slice(Math.max(0, at - 20), at)));
 
+// GSAP's own build as vendored beside a film: its banner, then one minified line. Film code has no such banner.
+const isGsapBuild = (script: string) =>
+  /^\s*\/\*!\s*\*\s*GSAP \d+\.\d+\.\d+\s/.test(script) &&
+  script
+    .slice(script.indexOf("*/") + 2)
+    .split("\n")
+    .filter((line) => line.trim() && !line.startsWith("//# sourceMappingURL=")).length === 1;
+
 /** Marks each scene whose nodes a script outside it names by selector, id or class: a swap would strand it. */
 export function refuseSwapsReachedByRootScripts(document: Document, rootScripts: string[]): void {
   const hosts = [...document.querySelectorAll(`[${SCENE_PART_ATTR}]`)];
@@ -91,11 +99,13 @@ export function refuseSwapsReachedByRootScripts(document: Document, rootScripts:
           ),
       );
   const literals = new Set(
-    rootScripts.flatMap((s) =>
-      [...s.matchAll(STRING_LITERAL_RE)]
-        .filter((m) => !isNotASelector(s, m.index, m[2] ?? ""))
-        .map((m) => m[2] ?? ""),
-    ),
+    rootScripts
+      .filter((s) => !isGsapBuild(s))
+      .flatMap((s) =>
+        [...s.matchAll(STRING_LITERAL_RE)]
+          .filter((m) => !isNotASelector(s, m.index, m[2] ?? ""))
+          .map((m) => m[2] ?? ""),
+      ),
   );
   for (const literal of literals) {
     const open = hosts.filter((host) => !host.hasAttribute(SCENE_NO_SWAP_ATTR));

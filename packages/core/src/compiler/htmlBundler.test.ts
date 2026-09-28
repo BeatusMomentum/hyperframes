@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseHTML } from "linkedom";
@@ -2463,6 +2463,27 @@ describe("bundleToSingleHtml sceneParts", () => {
   document.body.append(document.createElement("div"), document.createElementNS("http://www.w3.org/2000/svg", "span"));</script>
   <script type="application/json">{"note": "addEventListener"}</script>`;
     expect(await swapMarks(rootProject(root))).toEqual([null, null]);
+  });
+
+  it("reads a vendored GSAP build as the library, and film code after it as film code", async () => {
+    const gsap = readFileSync(
+      join(
+        __dirname,
+        "../../../../skills/music-to-video/references/motion-primitives/assets/gsap.min.js",
+      ),
+      "utf8",
+    );
+    const root = `<script src="assets/gsap.min.js"></script>`;
+    expect(await swapMarks(rootProject(root, { "assets/gsap.min.js": gsap }))).toEqual([
+      null,
+      null,
+    ]);
+    const bundle = `${gsap}\ndocument.querySelector(".go").onclick = () => {};`;
+    // Read whole, so the library's own strings refuse as they did before.
+    expect(await swapMarks(rootProject(root, { "assets/gsap.min.js": bundle }))).toEqual([
+      selects("*"),
+      selects("*"),
+    ]);
   });
 
   it("runs a scene's local script file in source order with its inline scripts, as a render does", async () => {
