@@ -486,6 +486,7 @@ describe("media rules", () => {
     ['data-start="0"', "zero local start"],
     ['data-start="2" data-hf-media-start-basis="local"', "explicit local start"],
     ['data-start="2" data-hf-media-start-basis="global"', "explicit legacy-global start"],
+    ['data-start="2" data-hf-media-start-basis="GLOBAL"', "upper-case basis, read like core"],
   ])("does not warn for %s (%s)", async (attrs) => {
     const html = `<template>
   <div data-composition-id="scene" data-width="1920" data-height="1080">

@@ -574,29 +574,6 @@ function lintDuplicateAudioTracks(htmlSources: HtmlSource[]): HyperframeLintFind
   return findings;
 }
 
-/**
- * Error if a `data-composition-src` reference points at a file that is
- * missing, empty, or does not parse to usable HTML. This is the #1 render
- * failure bucket in production telemetry: a scene-authoring step (an AI
- * agent, most commonly) writes the reference before — or without ever —
- * writing valid content into the scene file.
- *
- * The render pre-flight check (`assertSubCompositionsUsable` in
- * `packages/producer/src/services/htmlCompiler.ts`) now aborts the render
- * loudly and immediately when this happens, rather than silently dropping
- * the scene — so catching it here, before the render even starts, means the
- * failure surfaces at lint/validate time with the same message instead of
- * only at render time.
- *
- * Only follows files actually reachable via `data-composition-src` starting
- * from the root composition — mirroring the reachability semantics of
- * `assertSubCompositionsUsable`. A raw filesystem walk of every `.html`
- * under `compositions/` would flag orphaned/unreferenced files that the
- * renderer never visits, producing false-positive lint/validate failures on
- * projects that actually render fine. Lint, render, and the inliner must
- * never disagree about whether a given file would actually render
- * something.
- */
 function finiteAttr(tagRaw: string, attr: string): number | null {
   const raw = readAttr(tagRaw, attr);
   if (raw == null || raw.trim() === "") return null;
@@ -631,19 +608,20 @@ function lintNestedMediaStartsPastHostEnd(
       const srcPath = readAttr(hostTag.raw, "data-composition-src");
       if (!srcPath) continue;
       const rawStart = readAttr(hostTag.raw, "data-start");
-      const hostStart = rawStart == null ? 0 : finiteAttr(hostTag.raw, "data-start");
-      if (hostStart == null) continue;
+      const authoredHostStart = rawStart == null ? 0 : finiteAttr(hostTag.raw, "data-start");
+      if (authoredHostStart == null) continue;
+      const hostStart = Math.max(0, authoredHostStart);
       const filePath = resolve(projectDir, srcPath);
       if (visiting.has(filePath) || !existsSync(filePath)) continue;
 
-      const hostEnd = authoredHostEnd(hostTag.raw, Math.max(0, hostStart));
+      const hostEnd = authoredHostEnd(hostTag.raw, hostStart);
       const hostName =
         readAttr(hostTag.raw, "data-composition-id") || readAttr(hostTag.raw, "id") || srcPath;
       const hostLimit =
         hostEnd != null && (limit == null || offset + hostEnd < limit.end)
           ? { end: offset + hostEnd, host: hostName }
           : limit;
-      const hostOffset = offset + Math.max(0, hostStart);
+      const hostOffset = offset + hostStart;
       const fileHtml = readFileSync(filePath, "utf-8");
 
       if (hostLimit) {
@@ -651,7 +629,8 @@ function lintNestedMediaStartsPastHostEnd(
           if (tag.name !== "video" && tag.name !== "audio") continue;
           const authoredStart = finiteAttr(tag.raw, "data-start");
           if (authoredStart == null) continue;
-          const isGlobal = readAttr(tag.raw, "data-hf-media-start-basis")?.trim() === "global";
+          const isGlobal =
+            readAttr(tag.raw, "data-hf-media-start-basis")?.trim().toLowerCase() === "global";
           const start = isGlobal ? authoredStart : hostOffset + authoredStart;
           if (start < hostLimit.end) continue;
           const elementId = readAttr(tag.raw, "id") || undefined;
@@ -677,6 +656,29 @@ function lintNestedMediaStartsPastHostEnd(
   return findings;
 }
 
+/**
+ * Error if a `data-composition-src` reference points at a file that is
+ * missing, empty, or does not parse to usable HTML. This is the #1 render
+ * failure bucket in production telemetry: a scene-authoring step (an AI
+ * agent, most commonly) writes the reference before — or without ever —
+ * writing valid content into the scene file.
+ *
+ * The render pre-flight check (`assertSubCompositionsUsable` in
+ * `packages/producer/src/services/htmlCompiler.ts`) now aborts the render
+ * loudly and immediately when this happens, rather than silently dropping
+ * the scene — so catching it here, before the render even starts, means the
+ * failure surfaces at lint/validate time with the same message instead of
+ * only at render time.
+ *
+ * Only follows files actually reachable via `data-composition-src` starting
+ * from the root composition — mirroring the reachability semantics of
+ * `assertSubCompositionsUsable`. A raw filesystem walk of every `.html`
+ * under `compositions/` would flag orphaned/unreferenced files that the
+ * renderer never visits, producing false-positive lint/validate failures on
+ * projects that actually render fine. Lint, render, and the inliner must
+ * never disagree about whether a given file would actually render
+ * something.
+ */
 function lintMissingOrEmptySubComposition(
   projectDir: string,
   rootHtml: string,

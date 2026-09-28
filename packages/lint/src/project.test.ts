@@ -816,10 +816,11 @@ describe("nested_media_starts_after_host_end", () => {
     expect(findings[0]?.fixHint).toContain('data-hf-media-start-basis="global"');
   });
 
-  it.each([`data-start="0"`, `data-start="3" data-hf-media-start-basis="global"`])(
-    "stays quiet when the clip starts inside the host (%s)",
-    async (attrs) => {
-      expect(await findingsFor(attrs)).toHaveLength(0);
-    },
-  );
+  it.each([
+    `data-start="0"`,
+    `data-start="3" data-hf-media-start-basis="global"`,
+    `data-start="3" data-hf-media-start-basis="GLOBAL"`,
+  ])("stays quiet when the clip starts inside the host (%s)", async (attrs) => {
+    expect(await findingsFor(attrs)).toHaveLength(0);
+  });
 });

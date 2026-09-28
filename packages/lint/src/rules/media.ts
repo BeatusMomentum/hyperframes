@@ -146,7 +146,7 @@ function findNestedMediaStartBasisFindings(ctx: LintContext): HyperframeLintFind
     const rawStart = readAttr(tag.raw, "data-start");
     const start = rawStart == null || rawStart.trim() === "" ? NaN : Number(rawStart);
     if (!Number.isFinite(start) || start <= 0) continue;
-    const basis = readAttr(tag.raw, "data-hf-media-start-basis");
+    const basis = readAttr(tag.raw, "data-hf-media-start-basis")?.trim().toLowerCase();
     if (basis === "local" || basis === "global") continue;
     const elementId = readAttr(tag.raw, "id") || undefined;
     findings.push({
