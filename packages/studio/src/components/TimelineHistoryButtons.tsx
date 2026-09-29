@@ -40,7 +40,6 @@ export interface TimelineHistoryButtonsProps {
   canRedo?: boolean;
   undoLabel?: string;
   redoLabel?: string;
-  /** The tooltip while Undo is off, in place of the shortcut and step name. */
   undoDisabledReason?: string;
   redoDisabledReason?: string;
   onUndo?: () => Promise<void> | void;
