@@ -163,3 +163,38 @@ it("keeps a button disabled when it has no handler, whatever canUndo/canRedo say
 
   for (const label of ["Undo", "Redo"]) expect(button(host, label).disabled).toBe(true);
 });
+
+/** Hover reaches the tooltip's wrapper, never a disabled button; waits out its delay. */
+async function tooltipFor(el: HTMLButtonElement): Promise<string | null | undefined> {
+  const box = el.parentElement ?? el;
+  act(() => {
+    box.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, composed: true }));
+    box.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, composed: true }));
+    box.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, composed: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 450));
+  });
+  return document.querySelector('[role="tooltip"]')?.textContent;
+}
+
+it("shows a host's reason as the tooltip while a button is off", async () => {
+  editHistory.undoLabel = "Trim clip";
+  const host = mount(
+    <TimelineHistoryButtons
+      canUndo={false}
+      undoDisabledReason="Available when Nib finishes"
+      redoDisabledReason="Available when Nib finishes"
+    />,
+  );
+
+  expect(await tooltipFor(button(host, "Undo"))).toBe("Available when Nib finishes");
+});
+
+it("keeps the step and shortcut tooltip while a button with a reason is on", async () => {
+  editHistory.canUndo = true;
+  editHistory.undoLabel = "Trim clip";
+  const host = mount(<TimelineHistoryButtons undoDisabledReason="Available when Nib finishes" />);
+
+  expect(await tooltipFor(button(host, "Undo"))).toMatch(/^Undo Trim clip \(.+\)$/);
+});

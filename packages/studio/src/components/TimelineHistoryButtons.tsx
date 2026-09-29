@@ -9,14 +9,16 @@ interface HistoryButtonProps {
   action: "undo" | "redo";
   can: boolean;
   label: string | undefined;
+  disabledReason: string | undefined;
   onClick: (() => Promise<void> | void) | undefined;
 }
 
-function HistoryButton({ action, can, label, onClick }: HistoryButtonProps) {
+function HistoryButton({ action, can, label, disabledReason, onClick }: HistoryButtonProps) {
   const Icon = action === "undo" ? RotateCcw : RotateCw;
   const enabled = Boolean(onClick) && can;
+  const tooltip = !enabled && disabledReason ? disabledReason : historyTooltipLabel(action, label);
   return (
-    <Tooltip label={historyTooltipLabel(action, label)}>
+    <Tooltip label={tooltip}>
       <button
         type="button"
         aria-label={action === "undo" ? "Undo" : "Redo"}
@@ -38,6 +40,9 @@ export interface TimelineHistoryButtonsProps {
   canRedo?: boolean;
   undoLabel?: string;
   redoLabel?: string;
+  /** The tooltip while Undo is off, in place of the shortcut and step name. */
+  undoDisabledReason?: string;
+  redoDisabledReason?: string;
   onUndo?: () => Promise<void> | void;
   onRedo?: () => Promise<void> | void;
 }
@@ -53,12 +58,14 @@ export function TimelineHistoryButtons(props: TimelineHistoryButtonsProps) {
         action="undo"
         can={props.canUndo ?? shell?.editHistory.canUndo ?? false}
         label={props.undoLabel ?? shell?.editHistory.undoLabel}
+        disabledReason={props.undoDisabledReason}
         onClick={onUndo}
       />
       <HistoryButton
         action="redo"
         can={props.canRedo ?? shell?.editHistory.canRedo ?? false}
         label={props.redoLabel ?? shell?.editHistory.redoLabel}
+        disabledReason={props.redoDisabledReason}
         onClick={onRedo}
       />
     </>
