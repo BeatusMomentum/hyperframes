@@ -6,7 +6,7 @@
  */
 import React, { act } from "react";
 import { afterEach, expect, it } from "vitest";
-import { cleanupMounted, mountHost } from "./mountHost.testHelpers";
+import { cleanupMounted, hoverTooltipWrapper as hover, mountHost } from "./mountHost.testHelpers";
 import { Tooltip } from "./Tooltip";
 
 afterEach(cleanupMounted);
@@ -28,16 +28,6 @@ function mount(): HTMLElement {
 async function settle(): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-/** Browsers send hover to the wrapper, never to a disabled control inside it. */
-function hover(trigger: HTMLElement): void {
-  const box = trigger.parentElement ?? trigger;
-  act(() => {
-    box.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, composed: true }));
-    box.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, composed: true }));
-    box.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, composed: true }));
   });
 }
 

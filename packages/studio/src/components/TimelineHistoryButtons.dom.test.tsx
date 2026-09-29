@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanupMounted, mountHost } from "./ui/mountHost.testHelpers";
+import { cleanupMounted, hoverTooltipWrapper, mountHost } from "./ui/mountHost.testHelpers";
 import { isTypingTarget } from "../utils/typingTarget";
 import { shouldIgnorePlaybackShortcutTarget } from "../player/lib/playbackShortcuts";
 
@@ -164,14 +164,8 @@ it("keeps a button disabled when it has no handler, whatever canUndo/canRedo say
   for (const label of ["Undo", "Redo"]) expect(button(host, label).disabled).toBe(true);
 });
 
-/** Hover reaches the tooltip's wrapper, never a disabled button; waits out its delay. */
 async function tooltipFor(el: HTMLButtonElement): Promise<string | null | undefined> {
-  const box = el.parentElement ?? el;
-  act(() => {
-    box.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, composed: true }));
-    box.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, composed: true }));
-    box.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, composed: true }));
-  });
+  hoverTooltipWrapper(el);
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 450));
   });

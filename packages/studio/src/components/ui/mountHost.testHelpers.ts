@@ -22,3 +22,12 @@ export function cleanupMounted(): void {
   act(() => root.unmount());
   host.remove();
 }
+
+export function hoverTooltipWrapper(trigger: HTMLElement): void {
+  const box = trigger.parentElement ?? trigger;
+  act(() => {
+    box.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, composed: true }));
+    box.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, composed: true }));
+    box.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, composed: true }));
+  });
+}
