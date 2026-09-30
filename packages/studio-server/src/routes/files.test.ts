@@ -1764,30 +1764,31 @@ const tl = gsap.timeline({ paused: true });
   }
 
   it("a first write into a root that holds an inline template composition lands in the root body", async () => {
-    const { status, html } = await firstSet(
-      "index.html",
+    const root =
       '<!DOCTYPE html><html><body><div data-composition-id="main"><div id="target"></div></div>' +
-        '<template id="intro-template"><div data-composition-id="intro"><div id="title"></div></div></template>' +
-        "</body></html>",
-      "#target",
-    );
-    expect(status).toBe(200);
-    expect(html.indexOf('gsap.set("#target"')).toBeGreaterThan(html.indexOf("</template>"));
-    expect(html).toContain('window.__timelines["main"] = tl;');
+      '<template id="intro-template"><div data-composition-id="intro"><div id="title"></div></div></template>' +
+      "</body></html>";
+    for (const selector of ["#target", "#title"]) {
+      const { status, html } = await firstSet("index.html", root, selector);
+      expect(status).toBe(200);
+      expect(html.indexOf(`gsap.set("${selector}"`)).toBeGreaterThan(html.indexOf("</template>"));
+      expect(html).toContain('window.__timelines["main"] = tl;');
+    }
   });
 
   it("a first write into a sub-composition with a nested template lands in its own template", async () => {
-    const { status, html } = await firstSet(
-      "sub.html",
+    const sub =
       '<template id="sub-template"><div data-composition-id="sub"><div id="card"></div>' +
-        '<template id="inner-template"><div data-composition-id="inner"></div></template></div></template>',
-      "#card",
-    );
-    expect(status).toBe(200);
-    const set = html.indexOf('gsap.set("#card"');
-    expect(set).toBeGreaterThan(html.indexOf("</template>"));
-    expect(set).toBeLessThan(html.lastIndexOf("</template>"));
-    expect(html).toContain('window.__timelines["sub"] = tl;');
+      '<template id="row"><li id="item"></li></template></div></template>';
+    for (const selector of ["#card", "#item"]) {
+      const { status, html } = await firstSet("sub.html", sub, selector);
+      expect(status).toBe(200);
+      const set = html.indexOf(`gsap.set("${selector}"`);
+      expect(set).toBeGreaterThan(html.indexOf("</template>"));
+      expect(set).toBeLessThan(html.lastIndexOf("</template>"));
+      expect(html).toContain('window.__timelines["sub"] = tl;');
+      expect(html).not.toMatch(/<head|<body/);
+    }
   });
 
   it("consolidate-position-writes leaves exactly one position write per selector", async () => {
