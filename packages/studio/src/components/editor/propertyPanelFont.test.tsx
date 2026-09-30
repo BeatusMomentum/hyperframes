@@ -8,7 +8,11 @@ import { sortFontOptions } from "./propertyPanelHelpers";
 
 vi.mock("./propertyPanelHelpers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./propertyPanelHelpers")>();
-  return { ...actual, sortFontOptions: vi.fn(actual.sortFontOptions) };
+  return {
+    ...actual,
+    sortFontOptions: vi.fn(actual.sortFontOptions),
+    uniqueFontFamilies: vi.fn(actual.uniqueFontFamilies),
+  };
 });
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,7 +60,7 @@ describe("FontFamilyField font list", () => {
       root.render(<FontFamilyField flat value={value} importedFonts={[]} onCommit={vi.fn()} />);
     try {
       await act(async () => render("Arial"));
-      // The font lists arrive and the value changes while the dropdown is closed, as during a drag.
+      // The value changes while the dropdown is closed, as during a drag.
       await act(async () => render("Georgia"));
       expect(sortFontOptions).not.toHaveBeenCalled();
 
@@ -65,6 +69,41 @@ describe("FontFamilyField font list", () => {
       expect(sortFontOptions).toHaveBeenCalledTimes(1);
       expect(host.textContent).toContain("Roboto Slab");
       expect(document.head.querySelector('link[href*="fonts.googleapis.com"]')).toBeNull();
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+});
+
+describe("FontFamilyField session font lists", () => {
+  it("fetches the lists on the first open, once per session, and never on selection", async () => {
+    vi.resetModules();
+    const { FontFamilyField: Field } = await import("./propertyPanelFont");
+    const { uniqueFontFamilies } = await import("./propertyPanelHelpers");
+    const host = document.createElement("div");
+    document.body.append(host);
+    let root = createRoot(host);
+    const render = (value: string) =>
+      root.render(<Field flat value={value} importedFonts={[]} onCommit={vi.fn()} />);
+    const toggle = () =>
+      host.querySelector<HTMLButtonElement>('[data-flat-font-trigger="true"]')?.click();
+    try {
+      await act(async () => render("Arial"));
+      await act(async () => render("Georgia"));
+      expect(fetch).not.toHaveBeenCalled();
+      expect(uniqueFontFamilies).not.toHaveBeenCalled();
+
+      await act(async () => toggle());
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(host.textContent).toContain("Roboto Slab");
+
+      act(() => root.unmount());
+      root = createRoot(host);
+      await act(async () => render("Arial"));
+      await act(async () => toggle());
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(host.textContent).toContain("Roboto Slab");
     } finally {
       act(() => root.unmount());
       host.remove();

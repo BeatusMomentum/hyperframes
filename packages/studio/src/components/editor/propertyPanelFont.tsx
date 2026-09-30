@@ -117,6 +117,36 @@ function loadImportedFontStylesheet(asset: ImportedFontAsset): void {
   document.head.appendChild(style);
 }
 
+let installedFontsRequest: Promise<string[]> | null = null;
+let googleFontsRequest: Promise<string[]> | null = null;
+let googleFontKeys: ReadonlySet<string> = new Set(
+  POPULAR_GOOGLE_FONT_FAMILIES.map((f) => f.toLowerCase()),
+);
+
+async function fetchFontList(url: string): Promise<string[]> {
+  try {
+    const response = await fetch(url);
+    const data = (response.ok ? await response.json() : null) as { fonts?: string[] } | null;
+    return Array.isArray(data?.fonts) ? data.fonts : [];
+  } catch {
+    return [];
+  }
+}
+
+function sessionInstalledFonts(): Promise<string[]> {
+  installedFontsRequest ??= fetchFontList("/api/fonts");
+  return installedFontsRequest;
+}
+
+function sessionGoogleFonts(): Promise<string[]> {
+  googleFontsRequest ??= fetchFontList("/api/fonts/google").then((fonts) => {
+    const families = uniqueFontFamilies([...fonts, ...POPULAR_GOOGLE_FONT_FAMILIES]);
+    googleFontKeys = new Set(families.map((f) => f.toLowerCase()));
+    return families;
+  });
+  return googleFontsRequest;
+}
+
 /* ------------------------------------------------------------------ */
 /*  FontFamilyField                                                    */
 /* ------------------------------------------------------------------ */
@@ -175,39 +205,24 @@ export function FontFamilyField({
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
     let cancelled = false;
-    void fetch("/api/fonts")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { fonts?: string[] } | null) => {
-        if (cancelled || !Array.isArray(data?.fonts)) return;
-        setLocalFonts((cur) => uniqueFontFamilies([...cur, ...data.fonts!]));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
+    void sessionInstalledFonts().then((fonts) => {
+      if (!cancelled) setLocalFonts((cur) => uniqueFontFamilies([...cur, ...fonts]));
+    });
     setLoadingGoogleFonts(true);
-    void fetch("/api/fonts/google")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { fonts?: string[] } | null) => {
-        if (cancelled || !Array.isArray(data?.fonts)) return;
-        setGoogleFonts(uniqueFontFamilies([...data.fonts!, ...POPULAR_GOOGLE_FONT_FAMILIES]));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoadingGoogleFonts(false);
-      });
+    void sessionGoogleFonts().then((fonts) => {
+      if (cancelled) return;
+      setGoogleFonts(fonts);
+      setLoadingGoogleFonts(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [open]);
 
   useEffect(() => {
-    if (googleFonts.some((f) => f.toLowerCase() === currentFamily.toLowerCase())) {
+    if (googleFontKeys.has(currentFamily.toLowerCase())) {
       loadGoogleFontStylesheet(currentFamily);
     }
     const imported = importedFonts.find(
@@ -278,11 +293,10 @@ export function FontFamilyField({
   const options = useMemo(() => {
     if (!open) return [];
     const documentFonts = collectDocumentFontFamilies();
-    const googleSet = new Set(googleFonts.map((f) => f.toLowerCase()));
     const taggedLocal = localFonts.map(
       (family): FontOption => ({
         family,
-        source: googleSet.has(family.toLowerCase()) ? "Google" : "Local",
+        source: googleFontKeys.has(family.toLowerCase()) ? "Google" : "Local",
       }),
     );
     return sortFontOptions(
