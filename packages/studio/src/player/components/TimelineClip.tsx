@@ -11,6 +11,8 @@ import { isAudioTimelineElement } from "../../utils/timelineInspector";
 import { timelineClipFocusId } from "./timelineNavigationIdentity";
 import { TimelineClipFades } from "./TimelineClipFades";
 import { ClipBadges } from "./ClipBadges";
+import { linkLabelColor } from "./linkLabelColor";
+import { OutOfSyncBadge } from "./OutOfSyncBadge";
 
 interface TimelineClipProps {
   el: TimelineElement;
@@ -82,6 +84,8 @@ export const TimelineClip = memo(function TimelineClip({
     "--clip-border-active": theme.clipBorderActive,
     "--clip-handle": theme.handleColor,
   } as CSSProperties;
+  const linkColor = linkLabelColor(el.link);
+  if (linkColor) Object.assign(themeVariables, { "--clip-link-color": linkColor });
   const isAudioClip = isAudioTimelineElement(el);
   const clipClassName = [
     "timeline-clip",
@@ -121,6 +125,7 @@ export const TimelineClip = memo(function TimelineClip({
       data-clip-start={el.start}
       data-clip-end={el.start + el.duration}
       data-clip-hidden={el.hidden ? "true" : undefined}
+      data-link-color={linkColor ?? undefined}
       data-ladder={ladder}
       data-active={isActive ? "" : undefined}
       aria-hidden={isGestureActor ? "true" : undefined}
@@ -203,6 +208,7 @@ export const TimelineClip = memo(function TimelineClip({
       )}
       {showLabel && <span className="timeline-clip__label">{displayLabel}</span>}
       {showLabel && !isGestureActor && <ClipBadges el={el} />}
+      {!isGestureActor && el.syncOrigin && <OutOfSyncBadge el={el} />}
       {showDefaultText && (
         <span className="timeline-clip__timecode">
           {startLabel}-{endLabel}s
