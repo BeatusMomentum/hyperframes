@@ -12,6 +12,7 @@ const good = {
   controlDropped: 0,
   flash: 0,
   paint: 1,
+  paintMs: 5,
   work: 3,
   frameP95: 20,
 };
@@ -47,6 +48,7 @@ describe("accurate", () => {
     expect(accurate({ ...good, flash: 0, flashUncovered: true })).toBe(false);
     expect(accurate({ ...good, paint: 2 })).toBe(false);
     expect(accurate({ ...good, paint: null })).toBe(false);
+    expect(accurate({ ...good, paintMs: 507 })).toBe(false);
     expect(accurate({ ...good, undo: false })).toBe(false);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);
@@ -62,7 +64,10 @@ describe("a metric the base branch never measured", () => {
   });
 
   it("cannot regress a case or lower the count, and still needs banking to pass", () => {
-    const flashing = { ...run("a"), flash: { bad: 3, uncovered: false, paint: { frames: 4 } } };
+    const flashing = {
+      ...run("a"),
+      flash: { bad: 3, uncovered: false, paint: { frames: 4, ms: 60 } },
+    };
     const g = gate(baseline({ a: older }), baseline({ a: { ...good, flash: 3 } }), [flashing]);
     expect(g.regressed).toEqual([]);
     expect(g.headPassing).toBe(1);

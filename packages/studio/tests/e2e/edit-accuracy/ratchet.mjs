@@ -5,7 +5,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LIMIT_PX, PAINT_FRAMES, entry, writeReport } from "./report.mjs";
+import { LIMIT_PX, entry, paintOk, writeReport } from "./report.mjs";
 
 const GATED_PX = ["tracking", "pressJump", "drop", "reload", "render"];
 const LISTED = 30;
@@ -23,7 +23,7 @@ export const accurate = (e, like = e) =>
   e.undo === true &&
   GATED_PX.every((m) => !(e[m] > LIMIT_PX)) &&
   (!like || !("flash" in like) || (e.flash === 0 && !e.flashUncovered)) &&
-  (!like || !("paint" in like) || (e.paint !== null && e.paint <= PAINT_FRAMES));
+  (!like || !("paint" in like) || paintOk(e.paint, e.paintMs));
 
 /** Cases whose verdict here differs from the base branch, either way: each is re-run twice before the gate. */
 export const flipped = (base, results) =>

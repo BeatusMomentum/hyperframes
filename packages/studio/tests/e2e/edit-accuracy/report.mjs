@@ -18,8 +18,11 @@ export const METRICS = [
   "paint",
   "smooth",
 ];
-// Edit-to-paint: the first frame painted after a committing input already shows the after-state.
-export const PAINT_FRAMES = 1;
+// Edit-to-paint: the first frame painted after a committing input already shows the after-state, and that frame
+// comes no later than a frame counts as dropped.
+const PAINT_FRAMES = 1;
+export const paintOk = (frames, ms) =>
+  frames != null && frames <= PAINT_FRAMES && ms != null && ms <= DROPPED_FRAME_MS;
 
 /** Worst-first value per metric; undo ranks by box distance, and its byte failures are counted apart. */
 const worstValue = {
@@ -70,7 +73,7 @@ export function score(spec, r) {
     undo: r.undo.bytes && r.undo.redoBytes && Math.max(r.undo.box, r.undo.redoBox) <= LIMIT_PX,
     // A window the screencast covered under 90% is uncovered, never a pass.
     flash: !r.flash.uncovered && r.flash.bad === 0,
-    paint: !r.flash.uncovered && r.flash.paint !== null && r.flash.paint.frames <= PAINT_FRAMES,
+    paint: !r.flash.uncovered && paintOk(r.flash.paint?.frames, r.flash.paint?.ms),
     // Only drops beyond the blank page's, driven the same way in the same Chrome, are the edit's.
     smooth:
       smooth.dropped <= smooth.control.dropped &&
@@ -180,7 +183,7 @@ function table(summary, meta, results) {
     `An undo or redo write never landed within 15 s in ${summary.undoTimeouts} cases; undo fails there.`,
     `The producer failed to render ${summary.renderErrors} cases; render fails there.`,
     `Flash: ${summary.flash.badCases} cases painted a frame matching neither the state before nor after (longest run ${summary.flash.longest} frames); ${summary.flash.uncovered} cases uncovered; screencast coverage median ${summary.flash.coverage}, lowest ${summary.flash.lowest}, blank control median ${summary.flash.control}.`,
-    `Edit-to-paint (pointer-up, key, undo, redo; pass at ${PAINT_FRAMES} frame): frames to the after-state (median/max) ${summary.paint.frames}, ms ${summary.paint.ms}; ${summary.paint.unknown} cases logged no input.`,
+    `Edit-to-paint (pointer-up, key, undo, redo; pass at ${PAINT_FRAMES} frame within ${DROPPED_FRAME_MS} ms): frames to the after-state (median/max) ${summary.paint.frames}, ms ${summary.paint.ms}; ${summary.paint.unknown} cases logged no input.`,
     `Smoothness: ${summary.smooth.unknown} cases with unknown work; dropped frames per case (median/max) ${summary.smooth.dropped}, blank-page control ${summary.smooth.control}; raw rAF p95 (median/max) ${summary.smooth.p95} ms, control ${summary.smooth.controlP95} ms.`,
     "",
     "| Metric | Pass | Worst | Worst case |",
@@ -204,7 +207,7 @@ function table(summary, meta, results) {
       .filter((r) => !r.error)
       .map(
         (r) =>
-          `| ${r.id} | ${r.flash.bad} | ${r.flash.paint?.frames ?? "-"} | ${round(r.flash.missChance)} | ${round(r.flash.controlCoverage)} |`,
+          `| ${r.id} | ${r.flash.bad} | ${r.flash.paint ? `${r.flash.paint.frames} (${round(r.flash.paint.ms)} ms)` : "-"} | ${round(r.flash.missChance)} | ${round(r.flash.controlCoverage)} |`,
       ),
   );
   return lines.join("\n") + "\n";
@@ -232,6 +235,7 @@ export function entry(r) {
     flash: r.flash.bad,
     ...(r.flash.uncovered && { flashUncovered: true }),
     paint: r.flash.paint?.frames ?? null,
+    paintMs: roundUp(r.flash.paint?.ms ?? null),
   };
 }
 

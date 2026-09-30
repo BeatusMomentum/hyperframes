@@ -310,10 +310,13 @@ export async function scoreFlash(decoder, { regions, tolPx, windows, control }, 
     // The chance a 1-frame flash fell in a frame the screencast never sent.
     missChance: 1 - coverage,
     uncovered: !(coverage >= Math.min(MIN_COVERAGE, controlCoverage - CONTROL_SLACK)),
-    // The slowest committing input; unknown (null) when any of them logged no input.
+    // The slowest committing input, in frames and in ms; unknown (null) when any of them logged no input.
     paint: paints.some((p) => !p)
       ? null
-      : paints.reduce((a, p) => (p.frames > a.frames ? p : a), { frames: 0, ms: 0 }),
+      : {
+          frames: Math.max(...paints.map((p) => p.frames)),
+          ms: paints.some((p) => p.ms === null) ? null : Math.max(...paints.map((p) => p.ms)),
+        },
     regions,
     tolPx,
     windows: out,
