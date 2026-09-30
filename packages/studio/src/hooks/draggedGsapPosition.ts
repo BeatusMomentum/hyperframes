@@ -6,6 +6,7 @@
  * it without pulling the GSAP commit graph into its module scope.
  */
 
+import { splitTopLevelWhitespace } from "../components/editor/manualEditsStyleHelpers";
 import { roundTo3 } from "../utils/rounding";
 
 const cssValue = (style: CSSStyleDeclaration, prop: string) => {
@@ -21,7 +22,7 @@ function transformTranslation(view: Window & typeof globalThis, list: string) {
 // GSAP writes `translate rotate scale transform` as one inline transform; a value the browser rejects
 // (e.g. `rotate: x 30deg`) drops the whole string, leaving GSAP only the plain transform.
 function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
-  const [tx = "", ty = ""] = cssValue(style, "translate").split(/\s+/);
+  const [tx = "", ty = ""] = splitTopLevelWhitespace(cssValue(style, "translate"));
   const rotate = cssValue(style, "rotate");
   const scale = cssValue(style, "scale");
   const transform = cssValue(style, "transform");
@@ -37,11 +38,31 @@ function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDecl
   }
 }
 
+// One `translate` axis as percent + px: a length, or the draft's `calc()`, which computed style keeps.
+function translateTerms(token: string) {
+  const terms = { pct: 0, px: 0, calc: token.startsWith("calc(") };
+  for (const [, op, num, unit] of token.matchAll(/([+-]?)\s*(-?[\d.]+(?:e[+-]?\d+)?)(%|px)/g)) {
+    const value = op === "-" ? -Number(num) : Number(num);
+    if (unit === "%") terms.pct += value;
+    else terms.px += value;
+  }
+  return terms;
+}
+
+// GSAP keeps a -50% centring as xPercent, which scales with a resize. `kept` is what the stylesheet
+// transform goes on drawing under the draft: a transform that alone centres the box keeps its -50%.
 function foldedAxis(translate: string, fromTransform: number, size: number) {
-  const raw = Number.parseFloat(translate) || 0;
-  const t = (translate.endsWith("%") ? (raw * size) / 100 : raw) + fromTransform;
-  const centered = t !== 0 && Math.round(size / 2) === Math.round(-t);
-  return { value: centered ? t + size / 2 : t, percent: centered ? -50 : 0, fromTransform };
+  const half = Math.round(size / 2);
+  const kept =
+    fromTransform !== 0 && half === Math.round(-fromTransform)
+      ? { percent: -50, px: fromTransform + size / 2 }
+      : { percent: 0, px: fromTransform };
+  const { pct, px, calc } = translateTerms(translate);
+  const percent = pct + kept.percent;
+  if (calc && (percent === 0 || percent === -50)) return { value: px + kept.px, percent, kept };
+  const t = (pct * size) / 100 + px + fromTransform;
+  const centered = t !== 0 && half === Math.round(-t);
+  return { value: centered ? t + size / 2 : t, percent: centered ? -50 : 0, kept };
 }
 
 function readCssFold(element: HTMLElement, view: Window & typeof globalThis) {
@@ -75,8 +96,9 @@ export function cssTranslateForGsapPosition(
   const view = element.ownerDocument.defaultView as GsapView | null;
   if (!view || typeof view.gsap?.getProperty === "function") return null;
   const { x: ax, y: ay } = readCssFold(element, view);
-  return (x, y) =>
-    `calc(${ax.percent}% + ${x - ax.fromTransform}px) calc(${ay.percent}% + ${y - ay.fromTransform}px)`;
+  const axis = (a: typeof ax, v: number) =>
+    `calc(${a.percent - a.kept.percent}% + ${v - a.kept.px}px)`;
+  return (x, y) => `${axis(ax, x)} ${axis(ay, y)}`;
 }
 
 /**

@@ -206,6 +206,7 @@ describe("anchored corner resize — the release commit feeds the center-pin off
 
     // Drag outward to radial scale 1.5 (dist 150 / 100). Several frames so the
     // per-frame center-pin anchor accumulates and converges into g.lastResizeAnchor.
+    handlers.onPointerMove(evt(ORIGIN_CENTER.x + 120, ORIGIN_CENTER.y));
     for (let i = 0; i < 5; i++) {
       handlers.onPointerMove(evt(ORIGIN_CENTER.x + 150, ORIGIN_CENTER.y));
     }
