@@ -5,10 +5,10 @@ const MOVE = { do: "drag", gesture: "move", by: [90, 60] };
 const BACK = { do: "drag", gesture: "move", by: [-70, 50] };
 const UP = { do: "drag", gesture: "move", by: [60, -80] };
 
-export const PATHS = ["zigzag", "circle", "flick", "pause", "edge"];
+const PATHS = ["zigzag", "circle", "flick", "pause", "edge"];
 
 /** Each sequence's steps; a drag names its element (A is #target, B is #other) and its screen-px path. */
-export const SEQUENCES = {
+const SEQUENCES = {
   repeat: [MOVE, BACK, UP],
   undo: [MOVE, { do: "undo" }, BACK],
   nudge: [MOVE, { do: "nudge", count: 3 }, BACK],

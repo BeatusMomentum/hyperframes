@@ -55,7 +55,7 @@ const OTHER_PLACEMENT_CSS = {
   center: "left: 75%; top: 75%; translate: -50% -50%;",
 };
 
-export const TEXT = "Edit accuracy bench";
+const TEXT = "Edit accuracy bench";
 const targetText = (spec) => (spec.text ? TEXT : "");
 
 function targetCss(spec) {

@@ -94,6 +94,7 @@ async function withRender(dir, decoder, { reloaded, ...measured }, evidence) {
   };
 }
 
+// fallow-ignore-next-line complexity
 async function runOne(spec, browser, decoder, port) {
   const started = Date.now();
   const root = mkdtempSync(join(tmpdir(), "hf-edit-accuracy-"));

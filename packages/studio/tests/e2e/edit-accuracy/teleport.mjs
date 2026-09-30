@@ -97,6 +97,7 @@ export function frameSampler() {
         }
       });
   // The largest visible preview holding the element; Studio loads edits in a hidden shadow frame.
+  // fallow-ignore-next-line complexity
   const findElement = (selector) => {
     let best = null;
     for (const f of previewWindows()) {
@@ -239,6 +240,7 @@ export function scoreTeleport(gesture, samples) {
   for (const [i, s] of frames.entries()) {
     pressed ||= s.down;
     released ||= pressed && !s.down;
+    // fallow-ignore-next-line complexity
     const row = tracked.map((t, k) => {
       const [g, want] = [t.grab(s), t.implied(pointer(s))];
       if (!released) t.allowed.push(want);

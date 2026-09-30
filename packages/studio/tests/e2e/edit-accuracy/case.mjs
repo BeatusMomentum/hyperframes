@@ -555,6 +555,7 @@ export async function controlDrag(browser, gesture) {
 }
 
 /** `route`, given the press point, replaces the gesture's straight path; a `{ pause }` entry holds still. */
+// fallow-ignore-next-line complexity
 export async function pointerGesture(ctx, gesture, pre, route) {
   const press = await handlePoint(ctx, pre, gesture);
   const pressComp = pre.map.toComp(press);
@@ -621,10 +622,11 @@ async function nudgeGesture(ctx, pre) {
   };
 }
 
-/** One case, end to end, in a fresh browser context against a Studio already serving `dir`. */
-// fallow-ignore-next-line complexity
-export async function runCase({ browser, spec, dir, files, url, evidence }) {
-  const control = await controlDrag(browser, spec.gesture);
+/**
+ * Studio open on the case in a fresh browser context, snapping off, at the case's zoom, target selected;
+ * `drive` measures the rest. A failure keeps a screenshot, and the context always closes.
+ */
+export async function inStudio({ browser, spec, dir, files, url, evidence }, drive) {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
   const ctx = { page, dir, files, handles: null };
@@ -633,7 +635,6 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
   evidence.shots = {};
   const shoot = async (name) =>
     (evidence.shots[name] = await page.screenshot({ type: "jpeg", quality: 70 }));
-  let committedFiles = null;
   try {
     await page.setViewport(VIEWPORT);
     await page.evaluateOnNewDocument(instrumentPage);
@@ -645,94 +646,109 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     pre = await settled(ctx);
     await selectTarget(ctx, pre);
     pre = await settled(ctx);
-    const original = readFiles(dir, files);
-
-    const drive =
-      spec.gesture === "nudge"
-        ? await nudgeGesture(ctx, pre)
-        : await pointerGesture(ctx, spec.gesture, pre);
-    const releasedAt = Date.now();
-    const save = await waitForFiles(ctx, {
-      from: original,
-      timeout: spec.gesture === "nudge" ? 6000 : 5000,
-    });
-    await nextFrame(page, 2);
-    await blurPreview(page);
-    await page.keyboard.press("Escape");
-    const committed = await settled(ctx);
-    const frames = await stopFrames(page);
-    await shoot("committed");
-    committedFiles = readFiles(dir, files);
-    const saved = !sameFiles(committedFiles, original);
-
-    // Undo and redo run before any reload. Each waits up to 15 s for its own write; redo waits for undo.
-    const landed = (from) =>
-      saved ? waitForFiles(ctx, { from, timeout: 15_000 }) : { reached: true, files: from };
-    const undoKeyAt = Date.now();
-    await chord(page, "Control+z");
-    const undo = await landed(committedFiles);
-    const undone = await settled(ctx);
-    await shoot("undone");
-    let [redo, redone, redoKeyAt] = [{ reached: false }, null, 0];
-    if (undo.reached) {
-      await blurPreview(page);
-      redoKeyAt = Date.now();
-      await chord(page, "Control+Shift+z");
-      redo = await landed(undo.files);
-      redone = await settled(ctx);
-    }
-    // A late write must not land under the reload.
-    await waitForFiles(ctx, { timeout: 15_000 });
-
-    await page.reload();
-    const reloaded = await openStudio(ctx);
-    await shoot("reloaded");
-    const quads = Object.fromEntries(
-      Object.entries({ pre, committed, undone, redone, reloaded }).filter(([, m]) => m),
-    );
-    const round = (m) => m.visible.map((p) => p.map((v) => Math.round(v * 100) / 100));
-    return {
-      zoom,
-      saved,
-      tracking: {
-        max: Math.max(...drive.errors),
-        p95: percentile(drive.errors, 95),
-        frames: drive.errors.length,
-      },
-      pressJump: drive.pressJump,
-      teleport: spec.gesture === "nudge" ? null : scoreTeleport(spec.gesture, frames),
-      drop: quadDistance(drive.lastQuad, committed.visible),
-      // Also against the box the gesture left, so a write the file drops shows here and not only as drop.
-      reload: Math.max(
-        quadDistance(committed.visible, reloaded.visible),
-        quadDistance(drive.lastQuad, reloaded.visible),
-      ),
-      undo: {
-        bytes: saved && undo.reached && sameFiles(undo.files, original),
-        box: quadDistance(undone.visible, pre.visible),
-        redoBytes: saved && redo.reached && sameFiles(redo.files, committedFiles),
-        redoBox: redone && quadDistance(redone.visible, committed.visible),
-        ms: undo.at ? undo.at - undoKeyAt : null,
-        redoMs: redo.at ? redo.at - redoKeyAt : null,
-      },
-      // From release (or the last nudge key) to the edit's file write.
-      saveMs: save.at ? save.at - releasedAt : null,
-      // Which write never landed within 15 s; a redo that was never sent is untested, so undo fails.
-      undoTimeout: saved && !undo.reached ? "undo" : saved && !redo.reached ? "redo" : null,
-      smooth: { ...drive.smooth, control },
-      unsettled: Object.keys(quads).filter((k) => quads[k].unsettled),
-      reloaded,
-      diag: {
-        ...drive.diag,
-        consoleErrors: consoleErrors.slice(0, 5),
-        quads: Object.fromEntries(Object.entries(quads).map(([k, m]) => [k, round(m)])),
-      },
-    };
+    return await drive({ ctx, page, pre, zoom, shoot, consoleErrors });
   } catch (error) {
     await shoot("error").catch(() => undefined);
     throw error;
   } finally {
-    evidence.files = committedFiles;
     await context.close().catch(() => undefined);
   }
+}
+
+/** One case, end to end, against a Studio already serving `dir`. */
+export async function runCase(args) {
+  const control = await controlDrag(args.browser, args.spec.gesture);
+  return inStudio(args, (session) => measureCase(args, session, control));
+}
+
+// fallow-ignore-next-line complexity
+async function measureCase(
+  { spec, dir, files, evidence },
+  { ctx, page, pre, zoom, shoot, consoleErrors },
+  control,
+) {
+  const original = readFiles(dir, files);
+
+  const drive =
+    spec.gesture === "nudge"
+      ? await nudgeGesture(ctx, pre)
+      : await pointerGesture(ctx, spec.gesture, pre);
+  const releasedAt = Date.now();
+  const save = await waitForFiles(ctx, {
+    from: original,
+    timeout: spec.gesture === "nudge" ? 6000 : 5000,
+  });
+  await nextFrame(page, 2);
+  await blurPreview(page);
+  await page.keyboard.press("Escape");
+  const committed = await settled(ctx);
+  const frames = await stopFrames(page);
+  await shoot("committed");
+  const committedFiles = readFiles(dir, files);
+  evidence.files = committedFiles;
+  const saved = !sameFiles(committedFiles, original);
+
+  // Undo and redo run before any reload. Each waits up to 15 s for its own write; redo waits for undo.
+  const landed = (from) =>
+    saved ? waitForFiles(ctx, { from, timeout: 15_000 }) : { reached: true, files: from };
+  const undoKeyAt = Date.now();
+  await chord(page, "Control+z");
+  const undo = await landed(committedFiles);
+  const undone = await settled(ctx);
+  await shoot("undone");
+  let [redo, redone, redoKeyAt] = [{ reached: false }, null, 0];
+  if (undo.reached) {
+    await blurPreview(page);
+    redoKeyAt = Date.now();
+    await chord(page, "Control+Shift+z");
+    redo = await landed(undo.files);
+    redone = await settled(ctx);
+  }
+  // A late write must not land under the reload.
+  await waitForFiles(ctx, { timeout: 15_000 });
+
+  await page.reload();
+  const reloaded = await openStudio(ctx);
+  await shoot("reloaded");
+  const quads = Object.fromEntries(
+    Object.entries({ pre, committed, undone, redone, reloaded }).filter(([, m]) => m),
+  );
+  const round = (m) => m.visible.map((p) => p.map((v) => Math.round(v * 100) / 100));
+  return {
+    zoom,
+    saved,
+    tracking: {
+      max: Math.max(...drive.errors),
+      p95: percentile(drive.errors, 95),
+      frames: drive.errors.length,
+    },
+    pressJump: drive.pressJump,
+    teleport: spec.gesture === "nudge" ? null : scoreTeleport(spec.gesture, frames),
+    drop: quadDistance(drive.lastQuad, committed.visible),
+    // Also against the box the gesture left, so a write the file drops shows here and not only as drop.
+    reload: Math.max(
+      quadDistance(committed.visible, reloaded.visible),
+      quadDistance(drive.lastQuad, reloaded.visible),
+    ),
+    undo: {
+      bytes: saved && undo.reached && sameFiles(undo.files, original),
+      box: quadDistance(undone.visible, pre.visible),
+      redoBytes: saved && redo.reached && sameFiles(redo.files, committedFiles),
+      redoBox: redone && quadDistance(redone.visible, committed.visible),
+      ms: undo.at ? undo.at - undoKeyAt : null,
+      redoMs: redo.at ? redo.at - redoKeyAt : null,
+    },
+    // From release (or the last nudge key) to the edit's file write.
+    saveMs: save.at ? save.at - releasedAt : null,
+    // Which write never landed within 15 s; a redo that was never sent is untested, so undo fails.
+    undoTimeout: saved && !undo.reached ? "undo" : saved && !redo.reached ? "redo" : null,
+    smooth: { ...drive.smooth, control },
+    unsettled: Object.keys(quads).filter((k) => quads[k].unsettled),
+    reloaded,
+    diag: {
+      ...drive.diag,
+      consoleErrors: consoleErrors.slice(0, 5),
+      quads: Object.fromEntries(Object.entries(quads).map(([k, m]) => [k, round(m)])),
+    },
+  };
 }
