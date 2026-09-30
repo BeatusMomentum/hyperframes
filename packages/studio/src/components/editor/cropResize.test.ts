@@ -107,7 +107,9 @@ describe("crop during a resize", () => {
     const resize = (vars: object, duration: number) => {
       const el = sizedElement(300, 200, "inset(20px 60px 20px 0px)");
       const tween = { targets: () => [el], vars, duration: () => duration };
-      Object.assign(window, { __timelines: { main: { getChildren: () => [tween] } } });
+      // The tween's timeline is not the first key, as after a soft reload.
+      const timelines = { sub: { getChildren: () => [] }, main: { getChildren: () => [tween] } };
+      Object.assign(window, { __timelines: timelines });
       applyStudioBoxSizeDraft(el, { width: 600, height: 400 });
       const { top, right } = readCropFollowingResize(el)!;
       const saved = prepareCropResize(el)()?.patch.value ?? null;

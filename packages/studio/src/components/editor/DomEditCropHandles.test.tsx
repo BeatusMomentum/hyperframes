@@ -152,7 +152,7 @@ describe("DomEditCropHandles clip lift", () => {
     expect(a.style.getPropertyValue("clip-path")).toBe("inset(0px 20px 0px 0px)");
   });
 
-  it("commits the dragged crop and stays lifted, whether the save lands or fails", async () => {
+  it("commits the dragged crop and stays lifted when the save fails", async () => {
     const a = makeEl("a", "inset(10px)");
     const onStyleCommit = vi.fn((property: string, value: string) => {
       a.style.setProperty(property, value);

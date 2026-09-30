@@ -377,8 +377,9 @@ export function readRuntimeKeyframes(
 }
 
 /**
- * Whether the live timeline has at least one NON-HOLD tween (non-zero duration,
- * not the studio position-hold `set`) targeting `selector`. Stricter than a
+ * Whether any live timeline has at least one NON-HOLD tween (non-zero duration,
+ * not the studio position-hold `set`) targeting `selector`. Every timeline is read:
+ * a soft reload re-adds the rebuilt composition's key last. Stricter than a
  * truthy `readRuntimeKeyframes`: that returns a flat read for any property-bearing
  * tween, so it can't distinguish a real animation from a leftover hold/marker.
  * The drag's stale-parse guard needs this exact distinction — after a delete-all
@@ -420,19 +421,16 @@ function hasNonHoldTween(
   compositionId?: string,
 ): boolean {
   if (!timelines) return false;
-  const tlId =
-    compositionId ||
-    Object.keys(timelines).find((k) => typeof timelines[k]?.getChildren === "function");
-  const timeline = tlId ? timelines[tlId] : undefined;
-  if (!timeline?.getChildren) return false;
-  // fallow-ignore-next-line code-duplication
-  for (const tween of timeline.getChildren(true)) {
-    if (!tween.vars || !matchesElement(tween, targetEl)) continue;
-    const dur = typeof tween.duration === "function" ? tween.duration() : 0;
-    if (isZeroDurationSet(dur)) continue; // skip hold/set tweens (see isZeroDurationSet)
-    if (channels && keyframeVarsCarryChannel(tween.vars, channels)) return true;
-    const read = readTween(tween.vars);
-    if (read && (!channels || readCarriesChannel(read, channels))) return true;
+  for (const tlId of compositionId ? [compositionId] : Object.keys(timelines)) {
+    // fallow-ignore-next-line code-duplication
+    for (const tween of timelines[tlId]?.getChildren?.(true) ?? []) {
+      if (!tween.vars || !matchesElement(tween, targetEl)) continue;
+      const dur = typeof tween.duration === "function" ? tween.duration() : 0;
+      if (isZeroDurationSet(dur)) continue; // skip hold/set tweens (see isZeroDurationSet)
+      if (channels && keyframeVarsCarryChannel(tween.vars, channels)) return true;
+      const read = readTween(tween.vars);
+      if (read && (!channels || readCarriesChannel(read, channels))) return true;
+    }
   }
   return false;
 }
