@@ -66,6 +66,7 @@ describe("FontFamilyField font list", () => {
 
       const trigger = host.querySelector<HTMLButtonElement>('[data-flat-font-trigger="true"]');
       await act(async () => trigger?.click());
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
       expect(sortFontOptions).toHaveBeenCalled();
       expect(host.textContent).toContain("Roboto Slab");
       expect(document.head.querySelector('link[href*="fonts.googleapis.com"]')).toBeNull();
@@ -77,37 +78,73 @@ describe("FontFamilyField font list", () => {
 });
 
 describe("FontFamilyField session font lists", () => {
-  it("fetches the lists on the first open, once per session, and never on selection", async () => {
+  const fresh = async () => {
     vi.resetModules();
-    const { FontFamilyField: Field } = await import("./propertyPanelFont");
+    const { FontFamilyField } = await import("./propertyPanelFont");
     const { uniqueFontFamilies } = await import("./propertyPanelHelpers");
+    const loop = await import("./overlayFrameLoop");
     vi.mocked(uniqueFontFamilies).mockClear();
     const host = document.createElement("div");
     document.body.append(host);
-    let root = createRoot(host);
+    const root = createRoot(host);
     const render = (value: string) =>
-      root.render(<Field flat value={value} importedFonts={[]} onCommit={vi.fn()} />);
+      root.render(<FontFamilyField flat value={value} importedFonts={[]} onCommit={vi.fn()} />);
     const toggle = () =>
       host.querySelector<HTMLButtonElement>('[data-flat-font-trigger="true"]')?.click();
-    try {
-      await act(async () => render("Arial"));
-      await act(async () => render("Georgia"));
-      expect(fetch).not.toHaveBeenCalled();
-      expect(uniqueFontFamilies).not.toHaveBeenCalled();
-
-      await act(async () => toggle());
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(host.textContent).toContain("Roboto Slab");
-
-      act(() => root.unmount());
-      root = createRoot(host);
-      await act(async () => render("Arial"));
-      await act(async () => toggle());
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(host.textContent).toContain("Roboto Slab");
-    } finally {
+    const done = () => {
       act(() => root.unmount());
       host.remove();
+      loop.resetOverlayFrameLoopForTests();
+    };
+    return { uniqueFontFamilies, loop, host, render, toggle, done };
+  };
+
+  it("does no list work in a drag's frames when the lists land mid-drag", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance", "Date"] });
+    const raf = window.requestAnimationFrame;
+    window.requestAnimationFrame = (() => 0) as typeof window.requestAnimationFrame;
+    const lists = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return lists(url);
+    });
+    const t = await fresh();
+    const stopLoop = t.loop.subscribeOverlayFrame(() => undefined);
+    try {
+      await act(async () => t.render("Georgia"));
+      for (let elapsed = 0; elapsed < 600; elapsed += 16) {
+        window.dispatchEvent(new Event("pointermove"));
+        await act(async () => vi.advanceTimersByTimeAsync(16));
+      }
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(t.uniqueFontFamilies).not.toHaveBeenCalled();
+
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+      expect(t.uniqueFontFamilies).toHaveBeenCalledTimes(1);
+      await act(async () => t.toggle());
+      expect(t.host.textContent).toContain("Roboto Slab");
+    } finally {
+      stopLoop();
+      t.done();
+      window.requestAnimationFrame = raf;
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a failed list fetch when the picker opens", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+    const t = await fresh();
+    try {
+      await act(async () => t.render("Georgia"));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      expect(t.uniqueFontFamilies).not.toHaveBeenCalled();
+
+      await act(async () => t.toggle());
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      expect(fetch).toHaveBeenCalledTimes(4);
+      expect(t.host.textContent).toContain("Roboto Slab");
+    } finally {
+      t.done();
     }
   });
 });

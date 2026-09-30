@@ -143,6 +143,17 @@ function schedule(): void {
   }, IDLE_POLL_MS);
 }
 
+/** Runs `task` in an idle period once no input has woken the loop for AWAKE_MS, so it never shares a gesture's frames. */
+export function runWhenInputIdle(task: () => void): void {
+  const wait = awakeUntil - performance.now();
+  if (wait > 0) {
+    setTimeout(() => runWhenInputIdle(task), wait);
+    return;
+  }
+  const idle = window.requestIdleCallback ?? ((callback: () => void) => setTimeout(callback, 0));
+  idle(() => (performance.now() < awakeUntil ? runWhenInputIdle(task) : task()));
+}
+
 /** Something moved, or might have. Run frames at full rate for a moment. */
 export function requestOverlayFrames(): void {
   awakeUntil = performance.now() + AWAKE_MS;
