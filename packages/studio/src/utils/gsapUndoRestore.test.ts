@@ -107,6 +107,34 @@ describe("undo of the first canvas edit in a file without GSAP", () => {
     expect(contentWindow.__player.seek).toHaveBeenCalledWith(3);
   });
 
+  it("a crop undo after that undo stays in place too, though GSAP parsed the element", () => {
+    const { iframe, contentWindow, doc } = buildLiveIframe(
+      `<div data-composition-id="main"><div id="t" class="clip" style="transform: translate(90px, 60px)">t</div></div><script>${BOOTSTRAP}</script>`,
+    );
+    Object.assign(doc.getElementById("t")!, { _gsap: {} });
+    contentWindow.__timelines.main = { kill: vi.fn(), clear: vi.fn() };
+    Object.assign(contentWindow.gsap, { set: vi.fn() });
+    const reloadPreview = vi.fn();
+    const undo = (previous: string, restored: string) =>
+      applyUndoRestoreToPreview(
+        iframe,
+        "index",
+        { index: { previous, restored } },
+        3,
+        reloadPreview,
+      );
+    const cropped = PLAIN.replace(
+      'class="clip"',
+      'class="clip" style="clip-path: inset(0px 40px 0px 0px)"',
+    );
+
+    expect(undo(wrap(BOOTSTRAPPED), wrap(PLAIN))).toBe("soft");
+    doc.getElementById("t")!.setAttribute("style", "clip-path: inset(0px 40px 0px 0px)");
+    expect(undo(wrap(cropped), wrap(PLAIN))).toBe("soft");
+    expect(reloadPreview).not.toHaveBeenCalled();
+    expect(doc.getElementById("t")!.getAttribute("style")).toBeNull();
+  });
+
   it("redo runs the bootstrapped script in place instead of remounting", () => {
     const { iframe, doc } = buildLiveIframe(PLAIN);
     const reloadPreview = vi.fn();
