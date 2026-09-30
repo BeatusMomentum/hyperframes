@@ -99,7 +99,7 @@ export async function stopServer(child) {
 }
 
 /** Runs in the top frame before Studio: the WebMCP host plus a frame-interval and long-task recorder. */
-export function instrumentPage() {
+function instrumentPage() {
   if (window.top !== window) return;
   const tools = new Map();
   Object.defineProperty(document, "modelContext", {
@@ -282,7 +282,7 @@ export async function blurPreview(page) {
 }
 
 /** Snapping deliberately pulls the box off the pointer, so the bench turns it off with Studio's own toggle. */
-export async function disableSnap(page) {
+async function disableSnap(page) {
   const title = await page.$eval('[aria-label="Toggle snap"]', (b) => b.title);
   if (/enabled/i.test(title)) await page.click('[aria-label="Toggle snap"]');
   const after = await page.$eval('[aria-label="Toggle snap"]', (b) => b.title);
@@ -296,7 +296,7 @@ const zoomOf = (page) =>
   });
 
 /** Ctrl+wheel over the target, as a person zooms; wheel units are solved exactly from the zoom law. */
-export async function setZoom(ctx, percent, anchor) {
+async function setZoom(ctx, percent, anchor) {
   if (percent === 100) return 100;
   await ctx.page.mouse.move(anchor[0], anchor[1]);
   await ctx.page.keyboard.down("Control");
