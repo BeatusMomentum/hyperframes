@@ -1,3 +1,5 @@
+import { roundTo3 } from "../utils/rounding";
+
 /**
  * Drag → GSAP position math, shared by the commit path
  * (`gsapDragCommit.commitGsapPositionFromDrag` / `commitStaticGsapPosition`) and
@@ -39,8 +41,8 @@ export function computeDraggedGsapPosition(
   const baseGsapX = Number.isFinite(parsedBaseX) ? parsedBaseX : fallbackBase.x;
   const baseGsapY = Number.isFinite(parsedBaseY) ? parsedBaseY : fallbackBase.y;
   return {
-    newX: Math.round(baseGsapX + adjX),
-    newY: Math.round(baseGsapY + adjY),
+    newX: roundTo3(baseGsapX + adjX),
+    newY: roundTo3(baseGsapY + adjY),
     baseGsapX,
     baseGsapY,
   };

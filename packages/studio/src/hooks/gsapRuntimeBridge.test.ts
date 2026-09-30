@@ -319,6 +319,17 @@ describe("tryGsapRotationIntercept — instant holds", () => {
     expect(commitMutation).not.toHaveBeenCalled();
   });
 
+  it("commits the exact angle the draft showed", async () => {
+    const commitMutation = vi.fn();
+
+    await tryGsapRotationIntercept(selection, 75.25, [], null, commitMutation);
+    expect(commitMutation).toHaveBeenCalledWith(
+      selection,
+      expect.objectContaining({ type: "add", properties: { rotation: 75.25 } }),
+      expect.anything(),
+    );
+  });
+
   it("does not let an unrelated helper-authored skew tween block 2D rotation", async () => {
     const helperSkew = {
       id: "#puck-b-to-rotation",

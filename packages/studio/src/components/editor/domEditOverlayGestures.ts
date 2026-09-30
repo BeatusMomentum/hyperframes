@@ -11,6 +11,7 @@ import type { SnapContext } from "./snapTargetCollection";
 import type { SnapGuidesState } from "./SnapGuideOverlay";
 import type { PreviewMouseDownOptions } from "../../hooks/usePreviewInteraction";
 import { logSelect } from "../../utils/selectDebug";
+import { roundTo3 } from "../../utils/rounding";
 
 export type GestureKind = "drag" | "resize" | "rotate";
 
@@ -197,10 +198,6 @@ function normalizeAngleDelta(delta: number): number {
   return ((((delta + 180) % 360) + 360) % 360) - 180;
 }
 
-function roundAngle(angle: number): number {
-  return Math.round(angle * 10) / 10;
-}
-
 export function resolveDomEditRotationGesture(input: {
   centerX: number;
   centerY: number;
@@ -223,7 +220,7 @@ export function resolveDomEditRotationGesture(input: {
   return {
     angle: input.snap
       ? Math.round(angle / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES
-      : roundAngle(angle),
+      : roundTo3(angle),
   };
 }
 

@@ -697,7 +697,7 @@ describe("resolveDomEditRotationGesture", () => {
     ).toEqual({ angle: 15 });
   });
 
-  it("allows small pointer movements when the rounded angle changes", () => {
+  it("allows small pointer movements and keeps the exact angle", () => {
     const nextRotation = resolveDomEditRotationGesture({
       centerX: 0,
       centerY: 0,
@@ -709,7 +709,7 @@ describe("resolveDomEditRotationGesture", () => {
       snap: false,
     });
 
-    expect(nextRotation.angle).toBe(1.4);
+    expect(nextRotation.angle).toBe(1.432);
     expect(hasDomEditRotationChanged(0, nextRotation.angle)).toBe(true);
     expect(hasDomEditRotationChanged(0, 0)).toBe(false);
   });

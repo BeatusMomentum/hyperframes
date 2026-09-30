@@ -3,10 +3,6 @@ export function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export function roundRotationAngle(angle: number): number {
-  return Math.round(angle * 10) / 10;
-}
-
 /* ── File path utilities ──────────────────────────────────────────── */
 function normalizeStudioFileChangePath(path: string): string {
   return path

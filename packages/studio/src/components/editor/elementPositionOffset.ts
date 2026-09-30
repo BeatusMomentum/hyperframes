@@ -1,5 +1,6 @@
 import type { PatchOperation } from "../../utils/sourcePatcher";
 import { LAYER_REVEAL_PRIOR_POSITION_ATTR } from "../../player/lib/timelineElementHelpers";
+import { roundTo3 } from "../../utils/rounding";
 
 interface LayoutBox {
   left: number;
@@ -30,8 +31,8 @@ export function applyElementPositionOffset(
 ): PatchOperation[] | ElementOffsetRefusal {
   const cs = el.ownerDocument.defaultView?.getComputedStyle(el);
   if (!cs) return "anchored";
-  const dx = Math.round(gestureOffset.x - readDragStart(el, "x"));
-  const dy = Math.round(gestureOffset.y - readDragStart(el, "y"));
+  const dx = roundTo3(gestureOffset.x - readDragStart(el, "x"));
+  const dy = roundTo3(gestureOffset.y - readDragStart(el, "y"));
   // A Layers-panel pick lifts a static element to relative for display only.
   const lifted = el.getAttribute(LAYER_REVEAL_PRIOR_POSITION_ATTR) === "static";
   const isStatic = lifted || !/^(relative|absolute|fixed|sticky)$/.test(cs.position);
@@ -41,8 +42,8 @@ export function applyElementPositionOffset(
   const previous = { position: el.style.position, left: el.style.left, top: el.style.top };
   const before = layoutBox(el);
   if (isStatic) el.style.position = "relative";
-  el.style.left = `${Math.round(baseLeft) + dx}px`;
-  el.style.top = `${Math.round(baseTop) + dy}px`;
+  el.style.left = `${roundTo3(baseLeft + dx)}px`;
+  el.style.top = `${roundTo3(baseTop + dy)}px`;
   const after = layoutBox(el);
   const shiftedExactly =
     Math.abs(after.left - before.left - dx) <= 1 &&

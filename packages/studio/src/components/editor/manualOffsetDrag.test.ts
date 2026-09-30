@@ -13,6 +13,7 @@ import {
   type ManualOffsetDragMatrix,
 } from "./manualOffsetDrag";
 import { STUDIO_OFFSET_X_PROP, STUDIO_OFFSET_Y_PROP } from "./manualEdits";
+import { computeDraggedGsapPosition } from "../../hooks/draggedGsapPosition";
 
 function expectMatrixClose(actual: ManualOffsetDragMatrix, expected: ManualOffsetDragMatrix): void {
   expect(actual.a).toBeCloseTo(expected.a, 6);
@@ -446,6 +447,19 @@ describe("GSAP-element drag — dot-a flies regressions", () => {
     expect(element.hasAttribute("data-hf-studio-path-offset")).toBe(false);
     // ...and the position survives in the GSAP transform (no stale var to compose).
     expect(element.style.getPropertyValue("transform")).toMatch(/translate\(/);
+  });
+});
+
+describe("sub-pixel drags", () => {
+  it("draft and commit both land the exact fractional position", () => {
+    const { element, sets, member } = makeGsapDot();
+    const m = member();
+    applyManualOffsetDragDraft(m, 10.25, -3.5);
+    const draft = sets.at(-1)!;
+    expect(draft).toEqual({ x: m.baseGsap.x + 10.25, y: m.baseGsap.y - 3.5 });
+    const offset = applyManualOffsetDragCommit(m, 10.25, -3.5);
+    const { newX, newY } = computeDraggedGsapPosition(element, offset, m.baseGsap);
+    expect({ x: newX, y: newY }).toEqual(draft);
   });
 });
 

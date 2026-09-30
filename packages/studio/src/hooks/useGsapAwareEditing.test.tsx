@@ -288,7 +288,7 @@ describe("useGsapAwareEditing anchored resize", () => {
       commit = h.resize(h.selection, { width: 300, height: 200 }, { x: -50.2, y: -25.6 });
     });
 
-    expect(mocks.setPosition).toHaveBeenCalledWith(h.selection.element, 70, 55);
+    expect(mocks.setPosition).toHaveBeenCalledWith(h.selection.element, 70.2, 54.6);
     expect(mocks.setPosition.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.resize.mock.invocationCallOrder[0]!,
     );

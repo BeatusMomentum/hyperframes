@@ -27,6 +27,7 @@ import { commitWholePropertyOffset } from "./gsapWholePropertyOffsetCommit";
 import { isGestureTransactionCommit } from "./gestureTransaction";
 import { tweenReach, tweensForThisElement } from "./gsapTweenReach";
 import { resolveTweenDuration } from "../utils/globalTimeCompiler";
+import { roundTo3 } from "../utils/rounding";
 import type { GsapDragCommitCallbacks } from "./gsapDragCommit";
 import { isInstantHold, selectorFromSelection, writeTargetSelector } from "./gsapShared";
 import {
@@ -446,7 +447,7 @@ export async function tryGsapRotationIntercept(
   // `angle` is the ABSOLUTE target rotation resolved by the gesture (gsap base +
   // pointer sweep) or the inspector — so it IS the new rotation. No base re-add: the
   // gesture's live preview already gsap.set this value (single source of truth).
-  const newRotation = Math.round(angle);
+  const newRotation = roundTo3(angle);
   // STATIC case (single source of truth = GSAP timeline): no rotation tween, so the
   // angle belongs in a `tl.set("#el",{rotation})`, not a keyframe conversion —
   // mirroring the static position set. Idempotent: re-rotate updates an existing
