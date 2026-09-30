@@ -177,17 +177,15 @@ function hasAmbiguousGsapScriptChange(previous: string, restored: string): boole
  *      element — so a canvas-position revert lands on the live DOM the runtime's
  *      seek-reapply reads from, not just on disk.
  *   2. The runtime refresh depends on what changed:
- *      - GSAP script text actually CHANGED between previous and restored → the
- *        restored script is re-run in place via applySoftReload (re-seeks to
- *        `currentTime`, re-folds manual edits).
- *      - Script unchanged or absent (the overwhelmingly common undo: z-order,
- *        lane move, timing shift, style tweak) → NO script execution — the
- *        blink-free finalization only (seek + __hfForceTimelineRebind + manual
- *        reapply, exactly the rebindPreviewTiming path), so timing-attribute
- *        reverts refresh their visibility windows. Re-running an unchanged
- *        script here used to be the biggest undo blink source: it tore down
- *        and rebuilt live timelines (and full-reloaded whenever the script
- *        couldn't be scoped) for restores that never touched it.
+ *      - The GSAP script CHANGED, or a synced element was parsed by GSAP and a
+ *        file has a GSAP script → the restored script is re-run in place via
+ *        applySoftReload, so GSAP re-parses the element as a fresh load does.
+ *        Several GSAP scripts cannot be re-run one by one, so that case reloads.
+ *      - Otherwise (z-order, lane move, timing shift or style tweak on an element
+ *        GSAP never parsed, or no GSAP script in either file) → NO script
+ *        execution: the blink-free finalization only (seek +
+ *        __hfForceTimelineRebind + manual reapply), so timing-attribute reverts
+ *        refresh their visibility windows.
  *
  * Returns "soft" when applied in place, "full" when it escalated to reloadPreview
  * (ineligible restore, missing target, or a permanent soft-reload failure).
@@ -261,7 +259,9 @@ export function applyUndoRestoreToPreview(
   const restoredScript = extractGsapScriptText(restored);
   const previousScript = extractGsapScriptText(previous);
   // GSAP keeps what it parsed from an element (folded translate, its masks); a fresh load re-parses it.
-  const gsapParsedChanged = changedTargets.some(({ live }) => "_gsap" in live);
+  const gsapParsedChanged =
+    changedTargets.some(({ live }) => "_gsap" in live) &&
+    readGsapScriptTexts(previous).length + readGsapScriptTexts(restored).length > 0;
   if (restoredScript !== previousScript || gsapParsedChanged) {
     if (!restoredScript) {
       reloadPreview();

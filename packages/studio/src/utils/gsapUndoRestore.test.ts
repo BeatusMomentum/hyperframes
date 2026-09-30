@@ -279,6 +279,23 @@ describe("applyUndoRestoreToPreview", () => {
     expect(doc.getElementById("a")!.style.getPropertyValue("translate")).toBe("");
   });
 
+  it("keeps an undo on an element GSAP parsed in place when neither file has a GSAP script", () => {
+    const body = (clip: string) =>
+      `<div data-composition-id="main"><div id="t" style="${clip}">t</div></div>`;
+    const { iframe, contentWindow, doc } = buildLiveIframe(body(""));
+    Object.assign(doc.getElementById("t")!, { _gsap: {} });
+    const reloadPreview = vi.fn();
+    const files = {
+      [ROOT]: {
+        previous: wrap(body("clip-path: inset(0px 40px 0px 0px)")),
+        restored: wrap(body("")),
+      },
+    };
+    expect(applyUndoRestoreToPreview(iframe, ROOT, files, 3, reloadPreview)).toBe("soft");
+    expect(reloadPreview).not.toHaveBeenCalled();
+    expect(contentWindow.__hfStudioManualEditsApply).toHaveBeenCalled();
+  });
+
   it("full-reloads a changed two-script restore without partially touching the live DOM", () => {
     const previousScripts = [
       `window.__timelines["root"]=gsap.timeline().to("#a",{x:1});`,
