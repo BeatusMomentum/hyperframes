@@ -25,6 +25,27 @@ function getOffsetDragGsap(element: HTMLElement): OffsetDragGsap | null {
   return gsap?.set && gsap.getProperty ? (gsap as OffsetDragGsap) : null;
 }
 
+// The x/y GSAP reports once the commit loads it into a page without it, as its CSSPlugin parses:
+// the CSS `translate` plus the transform's translation, less a -50% centering it keeps in x/yPercent.
+function readGsapFoldedCssPosition(element: HTMLElement): { x: number; y: number } {
+  const view = element.ownerDocument.defaultView as (Window & typeof globalThis) | null;
+  if (!view) return { x: 0, y: 0 };
+  const style = view.getComputedStyle(element);
+  const translate = style.getPropertyValue("translate").trim();
+  const [tx = "0", ty = "0"] = translate === "none" ? [] : translate.split(/\s+/);
+  const transform = style.getPropertyValue("transform");
+  const matrix = transform && transform !== "none" ? new view.DOMMatrix(transform) : null;
+  const axis = (value: string, fromTransform: number, size: number) => {
+    const raw = Number.parseFloat(value) || 0;
+    const t = (value.endsWith("%") ? (raw * size) / 100 : raw) + fromTransform;
+    return t && Math.round(size / 2) === Math.round(-t) ? t + size / 2 : t;
+  };
+  return {
+    x: axis(tx, matrix?.m41 ?? 0, element.offsetWidth),
+    y: axis(ty, matrix?.m42 ?? 0, element.offsetHeight),
+  };
+}
+
 /**
  * Live drag preview through the GSAP channel — the SAME channel the commit
  * lands in (a `tl.set`/keyframe on the timeline), so what the user sees while
@@ -346,8 +367,10 @@ export function createManualOffsetDragMember(input: {
         __timelines?: Record<string, { pause?: () => void; paused?: () => boolean }>;
       })
     | null;
-  const gsapX = win?.gsap?.getProperty?.(input.element, "x") || 0;
-  const gsapY = win?.gsap?.getProperty?.(input.element, "y") || 0;
+  const gsap = win?.gsap;
+  const { x: gsapX, y: gsapY } = gsap?.getProperty
+    ? { x: gsap.getProperty(input.element, "x") || 0, y: gsap.getProperty(input.element, "y") || 0 }
+    : readGsapFoldedCssPosition(input.element);
   input.element.setAttribute("data-hf-drag-gsap-base-x", String(gsapX));
   input.element.setAttribute("data-hf-drag-gsap-base-y", String(gsapY));
 

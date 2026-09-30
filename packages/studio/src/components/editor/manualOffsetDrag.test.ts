@@ -13,6 +13,7 @@ import {
   type ManualOffsetDragMatrix,
 } from "./manualOffsetDrag";
 import { STUDIO_OFFSET_X_PROP, STUDIO_OFFSET_Y_PROP } from "./manualEdits";
+import { computeDraggedGsapPosition } from "../../hooks/draggedGsapPosition";
 
 function expectMatrixClose(actual: ManualOffsetDragMatrix, expected: ManualOffsetDragMatrix): void {
   expect(actual.a).toBeCloseTo(expected.a, 6);
@@ -550,5 +551,48 @@ describe("resumeGsapTimelines", () => {
     const element = window.document.createElement("div");
     window.document.body.append(element);
     expect(() => resumeGsapTimelines(element)).not.toThrow();
+  });
+});
+
+describe("drag in a composition without GSAP", () => {
+  // The commit writes `gsap.set(x, y)`; once GSAP loads it folds the CSS translate and the
+  // transform's translation into x/y, so the drag base must already count them.
+  function committedPosition(css: string, dx: number, dy: number) {
+    const window = new Window();
+    window.document.head.innerHTML = `<style>#title { ${css} }</style>`;
+    const element = window.document.createElement("h1");
+    element.id = "title";
+    window.document.body.append(element);
+    Object.defineProperty(element, "offsetWidth", { value: 146 });
+    Object.defineProperty(element, "offsetHeight", { value: 82 });
+    element.getBoundingClientRect = () => {
+      const x = Number.parseFloat(element.style.getPropertyValue(STUDIO_OFFSET_X_PROP)) || 0;
+      const y = Number.parseFloat(element.style.getPropertyValue(STUDIO_OFFSET_Y_PROP)) || 0;
+      return new window.DOMRect(100 + x, 300 + y, 146, 82);
+    };
+    const result = createManualOffsetDragMember({
+      key: "title",
+      selection: { element } as never,
+      element,
+      rect: { left: 100, top: 300, width: 146, height: 82, editScaleX: 1, editScaleY: 1 },
+    });
+    if (!result.ok) throw new Error(result.reason);
+    const offset = applyManualOffsetDragCommit(result.member, dx, dy);
+    return computeDraggedGsapPosition(element, offset, { x: 0, y: 0 });
+  }
+
+  it("keeps a stylesheet translate, so a 30px drag moves the element 30px", () => {
+    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 40, y: -170 });
+  });
+
+  it("keeps a stylesheet transform translation the same way", () => {
+    const { newX, newY } = committedPosition("transform: translate(-60px, 10px);", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: -20, y: 40 });
+  });
+
+  it("leaves a -50% centering out of x/y, since GSAP keeps it as xPercent/yPercent", () => {
+    const { newX, newY } = committedPosition("translate: -50% -50%;", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 40, y: 30 });
   });
 });
