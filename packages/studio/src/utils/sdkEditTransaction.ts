@@ -42,7 +42,8 @@ export interface CutoverDeps {
    */
   writeProjectFile: (path: string, content: string, expectedContent?: string) => Promise<void>;
   reloadPreview: () => void;
-  refresh?: (after: string) => void;
+  /** Settles once the preview shows `after`. */
+  refresh?: (after: string) => void | Promise<void>;
   compositionPath?: string | null;
   readProjectFile?: (path: string) => Promise<string>;
   /**
@@ -256,9 +257,13 @@ async function writeAndRecord(
   }
 }
 
-function refreshCommittedEdit(after: string, deps: CutoverDeps, options?: CutoverOptions): void {
+async function refreshCommittedEdit(
+  after: string,
+  deps: CutoverDeps,
+  options?: CutoverOptions,
+): Promise<void> {
   try {
-    if (deps.refresh) deps.refresh(after);
+    if (deps.refresh) await deps.refresh(after);
     else if (!options?.skipRefresh) deps.reloadPreview();
   } catch (error) {
     trackStudioEvent("sdk_cutover_refresh_failed", { error: asCutoverError(error).message });
@@ -299,7 +304,7 @@ async function commitCandidateEdit(
       error: asCutoverError(error).message,
     });
   }
-  if (refreshTarget) refreshCommittedEdit(edit.after, deps, options);
+  if (refreshTarget) await refreshCommittedEdit(edit.after, deps, options);
   return { status: "committed", version: hashContent(edit.after) };
 }
 
@@ -351,6 +356,6 @@ export async function persistSdkSerialize(
     if (after === onDiskBefore) return;
     const error = await writeAndRecord(after, targetPath, onDiskBefore, deps, options);
     if (error) throw error;
-    refreshCommittedEdit(after, deps, options);
+    await refreshCommittedEdit(after, deps, options);
   });
 }

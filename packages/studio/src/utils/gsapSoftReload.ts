@@ -223,8 +223,8 @@ function gsapParsedInOwnComposition(doc: Document, key: string): Element[] {
  *                            read or matched, the plugin load or the re-run fails)
  *                            is surfaced via `onAsyncFailure`.
  * - `"cannot-soft-reload"` — PERMANENT/STRUCTURAL: no gsap runtime, no rebind
- *                            hook, or no scopable target key. The preview is
- *                            stale/broken → escalate.
+ *                            hook, no scopable target key, or no live script to
+ *                            replace (unless `bootstrap: "added"`) → escalate.
  */
 export type SoftReloadResult = "applied" | "cannot-soft-reload";
 
@@ -358,9 +358,16 @@ export function applySoftReload(
   const fresh = readFreshPreview(win);
   const queued = (pendingReloads.get(win) ?? Promise.resolve())
     .then(() => fresh)
-    .then((page) => runSoftReload(win, doc, scriptText, options, currentTime, page));
+    .then((page) => runSoftReload(win, doc, scriptText, options, currentTime, page))
+    .catch(() => options.onAsyncFailure?.());
   pendingReloads.set(win, queued);
   return "applied";
+}
+
+/** Settles once every soft reload asked of this preview so far has applied or escalated; read the preview after it. */
+export function softReloadSettled(iframe: HTMLIFrameElement | null): Promise<void> {
+  const win = iframe?.contentWindow;
+  return (win && pendingReloads.get(win)) || Promise.resolve();
 }
 
 // fallow-ignore-next-line complexity

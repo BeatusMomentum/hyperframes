@@ -11,6 +11,7 @@ import {
   type StudioPendingEditsDrainResult,
 } from "../utils/studioPendingEdits";
 import { trackStudioEvent } from "../utils/studioTelemetry";
+import { softReloadSettled } from "../utils/gsapSoftReload";
 import { applyUndoRestoreToPreview, type UndoRestoreFile } from "../utils/gsapUndoRestore";
 import { usePlayerStore } from "../player";
 import { syncStoredAutomationFromPreview } from "../player/lib/automationStoreSync";
@@ -212,6 +213,7 @@ export function usePreviewPersistence({
       // player store keeps its own copy and that copy is what the automation lanes
       // draw — so without this an undone envelope edit stayed invisible until a
       // reload. The full path above clears the store and waits for discovery instead.
+      await softReloadSettled(previewIframeRef.current);
       syncStoredAutomationFromPreview(previewIframeRef.current?.contentDocument ?? null);
     },
     [previewIframeRef, activeCompPathRef, reloadPreview],

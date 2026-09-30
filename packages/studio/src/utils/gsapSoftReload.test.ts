@@ -5,6 +5,7 @@ import {
   applySoftReload,
   applySoftReloadFinalization,
   ensureMotionPathPluginLoaded,
+  softReloadSettled,
 } from "./gsapSoftReload";
 
 const FILE = {};
@@ -148,6 +149,14 @@ describe("applySoftReload", () => {
     expect(onAsyncFailure).toHaveBeenCalledTimes(1);
     expect(mockTimeline.kill).not.toHaveBeenCalled();
     expect(contentWindow.__hfForceTimelineRebind).not.toHaveBeenCalled();
+  });
+
+  it("settles once every reload asked so far has applied", async () => {
+    const { iframe, contentWindow } = buildMockIframe();
+    applySoftReload(iframe, SCRIPT_TEXT, { currentTimeOverride: 1 });
+    applySoftReload(iframe, SCRIPT_TEXT, { currentTimeOverride: 2 });
+    await softReloadSettled(iframe);
+    expect(contentWindow.__player.seek.mock.calls).toEqual([[1], [2]]);
   });
 
   it("applies reloads in the order they were asked for, whichever page arrives first", async () => {

@@ -243,6 +243,32 @@ function mountLanes(target: TimelineElement, canEdit?: CanEdit, recording = fals
 }
 
 describe("useAutomationLanes saves report what happened", () => {
+  it("an undo in a file with a GSAP script puts the undone clip automation back in the lane", async () => {
+    const h = mountLanes(music);
+    const script = `<script>window.__timelines["root"] = gsap.timeline();</script>`;
+    const gsapPage = (html: string) =>
+      `<div data-composition-id="root">${html.replace(/<script>.*<\/script>/, "")}</div>${script}`;
+    h.setFile(gsapPage(SOURCE));
+    const win = h.iframe.contentWindow as unknown as Record<string, unknown>;
+    Object.assign(win, {
+      gsap: { timeline: () => ({}), set: () => {} },
+      __hfForceTimelineRebind: () => {},
+      __timelines: { root: { kill: () => {} } },
+      // The page a fresh load of the undone file shows, which the soft reload reads first.
+      fetch: async () => ({ ok: true, text: async () => `<html><body>${h.file()}</body></html>` }),
+    });
+    h.iframe.contentDocument!.body.innerHTML = h.file();
+    // GSAP has parsed the clip, so the undo re-runs the script instead of rebinding in place.
+    Object.assign(h.iframe.contentDocument!.getElementById("music")!, { _gsap: {} });
+    expect(await h.commit(curve(0.2))).toEqual({ status: "saved" });
+    const base = h.file();
+    expect(await h.commit(curve(0.5))).toEqual({ status: "saved" });
+
+    await h.undo(base);
+
+    expect(usePlayerStore.getState().elements[0]?.automation).toBe(serializeAutomation(curve(0.2)));
+  });
+
   it("saves a clip's automation, and the lane and the panel read it back", async () => {
     const { commit, writeProjectFile, refresh, selection } = mountLanes(music);
     expect(await commit()).toEqual({ status: "saved" });

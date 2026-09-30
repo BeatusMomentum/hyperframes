@@ -3,7 +3,7 @@ import { findUnsafeMutationValues } from "@hyperframes/core/studio-api/finite-mu
 import { readProjectFileContent as readSharedProjectFileContent } from "../utils/studioFileHistory";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { usePlayerStore } from "../player/store/playerStore";
-import { applySoftReload, extractGsapScriptText } from "../utils/gsapSoftReload";
+import { applySoftReload, extractGsapScriptText, softReloadSettled } from "../utils/gsapSoftReload";
 import type { SoftReloadResult } from "../utils/gsapSoftReload";
 import { trackStudioEvent } from "../utils/studioTelemetry";
 import { serializeStudioFileMutation } from "../utils/studioFileMutationCoordinator";
@@ -324,6 +324,7 @@ export function useGsapScriptCommits({ projectIdRef, activeCompPath, previewIfra
       if (previewIsActive) {
         finishUnchangedMutation(previewIframeRef.current, result, options, reloadPreview);
       }
+      await softReloadSettled(previewIframeRef.current);
       return;
     }
     await recordMutationEdit(targetPath, result, options);
@@ -342,6 +343,7 @@ export function useGsapScriptCommits({ projectIdRef, activeCompPath, previewIfra
       reloadPreview,
       onCacheInvalidate,
     });
+    await softReloadSettled(previewIframeRef.current);
   }, [projectIdRef, previewIframeRef, reloadPreview, onCacheInvalidate, onFileContentChanged, forceReloadSdkSession, recordMutationEdit]);
 
   const runCommit = useCallback(async (pid: string, compositionPath: string | null, targetPath: string, selection: DomEditSelection, mutation: Record<string, unknown>, options: CommitMutationOptions) => {
@@ -448,6 +450,7 @@ export function useGsapScriptCommits({ projectIdRef, activeCompPath, previewIfra
         reloadPreview();
       }
       onCacheInvalidate();
+      return softReloadSettled(previewIframeRef.current);
     },
     [previewIframeRef, reloadPreview, onCacheInvalidate],
   );

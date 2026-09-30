@@ -3,7 +3,11 @@
 // edit's undo history, and swapping the rewritten script into the live preview
 // without a full iframe reload when possible.
 import { type TimelineElement, usePlayerStore } from "../player/store/playerStore";
-import { applySoftReload, applySoftReloadFinalization } from "../utils/gsapSoftReload";
+import {
+  applySoftReload,
+  applySoftReloadFinalization,
+  softReloadSettled,
+} from "../utils/gsapSoftReload";
 import { furthestClipEndFromDocument } from "../player/lib/timelineElementHelpers";
 import type { RecordEditInput } from "../utils/studioFileHistory";
 import { patchDocumentRootDuration } from "./timelineEditingGsap";
@@ -159,6 +163,7 @@ async function finishTimelineTimingFallback(input: {
     input.reloadPreview,
     input.rebindWhenUnmutated,
   );
+  await softReloadSettled(input.iframe);
 }
 
 // Coalesce window for folding a GSAP mutation into the preceding timing edit; only has to
