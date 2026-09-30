@@ -93,18 +93,35 @@ describe("crop during a resize", () => {
     Object.assign(window, { __timelines: undefined });
   });
 
-  it("leaves the crop as authored when the size is tweened, but not when it is only held", () => {
-    const stageWith = (child: object) => {
-      const el = sizedElement(300, 200, "inset(0px 60px 0px 0px)");
-      const timeline = { getChildren: () => [{ targets: () => [el], ...child }] };
-      Object.assign(window, { __timelines: { main: timeline } });
-      const stage = prepareCropResize(el);
-      el.style.width = "450px";
-      return stage();
-    };
-    const keyframes = { "0%": { width: 300 }, "100%": { width: 600 } };
-    expect(stageWith({ vars: { keyframes }, duration: () => 4 })).toBeNull();
-    expect(stageWith({ vars: { width: 473 }, duration: () => 0 })).not.toBeNull();
+  it("decides before the write, which may add a width tween of its own", () => {
+    const el = sizedElement(300, 200, "inset(0px 60px 0px 0px)");
+    const stage = prepareCropResize(el);
+    const tween = { targets: () => [el], vars: { width: 600 }, duration: () => 4 };
+    Object.assign(window, { __timelines: { main: { getChildren: () => [tween] } } });
+    el.style.width = "600px";
+    expect(stage()?.patch.value).toBe("inset(0px 120px 0px 0px)");
     Object.assign(window, { __timelines: undefined });
+  });
+
+  it("follows only the axes GSAP does not tween, while dragging and once saved", () => {
+    const resize = (vars: object, duration: number) => {
+      const el = sizedElement(300, 200, "inset(20px 60px 20px 0px)");
+      const tween = { targets: () => [el], vars, duration: () => duration };
+      Object.assign(window, { __timelines: { main: { getChildren: () => [tween] } } });
+      applyStudioBoxSizeDraft(el, { width: 600, height: 400 });
+      const { top, right } = readCropFollowingResize(el)!;
+      const saved = prepareCropResize(el)()?.patch.value ?? null;
+      Object.assign(window, { __timelines: undefined });
+      return [[top, right], saved];
+    };
+    // A held width still scales; a height tween leaves the width free.
+    expect(resize({ width: 473 }, 0)).toEqual([[40, 120], "inset(40px 120px 40px 0px)"]);
+    expect(resize({ height: 300 }, 4)).toEqual([[20, 120], "inset(20px 120px 20px 0px)"]);
+    // A width tween, in either keyframe form, leaves the height free.
+    const widthOnly = [[40, 60], "inset(40px 60px 40px 0px)"];
+    const percent = { "0%": { width: 300 }, "100%": { width: 600 } };
+    expect(resize({ keyframes: percent }, 4)).toEqual(widthOnly);
+    expect(resize({ keyframes: { width: [300, 600] } }, 4)).toEqual(widthOnly);
+    expect(resize({ width: 600, height: 400 }, 4)).toEqual([[20, 60], null]);
   });
 });

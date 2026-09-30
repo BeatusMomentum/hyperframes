@@ -200,7 +200,7 @@ function varsCarryChannel(vars: Record<string, unknown> | undefined, channels: s
 /**
  * Like `varsCarryChannel` but for a keyframe tween: the channels live inside the
  * keyframe steps (`vars.keyframes`), not as own props of `vars`. Handles the object
- * form (`{ "0%": {...} }`) and the array form (`[{...}, ...]`).
+ * form (`{ "0%": {...} }`), the array form (`[{...}, ...]`) and the object-of-arrays form.
  */
 function keyframeVarsCarryChannel(
   vars: Record<string, unknown> | undefined,
@@ -208,6 +208,8 @@ function keyframeVarsCarryChannel(
 ): boolean {
   const kf = vars?.keyframes;
   if (!kf || typeof kf !== "object") return false;
+  if (!Array.isArray(kf) && channels.some((ch) => Object.prototype.hasOwnProperty.call(kf, ch)))
+    return true;
   const steps = Array.isArray(kf) ? kf : Object.values(kf);
   return steps.some(
     (step) =>
@@ -387,35 +389,48 @@ export function readRuntimeKeyframes(
  * rotation/scale tween doesn't make a static position hold enter the keyframe
  * branch.
  */
-// fallow-ignore-next-line complexity
 export function hasNonHoldTweenForElement(
   iframe: HTMLIFrameElement | null,
   selector: string,
   compositionId?: string,
   channels?: string[],
 ): boolean {
-  const timelines = timelinesOf(iframe);
-  if (!timelines) return false;
-  const tlId =
-    compositionId ||
-    Object.keys(timelines).find((k) => typeof timelines[k]?.getChildren === "function");
-  if (!tlId) return false;
-  const timeline = timelines[tlId];
-  if (!timeline?.getChildren) return false;
-
   let targetEl: Element | null = null;
   try {
     targetEl = iframe?.contentDocument?.querySelector(selector) ?? null;
   } catch {
     return false;
   }
-  if (!targetEl) return false;
+  return !!targetEl && hasNonHoldTween(timelinesOf(iframe), targetEl, channels, compositionId);
+}
 
+/** `hasNonHoldTweenForElement` for an element in hand, read from its own window's timelines. */
+export function elementHasNonHoldTween(el: Element, channels?: string[]): boolean {
+  const win = el.ownerDocument.defaultView as {
+    __timelines?: Record<string, RuntimeTimeline>;
+  } | null;
+  return hasNonHoldTween(win?.__timelines ?? null, el, channels);
+}
+
+// fallow-ignore-next-line complexity
+function hasNonHoldTween(
+  timelines: Record<string, RuntimeTimeline> | null,
+  targetEl: Element,
+  channels?: string[],
+  compositionId?: string,
+): boolean {
+  if (!timelines) return false;
+  const tlId =
+    compositionId ||
+    Object.keys(timelines).find((k) => typeof timelines[k]?.getChildren === "function");
+  const timeline = tlId ? timelines[tlId] : undefined;
+  if (!timeline?.getChildren) return false;
   // fallow-ignore-next-line code-duplication
   for (const tween of timeline.getChildren(true)) {
     if (!tween.vars || !matchesElement(tween, targetEl)) continue;
     const dur = typeof tween.duration === "function" ? tween.duration() : 0;
     if (isZeroDurationSet(dur)) continue; // skip hold/set tweens (see isZeroDurationSet)
+    if (channels && keyframeVarsCarryChannel(tween.vars, channels)) return true;
     const read = readTween(tween.vars);
     if (read && (!channels || readCarriesChannel(read, channels))) return true;
   }

@@ -1,7 +1,8 @@
 import type { PatchOperation } from "../../utils/sourcePatcher";
 import type { CommitMutation } from "../../hooks/gsapScriptCommitTypes";
 import type { DomEditSelection } from "./domEditingTypes";
-import { gsapAnimatesProperty, gsapTweensProperty } from "./gsapAnimatesProperty";
+import { gsapAnimatesProperty } from "./gsapAnimatesProperty";
+import { elementHasNonHoldTween } from "../../hooks/gsapRuntimeKeyframes";
 import { buildInsetClipPathSides, type ParsedInsetClipPathSides } from "./clipPathHelpers";
 import { hasCropInsets, readElementCropInsets } from "./domEditOverlayCrop";
 import { forgetStudioBoxSizeDraftBase, readStudioBoxSizeDraftBase } from "./manualEditsDom";
@@ -16,9 +17,25 @@ const boxOf = (element: HTMLElement): Box => ({
   height: element.offsetHeight,
 });
 
-function scaleCrop(crop: ParsedInsetClipPathSides, from: Box, to: Box): ParsedInsetClipPathSides {
-  const sx = from.width > 0 ? to.width / from.width : 1;
-  const sy = from.height > 0 ? to.height / from.height : 1;
+type Follows = Record<keyof Box, boolean>;
+
+/** Per axis, whether a crop follows a resize: not when GSAP drives the clip or tweens that axis's size. */
+function cropFollows(element: HTMLElement): Follows {
+  const clip = gsapAnimatesProperty(element, "clipPath");
+  return {
+    width: !clip && !elementHasNonHoldTween(element, ["width"]),
+    height: !clip && !elementHasNonHoldTween(element, ["height"]),
+  };
+}
+
+function scaleCrop(
+  crop: ParsedInsetClipPathSides,
+  from: Box,
+  to: Box,
+  follows: Follows,
+): ParsedInsetClipPathSides {
+  const sx = follows.width && from.width > 0 ? to.width / from.width : 1;
+  const sy = follows.height && from.height > 0 ? to.height / from.height : 1;
   return {
     top: crop.top * sy,
     right: crop.right * sx,
@@ -32,7 +49,7 @@ function scaleCrop(crop: ParsedInsetClipPathSides, from: Box, to: Box): ParsedIn
 export function readCropFollowingResize(element: HTMLElement): ParsedInsetClipPathSides | null {
   const crop = readElementCropInsets(element);
   const base = readStudioBoxSizeDraftBase(element);
-  return crop && base ? scaleCrop(crop, base, boxOf(element)) : crop;
+  return crop && base ? scaleCrop(crop, base, boxOf(element), cropFollows(element)) : crop;
 }
 
 export interface CropResize {
@@ -46,10 +63,9 @@ export function prepareCropResize(element: HTMLElement): () => CropResize | null
   const from = readStudioBoxSizeDraftBase(element) ?? boxOf(element);
   const before = element.style.getPropertyValue("clip-path");
   const priority = element.style.getPropertyPriority("clip-path");
-  // A crop is left as authored when GSAP drives the clip, or tweens the size it is measured against.
-  const owned =
-    gsapAnimatesProperty(element, "clipPath") || gsapTweensProperty(element, "width", "height");
-  const crop = owned ? null : readElementCropInsets(element);
+  // Decided before the write lands: a W edit may add a width keyframe of its own.
+  const follows = cropFollows(element);
+  const crop = readElementCropInsets(element);
   return () => {
     forgetStudioBoxSizeDraftBase(element);
     const to = boxOf(element);
@@ -57,8 +73,9 @@ export function prepareCropResize(element: HTMLElement): () => CropResize | null
     const untouched = element.style.getPropertyValue("clip-path") === before;
     if (!crop || !hasCropInsets(crop) || !untouched || !(to.width > 0 && to.height > 0))
       return null;
-    if (to.width === from.width && to.height === from.height) return null;
-    const clip = buildInsetClipPathSides(scaleCrop(crop, from, to), crop.radius);
+    const clip = buildInsetClipPathSides(scaleCrop(crop, from, to, follows), crop.radius);
+    // Unchanged when the box is (a resize saved as a `scale`) or no resized axis follows.
+    if (clip === buildInsetClipPathSides(crop, crop.radius)) return null;
     element.style.setProperty("clip-path", clip, priority);
     return {
       patch: {

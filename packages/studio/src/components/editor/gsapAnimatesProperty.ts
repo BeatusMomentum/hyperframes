@@ -1,28 +1,46 @@
+// GSAP's CSSPlugin takes ownership of the element's entire transform stack
+// when it tweens ANY of these — it bakes the CSS `translate` longhand into
+// style.transform at init and writes `translate: none` every tick. Position
+// reapply/strip logic must therefore stand down for all of them, not just x/y.
+const GSAP_TRANSFORM_PROPS = [
+  "x",
+  "y",
+  "xPercent",
+  "yPercent",
+  "scale",
+  "scaleX",
+  "scaleY",
+  "rotation",
+  "rotate",
+  "rotationX",
+  "rotationY",
+  "skewX",
+  "skewY",
+  "transform",
+];
+
+/**
+ * True when GSAP animates any transform-affecting property on the element,
+ * meaning GSAP owns `style.transform` and has neutralized CSS `translate`.
+ */
+export function gsapAnimatesTransform(el: HTMLElement): boolean {
+  return gsapAnimatesProperty(el, ...GSAP_TRANSFORM_PROPS);
+}
+
 /**
  * Checks whether GSAP actively animates one or more CSS/GSAP properties on
  * the given element by inspecting all registered `__timelines`.
  */
-export function gsapAnimatesProperty(el: HTMLElement, ...props: string[]): boolean {
-  return findGsapWrite(el, props, false);
-}
-
-/** Like gsapAnimatesProperty, but only tweens that run over time count, not instant holds. */
-export function gsapTweensProperty(el: HTMLElement, ...props: string[]): boolean {
-  return findGsapWrite(el, props, true);
-}
-
 // fallow-ignore-next-line complexity
-function findGsapWrite(el: HTMLElement, props: string[], tweensOnly: boolean): boolean {
+export function gsapAnimatesProperty(el: HTMLElement, ...props: string[]): boolean {
   const win = el.ownerDocument.defaultView as
     | (Window & {
         __timelines?: Record<
           string,
           {
-            getChildren?: (deep: boolean) => Array<{
-              targets?: () => Element[];
-              vars?: Record<string, unknown>;
-              duration?: () => number;
-            }>;
+            getChildren?: (
+              deep: boolean,
+            ) => Array<{ targets?: () => Element[]; vars?: Record<string, unknown> }>;
           }
         >;
       })
@@ -34,7 +52,6 @@ function findGsapWrite(el: HTMLElement, props: string[], tweensOnly: boolean): b
     try {
       for (const child of tl.getChildren(true)) {
         if (!child.targets || !child.vars) continue;
-        if (tweensOnly && !((child.duration?.() ?? 0) > 0)) continue;
         let targetsEl = false;
         for (const t of child.targets()) {
           if (t === el || (el.id && t.id === el.id)) {
