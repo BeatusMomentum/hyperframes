@@ -152,6 +152,8 @@ export function createTimelineElementFromManifestClip(params: {
     if (timelineRole) entry.timelineRole = timelineRole;
     const link = hostEl.getAttribute("data-link");
     if (link) entry.link = link;
+    const syncOrigin = hostEl.getAttribute("data-sync-origin");
+    if (syncOrigin) entry.syncOrigin = syncOrigin;
     const audioGroup = hostEl.getAttribute("data-audio-group");
     if (audioGroup) {
       entry.audioGroup = audioGroup;
@@ -341,6 +343,8 @@ export function parseTimelineFromDOM(
     if (timelineRole) entry.timelineRole = timelineRole;
     const domLink = el.getAttribute("data-link");
     if (domLink) entry.link = domLink;
+    const domSyncOrigin = el.getAttribute("data-sync-origin");
+    if (domSyncOrigin) entry.syncOrigin = domSyncOrigin;
 
     const domAudioGroup = el.getAttribute("data-audio-group");
     if (domAudioGroup) {
