@@ -392,6 +392,7 @@ const existingSizeSet = (): GsapAnimation =>
     id: "#puck-a-size-set",
     targetSelector: "#puck-a",
     method: "set",
+    global: true,
     properties: { width: 100, height: 80 },
   }) as unknown as GsapAnimation;
 
@@ -436,6 +437,32 @@ describe("commitStaticGsapSize", () => {
       properties: { width: 300, height: 200 },
       global: true,
     });
+  });
+
+  it("replaces a size saved as a timeline set with one global set, in one undo entry", async () => {
+    const { commits, callbacks } = optionRecordingCallbacks();
+    const timelineSet = {
+      ...existingSizeSet(),
+      global: undefined,
+      properties: { width: 260, height: 170, x: -10, y: -3.5 },
+    } as unknown as GsapAnimation;
+
+    await commitStaticGsapSize(
+      selection(),
+      { width: 300, height: 200 },
+      "#puck-a",
+      timelineSet,
+      callbacks,
+    );
+
+    expect(commits.map((c) => c.mutation.type)).toEqual(["add", "delete"]);
+    expect(commits[0].mutation).toMatchObject({
+      method: "set",
+      global: true,
+      properties: { width: 300, height: 200, x: -10, y: -3.5 },
+    });
+    expect(commits[1].mutation).toMatchObject({ animationId: "#puck-a-size-set" });
+    expect(commits[0].options.coalesceKey).toBe(commits[1].options.coalesceKey);
   });
 
   it("creates one undo entry for an existing static size set", async () => {

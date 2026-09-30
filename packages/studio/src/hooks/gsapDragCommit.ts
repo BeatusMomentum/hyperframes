@@ -81,10 +81,12 @@ export function parkPlayheadOnKeyframe(anim: GsapAnimation, pct: number): void {
   usePlayerStore.getState().requestSeek(roundTo3(ts + (pct / 100) * td));
 }
 
-async function replaceKeyframedPositionHold(
+// Adds the global set first, so either failure leaves one hold on disk, then deletes the old one.
+async function replaceWithGlobalSet(
   selection: DomEditSelection,
   existingSet: GsapAnimation,
-  properties: { x: number; y: number },
+  properties: Record<string, number | string>,
+  label: string,
   commitMutation: GsapDragCommitCallbacks["commitMutation"],
 ): Promise<void> {
   const target = newTweenTarget(selection);
@@ -100,12 +102,12 @@ async function replaceKeyframedPositionHold(
         properties,
         global: true,
       },
-      { label: "Move layer", skipReload: true },
+      { label, skipReload: true },
     );
     await commit(
       selection,
       { type: "delete", animationId: existingSet.id },
-      { label: "Move layer", softReload: true },
+      { label, softReload: true },
     );
   };
 
@@ -115,7 +117,7 @@ async function replaceKeyframedPositionHold(
   }
   await runGestureTransaction({
     element: selection.element,
-    label: "Move layer",
+    label,
     settle: () => undefined,
     persist: async (commit) => persist(commit(commitMutation)),
     restore: () => undefined,
@@ -160,13 +162,12 @@ export async function commitStaticGsapPosition(
   const { newX, newY } = computeDraggedGsapPosition(selection.element, studioOffset, gsapPos);
   if (existingSet) {
     if (existingSet.keyframes) {
-      // Keyframed zero-duration hold (drag-path corruption): can't update-property
-      // into keyframes. Add the replacement first so either failure leaves at
-      // least one hold on disk, then delete the corrupt tween in one transaction.
-      await replaceKeyframedPositionHold(
+      // Keyframed zero-duration hold (drag-path corruption): can't update-property into keyframes.
+      await replaceWithGlobalSet(
         selection,
         existingSet,
         { x: newX, y: newY },
+        "Move layer",
         callbacks.commitMutation,
       );
       return;
@@ -273,14 +274,13 @@ export async function commitStaticGsapRotation(
 }
 
 /**
- * Commit a STATIC element resize as a `tl.set("#el",{width,height})` — the
+ * Commit a STATIC element resize as a global `gsap.set("#el",{width,height})` — the
  * single-source size channel for elements with no size animation (mirrors
  * `commitStaticGsapPosition`). Use this instead of a single-stop `keyframes`
  * tween: one keyframe at the playhead % renders NaN/0 at every other frame, so
  * the element collapses/disappears (worst when resized off the 0% mark). A `set`
- * holds the size at all times. Re-resizing an element that already has a size
- * `set` UPDATES it in place with one `update-properties`; a new element
- * gets one `add` with `method:"set"`.
+ * holds the size at all times. Re-resizing UPDATES an existing global set in place;
+ * a size saved the old way, as a timeline `tl.set`, is replaced by a global one.
  */
 export async function commitStaticGsapSize(
   selection: DomEditSelection,
@@ -291,6 +291,17 @@ export async function commitStaticGsapSize(
 ): Promise<void> {
   const width = roundToLayoutPx(size.width);
   const height = roundToLayoutPx(size.height);
+  if (existingSet && !existingSet.global) {
+    const properties = { ...existingSet.properties, width, height };
+    await replaceWithGlobalSet(
+      selection,
+      existingSet,
+      properties,
+      "Resize layer",
+      callbacks.commitMutation,
+    );
+    return;
+  }
   if (existingSet) {
     await callbacks.commitMutation(
       selection,

@@ -72,7 +72,7 @@ function keyframedScaleFixture(): GsapAnimation {
 
 // Resize/rotation hold tests intentionally pin the same no-conversion contract.
 // fallow-ignore-next-line code-duplication
-it("updates a duration-zero size hold in place instead of converting it to keyframes", async () => {
+it("replaces a duration-zero size hold with a global set instead of converting it to keyframes", async () => {
   const el = document.createElement("div");
   el.id = "box";
   document.body.append(el);
@@ -99,12 +99,10 @@ it("updates a duration-zero size hold in place instead of converting it to keyfr
   );
 
   expect(handled).toMatchObject({ status: "persisted" });
-  expect(commitMutation).toHaveBeenCalledTimes(1);
-  expect(commitMutation.mock.calls[0]![1]).toEqual({
-    type: "update-properties",
-    animationId: "#box-to-0-size",
-    properties: { width: 344, height: 344 },
-  });
+  expect(commitMutation.mock.calls.map((call) => call[1])).toEqual([
+    expect.objectContaining({ type: "add", global: true, properties: { width: 344, height: 344 } }),
+    { type: "delete", animationId: "#box-to-0-size" },
+  ]);
   expect(commitMutation).not.toHaveBeenCalledWith(
     expect.anything(),
     expect.objectContaining({ type: "convert-to-keyframes" }),
@@ -157,6 +155,7 @@ it("reuses the ownership parse instead of fetching a resolved size group twice",
     targetSelector: "#box",
     propertyGroup: "size",
     method: "set",
+    global: true,
     properties: { width: 150, height: 150 },
   } as unknown as GsapAnimation;
   const fetchAnimations = vi.fn().mockResolvedValue([sizeHold]);
