@@ -648,8 +648,15 @@ function injectControl(page) {
   if (CONTROL === "reload")
     return page.evaluate(async () => {
       await new Promise((r) => setTimeout(r, 100));
+      const url = (f) => {
+        try {
+          return f.contentWindow.location.href;
+        } catch {
+          return "";
+        }
+      };
       const frames = [...document.querySelectorAll("iframe")].filter((f) =>
-        f.src.includes("/preview"),
+        url(f).includes("/preview"),
       );
       const area = (f) => f.offsetWidth * f.offsetHeight;
       frames.reduce((a, b) => (area(b) > area(a) ? b : a)).contentWindow.location.reload();
