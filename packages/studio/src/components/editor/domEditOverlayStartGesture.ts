@@ -149,9 +149,9 @@ export function startGesture(
     return false;
 
   const size = readStudioBoxSize(sel.element);
-  // Single-source rotation base = the live GSAP transform rotation plus any legacy
-  // `--hf-studio-rotation` CSS var (old projects), so a rotate gesture starts from the
-  // element's actual visual angle and commits an absolute angle to the timeline.
+  // Single-source rotation base: GSAP's rotation plus any legacy `--hf-studio-rotation`, or
+  // without GSAP the CSS fold, so a rotate gesture starts from the element's visual angle
+  // and commits an absolute angle to the timeline.
   const rotation = { angle: readRotationBase(sel.element) };
   // The draft writes CSS width/height, so the resize base must be the CSS
   // layout size. offsetWidth/Height are transform-free; the overlay-rect

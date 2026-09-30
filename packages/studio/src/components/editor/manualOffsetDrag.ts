@@ -50,11 +50,14 @@ function applyOffsetDragDraft(member: ManualOffsetDragMember, offset: { x: numbe
   gsap.set(element, { x: newX, y: newY });
 }
 
-// The rotation draft shows the absolute angle the commit writes: GSAP's rotation, or without GSAP
-// the CSS `rotate` the committed `gsap.set` will show.
+// The rotation draft shows the absolute angle the commit writes: GSAP's rotation, or without GSAP a
+// CSS `rotate` of the angle less what `scale` and `transform` already turn.
 export function applyRotationDraft(element: HTMLElement, angle: number): void {
   const gsap = getOffsetDragGsap(element);
-  element.style.setProperty("rotate", gsap ? "none" : `${angle}deg`);
+  element.style.setProperty(
+    "rotate",
+    gsap ? "none" : `${angle - readCssRotation(element, false)}deg`,
+  );
   gsap?.set(element, { rotation: angle });
 }
 
