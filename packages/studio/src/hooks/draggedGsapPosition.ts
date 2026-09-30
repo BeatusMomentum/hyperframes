@@ -14,14 +14,18 @@ const cssValue = (style: CSSStyleDeclaration, prop: string) => {
   return value === "none" ? "" : value;
 };
 
-function transformTranslation(view: Window & typeof globalThis, list: string) {
-  const matrix = list ? new view.DOMMatrix(list) : null;
-  return { x: matrix?.m41 ?? 0, y: matrix?.m42 ?? 0 };
+function transformOf(view: Window & typeof globalThis, list: string) {
+  const m = list ? new view.DOMMatrix(list) : null;
+  return {
+    x: m?.m41 ?? 0,
+    y: m?.m42 ?? 0,
+    rotation: m ? (Math.atan2(m.b, m.a) * 180) / Math.PI : 0,
+  };
 }
 
 // GSAP writes `translate rotate scale transform` as one inline transform; a value the browser rejects
 // (e.g. `rotate: x 30deg`) drops the whole string, leaving GSAP only the plain transform.
-function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
+function foldedTransform(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
   const [tx = "", ty = ""] = splitTopLevelWhitespace(cssValue(style, "translate"));
   const rotate = cssValue(style, "rotate");
   const scale = cssValue(style, "scale");
@@ -32,9 +36,9 @@ function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDecl
     transform,
   ];
   try {
-    return { tx, ty, ...transformTranslation(view, folded.join(" ").trim()) };
+    return { tx, ty, ...transformOf(view, folded.join(" ").trim()) };
   } catch {
-    return { tx: "", ty: "", ...transformTranslation(view, transform) };
+    return { tx: "", ty: "", ...transformOf(view, transform) };
   }
 }
 
@@ -66,7 +70,7 @@ function foldedAxis(translate: string, fromTransform: number, size: number) {
 }
 
 function readCssFold(element: HTMLElement, view: Window & typeof globalThis) {
-  const moved = foldedTranslation(view, view.getComputedStyle(element));
+  const moved = foldedTransform(view, view.getComputedStyle(element));
   return {
     x: foldedAxis(moved.tx, moved.x, element.offsetWidth),
     y: foldedAxis(moved.ty, moved.y, element.offsetHeight),
@@ -87,6 +91,12 @@ export function readGsapPosition(element: HTMLElement): { x: number; y: number }
   }
   const fold = readCssFold(element, view);
   return { x: fold.x.value, y: fold.y.value };
+}
+
+// Without GSAP, the rotation GSAP will parse from the CSS `rotate`, `scale` and `transform`.
+export function readCssRotation(element: HTMLElement): number {
+  const view = element.ownerDocument.defaultView as GsapView | null;
+  return view ? foldedTransform(view, view.getComputedStyle(element)).rotation : 0;
 }
 
 // Without GSAP, the inline `translate` that shows x/y where the committed `gsap.set` will. Null with GSAP.

@@ -4,6 +4,8 @@ import {
   applyManualOffsetDragCommit,
   resumeGsapTimelines,
   applyManualOffsetDragDraft,
+  applyRotationDraft,
+  readRotationBase,
   applyManualOffsetDragMatrix,
   createManualOffsetDragMember,
   endManualOffsetDragMembers,
@@ -711,5 +713,19 @@ describe("drag in a composition without GSAP", () => {
     expect(title.element.style.getPropertyValue("translate")).toBe(
       "calc(0% + 10px) calc(0% + 5px)",
     );
+  });
+});
+
+describe("rotate in a composition without GSAP", () => {
+  it("starts from the authored CSS rotation and drafts the absolute angle the commit writes", () => {
+    const window = new Window();
+    window.document.head.innerHTML = "<style>#title { rotate: 30deg; }</style>";
+    const element = window.document.createElement("h1");
+    element.id = "title";
+    window.document.body.append(element);
+    const base = readRotationBase(element);
+    expect(base).toBeCloseTo(30);
+    applyRotationDraft(element, 55);
+    expect(element.style.getPropertyValue("rotate")).toBe("55deg");
   });
 });
