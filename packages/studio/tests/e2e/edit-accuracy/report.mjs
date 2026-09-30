@@ -145,6 +145,12 @@ function summarize(results, seconds) {
         ),
       ),
       lowest: round(Math.min(...measured.map((r) => r.flash.coverage))),
+      control: round(
+        percentile(
+          measured.map((r) => r.flash.controlCoverage),
+          50,
+        ),
+      ),
     },
     paint: {
       unknown: measured.filter((r) => !r.flash.paint).length,
@@ -173,7 +179,7 @@ function table(summary, meta, results) {
     `The preview never held still for 1 s within 15 s in ${summary.unsettled} cases; the metrics that snapshot feeds fail.`,
     `An undo or redo write never landed within 15 s in ${summary.undoTimeouts} cases; undo fails there.`,
     `The producer failed to render ${summary.renderErrors} cases; render fails there.`,
-    `Flash: ${summary.flash.badCases} cases painted a frame matching neither the state before nor after (longest run ${summary.flash.longest} frames); ${summary.flash.uncovered} cases uncovered; screencast coverage median ${summary.flash.coverage}, lowest ${summary.flash.lowest}.`,
+    `Flash: ${summary.flash.badCases} cases painted a frame matching neither the state before nor after (longest run ${summary.flash.longest} frames); ${summary.flash.uncovered} cases uncovered; screencast coverage median ${summary.flash.coverage}, lowest ${summary.flash.lowest}, blank control median ${summary.flash.control}.`,
     `Edit-to-paint (pointer-up, key, undo, redo; pass at ${PAINT_FRAMES} frame): frames to the after-state (median/max) ${summary.paint.frames}, ms ${summary.paint.ms}; ${summary.paint.unknown} cases logged no input.`,
     `Smoothness: ${summary.smooth.unknown} cases with unknown work; dropped frames per case (median/max) ${summary.smooth.dropped}, blank-page control ${summary.smooth.control}; raw rAF p95 (median/max) ${summary.smooth.p95} ms, control ${summary.smooth.controlP95} ms.`,
     "",
@@ -190,6 +196,17 @@ function table(summary, meta, results) {
       `| ${g} | ${rs.length} | ${rs.filter((r) => r.pass).length} | ${METRICS.map((m) => rs.filter((r) => r.checks[m]).length).join(" | ")} |`,
     );
   }
+  lines.push(
+    "",
+    "| Case | Flash frames | Paint frames | 1-frame flash miss chance | Blank control coverage |",
+    "|---|---|---|---|---|",
+    ...results
+      .filter((r) => !r.error)
+      .map(
+        (r) =>
+          `| ${r.id} | ${r.flash.bad} | ${r.flash.paint?.frames ?? "-"} | ${round(r.flash.missChance)} | ${round(r.flash.controlCoverage)} |`,
+      ),
+  );
   return lines.join("\n") + "\n";
 }
 

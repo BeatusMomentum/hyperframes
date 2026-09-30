@@ -3,15 +3,16 @@
  * frames around it.
  */
 
-// A 4x4 marker in the top-left corner, outside every region, repaints every rAF with the frame counter in its
-// colour, so the screencast (which only sends repainted frames) sends every frame and each one is numbered.
+// A 16x16 marker in the top-left corner, outside every region, repaints every rAF with the frame counter in its
+// colour (5 bits per channel in steps of 8, which JPEG keeps), so the screencast (which only sends repainted frames)
+// sends every frame and each one is numbered.
 // It also logs the counter at each committing input (pointer-up, a non-modifier key), in any same-origin frame.
 function markerOn() {
   const bench = window.__editBench;
   if (bench.marker) return;
   const el = Object.assign(document.createElement("div"), { id: "edit-bench-marker" });
   el.style.cssText =
-    "position:fixed;left:0;top:0;width:4px;height:4px;z-index:2147483647;pointer-events:none";
+    "position:fixed;left:0;top:0;width:16px;height:16px;z-index:2147483647;pointer-events:none";
   document.documentElement.append(el);
   const marker = { el, n: 0, on: true, masks: [], times: [], inputs: [], unlisten: [] };
   bench.marker = marker;
@@ -38,7 +39,7 @@ function markerOn() {
     if (!marker.on) return;
     const n = ++marker.n;
     marker.times[n] = performance.now();
-    el.style.background = `rgb(${n & 255},${(n >> 8) & 255},128)`;
+    el.style.background = `rgb(${(n % 32) * 8},${((n >> 5) % 32) * 8},128)`;
     // Toasts slide in and out by design; wherever one was during the window is left out of the comparison.
     for (const t of document.querySelectorAll(".hf-toast-enter, .hf-toast-exit")) {
       const r = t.getBoundingClientRect();
@@ -106,7 +107,8 @@ export async function startCapture(page, { marker = true } = {}) {
       const m = window.__editBench.marker;
       return m ? { n: m.n, masks: m.masks, times: m.times, inputs: m.inputs } : { n: null };
     });
-  await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
+  // JPEG: PNG encoding cannot keep up with 60 fps even on a blank page; the colour tolerance absorbs JPEG noise.
+  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 95, everyNthFrame: 1 });
   // The first frame is the state before the action.
   for (const deadline = Date.now() + 2000; !frames.length && Date.now() < deadline; )
     await new Promise((r) => setTimeout(r, 10));
@@ -133,7 +135,7 @@ function compareFrames(frames, before, after, regions, masks, colourTol) {
   return (async () => {
     const decode = async (b64) => {
       const bmp = await createImageBitmap(
-        await (await fetch(`data:image/png;base64,${b64}`)).blob(),
+        await (await fetch(`data:image/jpeg;base64,${b64}`)).blob(),
       );
       const g = new OffscreenCanvas(bmp.width, bmp.height).getContext("2d", {
         willReadFrequently: true,
@@ -162,7 +164,9 @@ function compareFrames(frames, before, after, regions, masks, colourTol) {
     const out = [];
     for (const f of frames) {
       const img = await decode(f);
-      const counter = img.data[4 * (img.width + 1)] + 256 * img.data[4 * (img.width + 1) + 1];
+      const px = 4 * (img.width * 8 + 8);
+      const level = (v) => Math.min(31, Math.round(v / 8));
+      const counter = level(img.data[px]) + 32 * level(img.data[px + 1]);
       const diffs = Object.fromEntries(
         Object.entries(regions).map(([k, r]) => [k, [differing(img, b, r), differing(img, a, r)]]),
       );
@@ -170,6 +174,19 @@ function compareFrames(frames, before, after, regions, masks, colourTol) {
     }
     return out;
   })();
+}
+
+const MARKER_STATES = 1024;
+
+/** The marker's counter wraps every 1024 frames; frames arrive in order, so each one unwraps from the one before. */
+export function unwrap(rows, from) {
+  let last = from;
+  return rows.map((r) => {
+    last +=
+      ((((r.counter - last) % MARKER_STATES) + MARKER_STATES * 1.5) % MARKER_STATES) -
+      MARKER_STATES / 2;
+    return { ...r, counter: last };
+  });
 }
 
 /** Marker counters the screencast never delivered, as [first, last] runs relative to the window start. */
@@ -252,22 +269,24 @@ async function scoreWindow(decoder, win, regions, tolPx) {
     dedupe(win.masks ?? []),
     COLOUR_TOL,
   );
-  return classify(rows, win, tolPx);
+  return classify(win.from === null ? rows : unwrap(rows, win.from), win, tolPx);
 }
 
 const dedupe = (rects) =>
   [...new Set(rects.map((r) => r.join(",")))].map((k) => k.split(",").map(Number));
 
-// PNG is lossless; this absorbs only anti-aliasing and subpixel text noise between otherwise equal frames.
+// Absorbs JPEG noise, anti-aliasing and subpixel text between otherwise equal frames.
 const COLOUR_TOL = 24;
+// A window is covered at 90% of its frames, or within 5 points of what the same run's blank control reached.
 const MIN_COVERAGE = 0.9;
+const CONTROL_SLACK = 0.05;
 
 // The inputs that commit an edit; the reload window has none and scores flashes only.
 const COMMITTING = ["release", "undo", "redo"];
 
 /** Scores every window of a case; the offending frames go to `evidence.flashFrames` as PNG. */
 // fallow-ignore-next-line complexity
-export async function scoreFlash(decoder, { regions, tolPx, windows }, evidence) {
+export async function scoreFlash(decoder, { regions, tolPx, windows, control }, evidence) {
   const out = {};
   evidence.flashFrames = [];
   for (const [name, win] of Object.entries(windows)) {
@@ -281,12 +300,16 @@ export async function scoreFlash(decoder, { regions, tolPx, windows }, evidence)
   }
   const all = Object.values(out);
   const coverage = Math.min(...all.map((w) => w.coverage ?? 0));
+  const controlCoverage = (await scoreWindow(decoder, control, {}, tolPx)).coverage ?? 0;
   const paints = COMMITTING.filter((k) => out[k]).map((k) => out[k].paint);
   return {
     bad: all.reduce((n, w) => n + w.bad.length, 0),
     longest: Math.max(0, ...all.map((w) => w.longest)),
     coverage,
-    uncovered: !(coverage >= MIN_COVERAGE),
+    controlCoverage,
+    // The chance a 1-frame flash fell in a frame the screencast never sent.
+    missChance: 1 - coverage,
+    uncovered: !(coverage >= Math.min(MIN_COVERAGE, controlCoverage - CONTROL_SLACK)),
     // The slowest committing input; unknown (null) when any of them logged no input.
     paint: paints.some((p) => !p)
       ? null

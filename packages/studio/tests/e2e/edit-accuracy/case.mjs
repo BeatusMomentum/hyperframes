@@ -28,7 +28,7 @@ const ROTATE_BY = (25 * Math.PI) / 180;
 const CROP_BY = 40;
 const NUDGES = 5;
 const ZOOM_SENSITIVITY = 0.007; // previewZoom.ts: one wheel unit scales zoom by exp(0.007)
-// Flash controls, for proving the metric only: tap (release without a move), blink (hide the preview for one frame
+// Flash controls, for proving the metric only: tap (release without a move), blinkN (hide the preview for N frames
 // after the release), reload (reload the preview frame mid-settle). EDIT_BENCH_MARKER=0 captures without the marker.
 const CONTROL = process.env.EDIT_BENCH_CONTROL;
 const CAPTURE = { marker: process.env.EDIT_BENCH_MARKER !== "0" };
@@ -514,7 +514,11 @@ function smoothness(rec) {
 const CONTROL_PAGE = `data:text/html,<body style="margin:0;background:%23202020"><div id="box"
   style="position:absolute;left:600px;top:300px;width:240px;height:160px;background:%23f0c020"></div>`;
 
-/** The case's drag schedule and per-frame reads on a blank page in the same Chrome: the machine's own frame drops. */
+/**
+ * The case's drag schedule and per-frame reads on a blank page in the same Chrome: the machine's own frame drops.
+ * Then 1 s of screencast there: the capture coverage the machine reaches right now.
+ */
+// fallow-ignore-next-line complexity
 async function controlDrag(browser, gesture) {
   const context = await browser.createBrowserContext();
   try {
@@ -525,6 +529,7 @@ async function controlDrag(browser, gesture) {
     const box = await page.$("#box");
     const ctx = { page, handles: { target: box, root: box } };
     const read = () => readQuads(ctx);
+    let smooth;
     if (gesture === "nudge") {
       await recording(page, true);
       for (let i = 1; i < NUDGES; i++) {
@@ -532,21 +537,24 @@ async function controlDrag(browser, gesture) {
         await nextFrame(page);
       }
       await nextFrame(page, 2);
-      return smoothness(await recording(page, false));
-    }
-    await page.mouse.move(700, 380);
-    await page.mouse.down();
-    await nextFrame(page);
-    await read();
-    await recording(page, true);
-    for (let i = 1; i <= STEPS; i++) {
-      await page.mouse.move(700 + (MOVE_BY[0] * i) / STEPS, 380 + (MOVE_BY[1] * i) / STEPS);
+      smooth = smoothness(await recording(page, false));
+    } else {
+      await page.mouse.move(700, 380);
+      await page.mouse.down();
       await nextFrame(page);
       await read();
+      await recording(page, true);
+      for (let i = 1; i <= STEPS; i++) {
+        await page.mouse.move(700 + (MOVE_BY[0] * i) / STEPS, 380 + (MOVE_BY[1] * i) / STEPS);
+        await nextFrame(page);
+        await read();
+      }
+      smooth = smoothness(await recording(page, false));
+      await page.mouse.up();
     }
-    const smooth = smoothness(await recording(page, false));
-    await page.mouse.up();
-    return smooth;
+    const capture = await startCapture(page, CAPTURE);
+    await sleep(1000);
+    return { smooth, capture: await capture.stop() };
   } finally {
     await context.close().catch(() => undefined);
   }
@@ -626,14 +634,17 @@ async function nudgeGesture(ctx, pre) {
 
 /** The positive flash controls, started right after the committing input. */
 function injectControl(page) {
-  if (CONTROL === "blink")
-    return page.evaluate(() =>
-      requestAnimationFrame(() => {
-        const s = document.querySelector('[data-testid="preview-zoom-stage"]').style;
-        s.opacity = "0";
-        requestAnimationFrame(() => (s.opacity = ""));
-      }),
-    );
+  const blink = /^blink(\d+)$/.exec(CONTROL ?? "");
+  if (blink)
+    return page.evaluate((frames) => {
+      const s = document.querySelector('[data-testid="preview-zoom-stage"]').style;
+      const hide = (left) =>
+        requestAnimationFrame(() => {
+          s.opacity = left ? "0" : "";
+          if (left) hide(left - 1);
+        });
+      hide(frames);
+    }, Number(blink[1]));
   if (CONTROL === "reload")
     return page.evaluate(async () => {
       await new Promise((r) => setTimeout(r, 100));
@@ -648,7 +659,7 @@ function injectControl(page) {
 /** One case, end to end, in a fresh browser context against a Studio already serving `dir`. */
 // fallow-ignore-next-line complexity
 export async function runCase({ browser, spec, dir, files, url, evidence }) {
-  const control = await controlDrag(browser, spec.gesture);
+  const { smooth: control, capture: controlCapture } = await controlDrag(browser, spec.gesture);
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
   const ctx = { page, dir, files, handles: null };
@@ -675,7 +686,12 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
         ? await nudgeGesture(ctx, pre)
         : await pointerGesture(ctx, spec.gesture, pre);
     // Flash windows: each action to its settle is screencast, untraced; the drag's trace has already stopped.
-    const flash = { regions: await panes(page), tolPx: perimeterPx(pre), windows: {} };
+    const flash = {
+      regions: await panes(page),
+      tolPx: perimeterPx(pre),
+      windows: {},
+      control: controlCapture,
+    };
     let capture = await startCapture(page, CAPTURE);
     const { errors, lastQuad } = await drive.release();
     await injectControl(page);

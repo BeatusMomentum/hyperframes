@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify } from "./flash.mjs";
+import { classify, unwrap } from "./flash.mjs";
 
 const TOL = 10;
 // One row per painted frame: its marker counter and [vsBefore, vsAfter] differing pixels per pane.
@@ -76,5 +76,14 @@ describe("classify", () => {
       [4, 6],
     ]);
     expect(w.paint).toBeNull();
+  });
+});
+
+describe("unwrap", () => {
+  it("restores counters past the marker's 1024 states, including a frame from just before the window", () => {
+    const codes = [1028 % 1024, 1022, 1030 % 1024, 1034 % 1024, 1100 % 1024].map((counter) => ({
+      counter,
+    }));
+    expect(unwrap(codes, 1030).map((r) => r.counter)).toEqual([1028, 1022, 1030, 1034, 1100]);
   });
 });
