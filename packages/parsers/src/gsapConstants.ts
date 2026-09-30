@@ -69,6 +69,24 @@ for (const [group, props] of Object.entries(PROPERTY_GROUPS) as [
   for (const p of props) PROP_TO_GROUP.set(p, group);
 }
 
+type PositionWriteLike = {
+  propertyGroup?: string;
+  properties?: Record<string, unknown>;
+  fromProperties?: Record<string, unknown>;
+  keyframes?: { keyframes: Array<{ properties: Record<string, unknown> }> };
+};
+
+/** A pure position write that moves x or y; an xPercent/yPercent centring set is not one. */
+export function isPositionXYWrite(a: PositionWriteLike): boolean {
+  const xy = (props?: Record<string, unknown>) => !!props && ("x" in props || "y" in props);
+  return (
+    a.propertyGroup === "position" &&
+    (xy(a.properties) ||
+      xy(a.fromProperties) ||
+      !!a.keyframes?.keyframes.some((k) => xy(k.properties)))
+  );
+}
+
 export function classifyPropertyGroup(prop: string): PropertyGroupName {
   return PROP_TO_GROUP.get(prop) ?? "other";
 }

@@ -9,6 +9,7 @@
  * easing, or seek position.
  */
 import type { GsapAnimation, PropertyGroupName } from "@hyperframes/core/gsap-parser";
+import { isPositionXYWrite } from "@hyperframes/parsers/gsap-constants";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { usePlayerStore } from "../player/store/playerStore";
 
@@ -57,8 +58,6 @@ export const POSITION_CHANNELS: string[] = [
   "translateY",
 ];
 const POSITION_CHANNEL_SET = new Set<string>(POSITION_CHANNELS);
-const XY_CHANNEL_SET = new Set(["x", "y"]);
-const writesXY = (a: GsapAnimation) => animationWritesAnyProperty(a, XY_CHANNEL_SET);
 
 const ROTATION_CHANNELS: string[] = ["rotation", "rotationX", "rotationY", "rotationZ"];
 const ROTATION_CHANNEL_SET = new Set<string>(ROTATION_CHANNELS);
@@ -258,7 +257,7 @@ export async function tryGsapDragIntercept(
   // the live keyframed/real tween if present (else any), strip the rest, so the
   // commit below updates ONE write instead of fighting duplicates.
   let workingAnimations = animations;
-  const isPosWrite = (a: GsapAnimation) => a.targetSelector === selector && writesXY(a);
+  const isPosWrite = (a: GsapAnimation) => a.targetSelector === selector && isPositionXYWrite(a);
   if (animations.filter(isPosWrite).length > 1 && fetchFallbackAnimations) {
     const fresh = await fetchFallbackAnimations();
     const dupes = fresh.filter(isPosWrite);
@@ -343,7 +342,7 @@ export async function tryGsapDragIntercept(
     const fresh = await fetchFallbackAnimations();
     const freshMatch = fresh.some((a) => a.id === posAnim!.id)
       ? undefined
-      : fresh.find((a) => a.targetSelector === posAnim!.targetSelector && writesXY(a));
+      : fresh.find((a) => a.targetSelector === posAnim!.targetSelector && isPositionXYWrite(a));
     if (freshMatch) posAnim = freshMatch;
   }
 
