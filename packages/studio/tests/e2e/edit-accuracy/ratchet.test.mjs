@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accurate, gate, regressions } from "./ratchet.mjs";
+import { accurate, flipped, gate } from "./ratchet.mjs";
 
 const good = {
   tracking: 0.1,
@@ -39,6 +39,7 @@ describe("accurate", () => {
     expect(accurate({ ...good, drop: 0.51 })).toBe(false);
     expect(accurate({ ...good, pressJump: 0.51 })).toBe(false);
     expect(accurate({ ...good, unsettled: ["committed"] })).toBe(false);
+    expect(accurate({ ...good, render: null, renderError: true })).toBe(false);
     expect(accurate({ ...good, undo: false })).toBe(false);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);
@@ -48,8 +49,21 @@ describe("accurate", () => {
 describe("gate", () => {
   const base = baseline({ a: good, b: good });
 
-  it("lists only cases that passed on base and fail here as regressions", () => {
-    expect(regressions(base, [run("a", 3), run("b"), run("c", 3)])).toEqual(["a"]);
+  it("re-runs every case whose verdict differs from the base branch, in either direction", () => {
+    const mixed = baseline({ a: good, b: good, d: { ...good, drop: 9 } });
+    expect(flipped(mixed, [run("a", 3), run("b"), run("c", 3), run("d")])).toEqual(["a", "d"]);
+  });
+
+  it("banks a newly passing case only when it passes 2 of 3 runs, and lists a lucky pass as unstable", () => {
+    const before = baseline({ a: good, b: { ...good, drop: 9 } });
+    const lucky = gate(before, before, [run("a"), run("b"), run("b", 9), run("b", 9)]);
+    expect(lucky.newlyPassing).toEqual([]);
+    expect(lucky.unbanked).toEqual([]);
+    expect(lucky.unstable.map((u) => u.id)).toEqual(["b"]);
+    expect(lucky.ok).toBe(true);
+    const real = gate(before, before, [run("a"), run("b"), run("b"), run("b", 9)]);
+    expect(real.unbanked).toEqual(["b"]);
+    expect(real.ok).toBe(false);
   });
 
   it("fails a regression that fails 2 of 3 runs", () => {

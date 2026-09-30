@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-/**
- * Edit accuracy gate against the base branch's baseline.json. Smoothness is reported, never gated.
- *   node ratchet.mjs regressions <base baseline.json> <results.json>    ids that passed on base and failed here
- *   node ratchet.mjs gate <base baseline.json> <head baseline.json> <out dir> <results.json>...
- * A case fails only if it fails 2 of its 3 runs; one whose runs disagree is listed as unstable.
- */
+// Edit accuracy gate against the base branch's baseline.json; smoothness is reported, never gated.
+// `flipped <base> <results>` lists cases to re-run twice; `gate <base> <head> <out> <results...>` judges 2 of 3.
+// A case whose runs disagree is listed as unstable.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,16 +16,18 @@ export const accurate = (e) =>
   Boolean(e) &&
   !e.error &&
   !e.unsettled &&
+  !e.renderError &&
   e.undo === true &&
   GATED_PX.every((m) => !(e[m] > LIMIT_PX));
 
-export const regressions = (base, results) =>
-  results.filter((r) => accurate(base.cases[r.id]) && !accurate(entry(r))).map((r) => r.id);
+/** Cases whose verdict here differs from the base branch, either way: each is re-run twice before the gate. */
+export const flipped = (base, results) =>
+  results.filter((r) => accurate(base.cases[r.id]) !== accurate(entry(r))).map((r) => r.id);
 
 const summary = (e) =>
   e.error ? "error" : `${GATED_PX.map((m) => `${m} ${e[m] ?? "-"}`).join(", ")}, undo ${e.undo}`;
 
-/** Every run of every case: each shard's run plus the re-runs of its regressions. */
+/** Every run of every case: each shard's run plus the re-runs of the cases it flipped. */
 // fallow-ignore-next-line complexity
 export function gate(base, head, runs) {
   const seen = new Map();
@@ -101,20 +100,14 @@ export function comment(g) {
   ].join("\n");
 }
 
+// Strict: CI writes {"cases":{}} for a missing base, so a file that does not parse is broken, not empty.
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
-const readBaseline = (path) => {
-  try {
-    return readJson(path);
-  } catch {
-    return { cases: {} };
-  }
-};
 
 // fallow-ignore-next-line complexity
 function main([command, basePath, ...rest]) {
-  const base = readBaseline(basePath);
-  if (command === "regressions") {
-    for (const id of regressions(base, readJson(rest[0]).cases)) console.log(id);
+  const base = readJson(basePath);
+  if (command === "flipped") {
+    for (const id of flipped(base, readJson(rest[0]).cases)) console.log(id);
     return 0;
   }
   const [headPath, out, ...resultPaths] = rest;
@@ -122,7 +115,7 @@ function main([command, basePath, ...rest]) {
   if (!runs.length) throw new Error("no results.json from any shard");
   const g = gate(
     base,
-    readBaseline(headPath),
+    readJson(headPath),
     runs.flatMap((r) => r.cases),
   );
   mkdirSync(out, { recursive: true });

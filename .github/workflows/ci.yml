@@ -980,15 +980,15 @@ jobs:
             echo '{"cases":{}}' > /tmp/base-edit-accuracy.json
             echo "The base branch has no edit accuracy baseline yet"
           fi
-      - name: Run this shard, then re-run twice each case that passes on the base branch and failed
+      - name: Run this shard, then re-run twice each case whose verdict differs from the base branch
         run: |
           set -euo pipefail
           bench() { bun run --cwd packages/studio test:edit-accuracy -- --grid full --jobs 2 "$@"; }
           bench --shard "${{ matrix.shard }}/8" --out /tmp/edit-accuracy/run1
-          mapfile -t REGRESSED < <(node packages/studio/tests/e2e/edit-accuracy/ratchet.mjs regressions \
+          mapfile -t FLIPPED < <(node packages/studio/tests/e2e/edit-accuracy/ratchet.mjs flipped \
             /tmp/base-edit-accuracy.json /tmp/edit-accuracy/run1/results.json)
-          if (( ${#REGRESSED[@]} > 0 )); then
-            FILTER="^($(IFS='|'; echo "${REGRESSED[*]}"))$"
+          if (( ${#FLIPPED[@]} > 0 )); then
+            FILTER="^($(IFS='|'; echo "${FLIPPED[*]}"))$"
             for run in 2 3; do bench --filter "$FILTER" --rerun --out "/tmp/edit-accuracy/run${run}"; done
           fi
       - name: Upload shard evidence

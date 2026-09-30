@@ -158,6 +158,7 @@ function table(summary, meta, results) {
 }
 
 /** One case as baseline.json holds it; the gate reads the same projection. */
+// fallow-ignore-next-line complexity
 export function entry(r) {
   if (r.error) return { pass: false, error: true };
   return {
