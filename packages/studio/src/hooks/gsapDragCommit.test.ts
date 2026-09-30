@@ -411,7 +411,7 @@ describe("commitStaticGsapSize", () => {
     expect(commits[0].mutation).toEqual({
       type: "update-properties",
       animationId: "#puck-a-size-set",
-      properties: { width: 300.4, height: 199.6 },
+      properties: { width: 300, height: 200 },
     });
     expect(commits.map((commit) => commit.mutation.type)).not.toContain("delete");
     expect(commits.map((commit) => commit.mutation.type)).not.toContain("add");

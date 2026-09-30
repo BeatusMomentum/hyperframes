@@ -10,7 +10,7 @@ import {
 } from "../components/editor/manualEditsTypes";
 import { usePlayerStore } from "../player/store/playerStore";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
-import { roundTo3 } from "../utils/rounding";
+import { roundTo3, roundToLayoutPx } from "../utils/rounding";
 import { computeElementPercentage, writeTargetSelector } from "./gsapShared";
 import { computeDraggedGsapPosition } from "./draggedGsapPosition";
 import type { RuntimeTweenChange } from "./gsapRuntimePatch";
@@ -289,8 +289,8 @@ export async function commitStaticGsapSize(
   existingSet: GsapAnimation | null,
   callbacks: GsapDragCommitCallbacks,
 ): Promise<void> {
-  const width = roundTo3(size.width);
-  const height = roundTo3(size.height);
+  const width = roundToLayoutPx(size.width);
+  const height = roundToLayoutPx(size.height);
   if (existingSet) {
     await callbacks.commitMutation(
       selection,
@@ -320,7 +320,7 @@ export async function commitStaticGsapSize(
 
 /** Rounded `n` when it's a positive finite number, else `fallback`. */
 function positiveOr(n: number, fallback: number): number {
-  return Number.isFinite(n) && n > 0 ? roundTo3(n) : fallback;
+  return Number.isFinite(n) && n > 0 ? roundToLayoutPx(n) : fallback;
 }
 
 /**
@@ -366,8 +366,8 @@ export async function commitKeyframedSizeFromResize(
   const td = resolveTweenDuration(animatedTween);
   if (!(td > 0)) return false;
 
-  const newW = roundTo3(size.width);
-  const newH = roundTo3(size.height);
+  const newW = roundToLayoutPx(size.width);
+  const newH = roundToLayoutPx(size.height);
   const prior = resolvePriorSize(sizeSet, selection.element, newW, newH);
 
   const ct = usePlayerStore.getState().currentTime;

@@ -146,7 +146,7 @@ describe("studio manual edits", () => {
     expect(card.style.getPropertyValue("rotate")).toBe(`var(${STUDIO_ROTATION_PROP}, 0deg)`);
   });
 
-  it("keeps sub-pixel offsets and box sizes", () => {
+  it("keeps sub-pixel offsets, and box sizes on whole px so GSAP reads a -50% centring exactly", () => {
     const document = createDocument(`<div id="card" style="width: 160px; height: 90px"></div>`);
     const card = document.getElementById("card") as HTMLElement;
     mockBoundingRect(card, 160, 90);
@@ -156,8 +156,8 @@ describe("studio manual edits", () => {
 
     expect(card.style.getPropertyValue(STUDIO_OFFSET_X_PROP)).toBe("14.25px");
     expect(card.style.getPropertyValue(STUDIO_OFFSET_Y_PROP)).toBe("-8.5px");
-    expect(card.style.getPropertyValue("width")).toBe("240.4px");
-    expect(card.style.getPropertyValue("height")).toBe("135.6px");
+    expect(card.style.getPropertyValue("width")).toBe("240px");
+    expect(card.style.getPropertyValue("height")).toBe("136px");
   });
 
   it("applies box sizes through CSS dimensions and flex sizing overrides", () => {

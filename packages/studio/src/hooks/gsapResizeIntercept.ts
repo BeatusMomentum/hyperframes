@@ -31,7 +31,7 @@ import { commitWholePropertyOffset } from "./gsapWholePropertyOffsetCommit";
 import { commitGsapPositionFromDrag } from "./gsapDragPositionCommit";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
 import { isInstantHold, selectorFromSelection, writeTargetSelector } from "./gsapShared";
-import { roundTo3 } from "../utils/rounding";
+import { roundTo3, roundToLayoutPx } from "../utils/rounding";
 import { resolveGroupTween } from "./gsapRuntimeBridge";
 import { logResize } from "../utils/resizeDebug";
 import { animationWritesAnyProperty, type GsapEditOutcome } from "./gsapEditOutcome";
@@ -287,8 +287,8 @@ export async function tryGsapResizeIntercept(
     }
   } else {
     resizeProps = {
-      width: roundTo3(size.width),
-      height: roundTo3(size.height),
+      width: roundToLayoutPx(size.width),
+      height: roundToLayoutPx(size.height),
     };
   }
   // Finalize a scale-route commit: tear down the gesture's inline width/height
