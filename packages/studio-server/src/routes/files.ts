@@ -97,7 +97,6 @@ import {
 } from "../helpers/compositionInsertion.js";
 import { resolveGsapWriter } from "./gsapMutationCapabilities.js";
 import { requestSubPath } from "../helpers/requestSubPath.js";
-import { insertBeforeCloseTag } from "@hyperframes/core/compiler/html-document";
 
 // ── Server cutover flag ─────────────────────────────────────────────────────
 
@@ -681,7 +680,7 @@ function extractGsapScriptBlock(html: string): {
   const { document } = parseHTML(ensureHfIds(html));
   const scripts = [
     ...document.querySelectorAll("script:not([src])"),
-    ...Array.from(document.querySelectorAll("template")).flatMap((tmpl) =>
+    ...templatesIn(document).flatMap((tmpl) =>
       Array.from(tmpl.querySelectorAll("script:not([src])")),
     ),
   ];
@@ -1274,12 +1273,42 @@ function containsRawGsapExpression(value: unknown): boolean {
   return Object.values(value).some(containsRawGsapExpression);
 }
 
-function insertGsapBootstrap(html: string, bootstrap: string): string {
-  const templateClose = html.indexOf("</template>", html.search(/<template[\s>]/));
-  if (templateClose > 0) {
-    return `${html.slice(0, templateClose)}${bootstrap}\n${html.slice(templateClose)}`;
+/** Every template, nested ones too: linkedom hides a template's children from queries above it. */
+function templatesIn(root: ParentNode): Element[] {
+  return Array.from(root.querySelectorAll("template")).flatMap((t) => [t, ...templatesIn(t)]);
+}
+
+function queryIn(root: ParentNode, selector: string): Element | null {
+  try {
+    return root.querySelector(selector);
+  } catch {
+    return null;
   }
-  return insertBeforeCloseTag(html, "body", `${bootstrap}\n`) ?? `${html}\n${bootstrap}`;
+}
+
+// Where the loader runs the target's own composition: the innermost template holding it, else the body.
+function bootstrapScope(document: Document, selector: string): Element {
+  const body = document.body ?? document.documentElement;
+  if (queryIn(document, selector)) return body;
+  const templates = templatesIn(document);
+  const owner = [...templates].reverse().find((t) => queryIn(t, selector));
+  if (owner) return owner;
+  return document.querySelector("[data-composition-id]") || !templates[0] ? body : templates[0];
+}
+
+function insertGsapBootstrap(
+  html: string,
+  selector: string,
+  bootstrapFor: (compId: string) => string,
+): string {
+  const { document } = parseHTML(ensureHfIds(html));
+  const scope = bootstrapScope(document, selector);
+  const composition =
+    queryIn(scope, selector)?.closest("[data-composition-id]") ??
+    scope.querySelector("[data-composition-id]");
+  const compId = composition?.getAttribute("data-composition-id") ?? "main";
+  scope.insertAdjacentHTML("beforeend", `${bootstrapFor(compId)}\n`);
+  return document.toString();
 }
 
 async function prepareGsapMutationScript(
@@ -1298,17 +1327,17 @@ async function prepareGsapMutationScript(
   let html = beforeHtml;
   let block = extractGsapScriptBlock(html);
   if (!block && (firstMutation.type === "add" || firstMutation.type === "add-with-keyframes")) {
-    const compId = html.match(/data-composition-id="([^"]+)"/)?.[1] ?? "main";
     const { GSAP_CDN } = await import("@hyperframes/core");
-    const bootstrap = [
-      `<script src="${GSAP_CDN}"></script>`,
-      "<script>",
-      "window.__timelines = window.__timelines || {};",
-      "const tl = gsap.timeline({ paused: true });",
-      `window.__timelines["${compId}"] = tl;`,
-      "</script>",
-    ].join("\n");
-    html = insertGsapBootstrap(html, bootstrap);
+    const bootstrap = (compId: string) =>
+      [
+        `<script src="${GSAP_CDN}"></script>`,
+        "<script>",
+        "window.__timelines = window.__timelines || {};",
+        "const tl = gsap.timeline({ paused: true });",
+        `window.__timelines["${compId}"] = tl;`,
+        "</script>",
+      ].join("\n");
+    html = insertGsapBootstrap(html, firstMutation.targetSelector, bootstrap);
     block = extractGsapScriptBlock(html);
   }
   if (

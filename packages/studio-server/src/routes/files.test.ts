@@ -1743,6 +1743,53 @@ const tl = gsap.timeline({ paused: true });
     expect(html.indexOf("</template>")).toBeGreaterThan(html.lastIndexOf("</script>"));
   });
 
+  async function firstSet(file: string, html: string, selector: string) {
+    const projectDir = createProjectDir();
+    const app = new Hono();
+    registerFileRoutes(app, createAdapter(projectDir));
+    writeHtml(projectDir, file, html);
+    const res = await app.request(`http://localhost/projects/demo/gsap-mutations/${file}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "add",
+        targetSelector: selector,
+        method: "set",
+        position: 0,
+        properties: { x: 40, y: 30 },
+        global: true,
+      }),
+    });
+    return { status: res.status, html: readFileSync(join(projectDir, file), "utf-8") };
+  }
+
+  it("a first write into a root that holds an inline template composition lands in the root body", async () => {
+    const { status, html } = await firstSet(
+      "index.html",
+      '<!DOCTYPE html><html><body><div data-composition-id="main"><div id="target"></div></div>' +
+        '<template id="intro-template"><div data-composition-id="intro"><div id="title"></div></div></template>' +
+        "</body></html>",
+      "#target",
+    );
+    expect(status).toBe(200);
+    expect(html.indexOf('gsap.set("#target"')).toBeGreaterThan(html.indexOf("</template>"));
+    expect(html).toContain('window.__timelines["main"] = tl;');
+  });
+
+  it("a first write into a sub-composition with a nested template lands in its own template", async () => {
+    const { status, html } = await firstSet(
+      "sub.html",
+      '<template id="sub-template"><div data-composition-id="sub"><div id="card"></div>' +
+        '<template id="inner-template"><div data-composition-id="inner"></div></template></div></template>',
+      "#card",
+    );
+    expect(status).toBe(200);
+    const set = html.indexOf('gsap.set("#card"');
+    expect(set).toBeGreaterThan(html.indexOf("</template>"));
+    expect(set).toBeLessThan(html.lastIndexOf("</template>"));
+    expect(html).toContain('window.__timelines["sub"] = tl;');
+  });
+
   it("consolidate-position-writes leaves exactly one position write per selector", async () => {
     const projectDir = createProjectDir();
     const CORRUPTED = `<!DOCTYPE html><html><body><script data-hyperframes-gsap>
