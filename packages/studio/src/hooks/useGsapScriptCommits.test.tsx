@@ -36,7 +36,7 @@ import { applyPreviewSync, useGsapScriptCommits } from "./useGsapScriptCommits";
 const FAKE_IFRAME = {} as HTMLIFrameElement;
 
 function result(over: Partial<MutationResult> = {}): MutationResult {
-  return { ok: true, scriptText: "tl.set('#a',{})", ...over };
+  return { ok: true, scriptText: "tl.set('#a',{})", after: "AFTER", ...over };
 }
 
 /** The canonical drag commit options every path-decision test drives with. */
@@ -52,7 +52,7 @@ function syncDragPreview(res: MutationResult, reloadPreview: () => void) {
   applyPreviewSync(FAKE_IFRAME, res, dragOptions(), reloadPreview);
 }
 
-function expectSoftReloadedWith(onAsyncFailure: unknown, authoredHtml: string | undefined) {
+function expectSoftReloadedWith(onAsyncFailure: unknown, authoredHtml: string) {
   expect(applySoftReload).toHaveBeenCalledWith(FAKE_IFRAME, "SCRIPT", {
     onAsyncFailure,
     currentTimeOverride: 0,
@@ -235,7 +235,7 @@ describe("applyPreviewSync", () => {
 
     // reloadPreview is wired as onAsyncFailure (3rd arg) so a MotionPath-plugin
     // CDN load failure escalates to a full reload — but it is NOT called eagerly.
-    expectSoftReloadedWith(reloadPreview, undefined);
+    expectSoftReloadedWith(reloadPreview, "AFTER");
     expect(reloadPreview).not.toHaveBeenCalled();
     // A successful instant patch is the fast path; here it missed → fallback event.
     expect(trackStudioEvent).toHaveBeenCalledWith(
@@ -244,46 +244,40 @@ describe("applyPreviewSync", () => {
     );
   });
 
-  it('instantPatch + patch fails + soft reload "verify-failed": transient, does NOT escalate (U4)', () => {
+  // U4: "verify-failed" is the transient empty-timeline window (the live state is right, no escalation);
+  // "cannot-soft-reload" is structural (the preview is stale), so it reloads.
+  it.each([
+    { outcome: "verify-failed", reloads: 0, escalated: false },
+    { outcome: "cannot-soft-reload", reloads: 1, escalated: true },
+  ])("instantPatch + patch fails + soft reload $outcome: $reloads full reload(s)", (c) => {
     patchRuntimeTweenInPlace.mockReturnValue(false);
-    applySoftReload.mockReturnValue("verify-failed");
+    applySoftReload.mockReturnValue(c.outcome);
     const reloadPreview = vi.fn();
 
     syncDragPreview(result({ scriptText: "SCRIPT" }), reloadPreview);
 
-    // U4: "verify-failed" is the TRANSIENT empty-timeline window — the live state
-    // is correct, so we must NOT escalate to a full reload.
-    expectSoftReloadedWith(reloadPreview, undefined);
-    expect(reloadPreview).not.toHaveBeenCalled();
-    // Telemetry records the suppressed transient (escalated: false).
+    expectSoftReloadedWith(reloadPreview, "AFTER");
+    expect(reloadPreview).toHaveBeenCalledTimes(c.reloads);
     expect(trackStudioEvent).toHaveBeenCalledWith(
       "gsap_soft_reload_outcome",
       expect.objectContaining({
         origin: "preview_sync",
-        result: "verify-failed",
-        escalated: false,
+        result: c.outcome,
+        escalated: c.escalated,
       }),
     );
   });
 
-  it('instantPatch + patch fails + soft reload "cannot-soft-reload": escalates to full reload', () => {
-    patchRuntimeTweenInPlace.mockReturnValue(false);
-    applySoftReload.mockReturnValue("cannot-soft-reload");
+  it("reloads the preview when the result carries no written file to restore from", () => {
     const reloadPreview = vi.fn();
-
-    syncDragPreview(result({ scriptText: "SCRIPT" }), reloadPreview);
-
-    // Structural failure: the preview is genuinely stale/broken → full reload.
-    expectSoftReloadedWith(reloadPreview, undefined);
-    expect(reloadPreview).toHaveBeenCalledTimes(1);
-    expect(trackStudioEvent).toHaveBeenCalledWith(
-      "gsap_soft_reload_outcome",
-      expect.objectContaining({
-        origin: "preview_sync",
-        result: "cannot-soft-reload",
-        escalated: true,
-      }),
+    applyPreviewSync(
+      FAKE_IFRAME,
+      result({ scriptText: "SCRIPT", after: undefined }),
+      { label: "drag", softReload: true },
+      reloadPreview,
     );
+    expect(applySoftReload).not.toHaveBeenCalled();
+    expect(reloadPreview).toHaveBeenCalledTimes(1);
   });
 
   it("no instantPatch + softReload + scriptText: soft reloads, passing onAsyncFailure", () => {
@@ -298,14 +292,17 @@ describe("applyPreviewSync", () => {
     );
 
     expect(patchRuntimeTweenInPlace).not.toHaveBeenCalled();
-    expectSoftReloadedWith(reloadPreview, undefined);
+    expectSoftReloadedWith(reloadPreview, "AFTER");
     expect(reloadPreview).not.toHaveBeenCalled();
     // "applied" emits no telemetry (only the failure paths do).
     expect(trackStudioEvent).not.toHaveBeenCalled();
   });
 
-  it('no instantPatch + softReload "verify-failed": transient, does NOT escalate (U4)', () => {
-    applySoftReload.mockReturnValue("verify-failed");
+  it.each([
+    { outcome: "verify-failed", reloads: 0, escalated: false },
+    { outcome: "cannot-soft-reload", reloads: 1, escalated: true },
+  ])("no instantPatch + softReload $outcome: $reloads full reload(s)", (c) => {
+    applySoftReload.mockReturnValue(c.outcome);
     const reloadPreview = vi.fn();
 
     applyPreviewSync(
@@ -315,31 +312,11 @@ describe("applyPreviewSync", () => {
       reloadPreview,
     );
 
-    // onAsyncFailure is wired, but the transient result does not trigger it.
-    expectSoftReloadedWith(reloadPreview, undefined);
-    expect(reloadPreview).not.toHaveBeenCalled();
+    expectSoftReloadedWith(reloadPreview, "AFTER");
+    expect(reloadPreview).toHaveBeenCalledTimes(c.reloads);
     expect(trackStudioEvent).toHaveBeenCalledWith(
       "gsap_soft_reload_outcome",
-      expect.objectContaining({ result: "verify-failed", escalated: false }),
-    );
-  });
-
-  it('no instantPatch + softReload "cannot-soft-reload": escalates to full reload', () => {
-    applySoftReload.mockReturnValue("cannot-soft-reload");
-    const reloadPreview = vi.fn();
-
-    applyPreviewSync(
-      FAKE_IFRAME,
-      result({ scriptText: "SCRIPT" }),
-      { label: "x", softReload: true },
-      reloadPreview,
-    );
-
-    expectSoftReloadedWith(reloadPreview, undefined);
-    expect(reloadPreview).toHaveBeenCalledTimes(1);
-    expect(trackStudioEvent).toHaveBeenCalledWith(
-      "gsap_soft_reload_outcome",
-      expect.objectContaining({ result: "cannot-soft-reload", escalated: true }),
+      expect.objectContaining({ result: c.outcome, escalated: c.escalated }),
     );
   });
 
