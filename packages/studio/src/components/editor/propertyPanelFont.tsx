@@ -146,14 +146,23 @@ function loadFontLists(): void {
     fetchFontList("/api/fonts"),
     fetchFontList("/api/fonts/google"),
   ])
-    .then(([installed, google]) =>
-      runWhenInputIdle(() => {
-        const families = uniqueFontFamilies([...google, ...POPULAR_GOOGLE_FONT_FAMILIES]);
-        const googleKeys = new Set(families.map((f) => f.toLowerCase()));
+    .then(([installed, google]) => {
+      const names = [...google, ...POPULAR_GOOGLE_FONT_FAMILIES];
+      const families: string[] = [];
+      const googleKeys = new Set<string>();
+      let next = 0;
+      runWhenInputIdle((timeLeft) => {
+        while (next < names.length && timeLeft() > 0) {
+          const batch = names.slice(next, next + 200);
+          next += batch.length;
+          families.push(...uniqueFontFamilies(batch, googleKeys));
+        }
+        if (next < names.length) return false;
         fontLists = { loaded: true, google: families, googleKeys, installed };
         for (const listener of fontListListeners) listener();
-      }),
-    )
+        return true;
+      });
+    })
     .catch(() => {
       fontListsRequest = null;
     });
