@@ -245,6 +245,8 @@ export function StudioApp({ readOnlyPreview = false, readOnlyPreviewReason }: St
   });
   const appHotkeys = useAppHotkeys({
     handleTimelineElementsDelete: timelineEditing.handleTimelineElementsDelete,
+    handleLinkEdit: timelineEditing.handleLinkEdit,
+    handleTimelineElementDeleteOnly: timelineEditing.handleTimelineElementDeleteOnly,
     handleTimelineElementSplit: timelineEditing.handleTimelineElementSplit,
     handleDomEditElementDelete: domEditDeleteBridge,
     domEditSelectionRef: domEditSelectionBridgeRef,
