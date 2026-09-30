@@ -43,6 +43,8 @@ export interface StudioUiPreferences {
   agentToolsEnabled?: boolean;
   /** The dock's serialized panel tree; parsed by `parseDockLayout` on read. */
   dockLayout?: SerializedDockview;
+  linkedSelectionEnabled?: boolean;
+  syncIndicatorsVisible?: boolean;
 }
 
 const STUDIO_UI_PREFERENCES_KEY = "hf-studio-ui-preferences";
@@ -142,6 +144,12 @@ function readStorage(storage: Storage | null, key: string): StudioUiPreferences 
     }
     if (typeof parsed.agentToolsEnabled === "boolean") {
       preferences.agentToolsEnabled = parsed.agentToolsEnabled;
+    }
+    if (typeof parsed.linkedSelectionEnabled === "boolean") {
+      preferences.linkedSelectionEnabled = parsed.linkedSelectionEnabled;
+    }
+    if (typeof parsed.syncIndicatorsVisible === "boolean") {
+      preferences.syncIndicatorsVisible = parsed.syncIndicatorsVisible;
     }
     const dockLayout = parseDockLayout(parsed.dockLayout);
     if (dockLayout) preferences.dockLayout = dockLayout;
