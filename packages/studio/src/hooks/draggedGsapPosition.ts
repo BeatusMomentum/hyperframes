@@ -38,38 +38,65 @@ function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDecl
   }
 }
 
-// One `translate` axis as percent + px: a length, or the draft's `calc()`, which computed style keeps.
-function translateTerms(token: string) {
-  const terms = { pct: 0, px: 0, calc: token.startsWith("calc(") };
-  for (const [, op, num, unit] of token.matchAll(/([+-]?)\s*(-?[\d.]+(?:e[+-]?\d+)?)(%|px)/g)) {
-    const value = op === "-" ? -Number(num) : Number(num);
-    if (unit === "%") terms.pct += value;
-    else terms.px += value;
+const LENGTH = /^(-?[\d.]+(?:e[+-]?\d+)?)(px|%)$/;
+const DRAFT_CALC = /^calc\((-?[\d.]+(?:e[+-]?\d+)?)% ([+-]) (-?[\d.]+(?:e[+-]?\d+)?)px\)$/;
+
+// One `translate` axis as percent + px: a length, the draft's own `calc(P% ± Qpx)` (computed style
+// keeps it), else what the browser resolves it to (min(), clamp(), em, var()).
+function translateTerms(token: string, resolvedPx: () => number) {
+  const length = LENGTH.exec(token);
+  if (!token || length) {
+    const n = Number(length?.[1] ?? 0);
+    return length?.[2] === "%" ? { pct: n, px: 0, calc: false } : { pct: 0, px: n, calc: false };
   }
-  return terms;
+  const draft = DRAFT_CALC.exec(token);
+  if (!draft) return { pct: 0, px: resolvedPx(), calc: false };
+  return { pct: Number(draft[1]), px: Number(draft[3]) * (draft[2] === "-" ? -1 : 1), calc: true };
+}
+
+function resolvedTranslate(
+  element: HTMLElement,
+  view: Window & typeof globalThis,
+  tx: string,
+  ty: string,
+) {
+  const inline = element.style.transform;
+  element.style.transform = `translate(${tx || "0px"}, ${ty || "0px"})`;
+  const m = new view.DOMMatrix(view.getComputedStyle(element).transform);
+  element.style.transform = inline;
+  return { x: m.m41, y: m.m42 };
 }
 
 // GSAP keeps a -50% centring as xPercent, which scales with a resize. `kept` is what the stylesheet
 // transform goes on drawing under the draft: a transform that alone centres the box keeps its -50%.
-function foldedAxis(translate: string, fromTransform: number, size: number) {
+function foldedAxis(terms: ReturnType<typeof translateTerms>, fromTransform: number, size: number) {
   const half = Math.round(size / 2);
-  const kept =
-    fromTransform !== 0 && half === Math.round(-fromTransform)
-      ? { percent: -50, px: fromTransform + size / 2 }
-      : { percent: 0, px: fromTransform };
-  const { pct, px, calc } = translateTerms(translate);
-  const percent = pct + kept.percent;
-  if (calc && (percent === 0 || percent === -50)) return { value: px + kept.px, percent, kept };
-  const t = (pct * size) / 100 + px + fromTransform;
+  const keptPercent = fromTransform !== 0 && half === Math.round(-fromTransform) ? -50 : 0;
+  const kept = { percent: keptPercent, px: fromTransform - (keptPercent * size) / 100 };
+  const percent = terms.pct + kept.percent;
+  if (terms.calc && (percent === 0 || percent === -50)) {
+    return { value: terms.px + kept.px, percent, kept };
+  }
+  const t = (terms.pct * size) / 100 + terms.px + fromTransform;
   const centered = t !== 0 && half === Math.round(-t);
   return { value: centered ? t + size / 2 : t, percent: centered ? -50 : 0, kept };
 }
 
 function readCssFold(element: HTMLElement, view: Window & typeof globalThis) {
   const moved = foldedTranslation(view, view.getComputedStyle(element));
+  let resolved: { x: number; y: number } | undefined;
+  const px = () => (resolved ??= resolvedTranslate(element, view, moved.tx, moved.ty));
   return {
-    x: foldedAxis(moved.tx, moved.x, element.offsetWidth),
-    y: foldedAxis(moved.ty, moved.y, element.offsetHeight),
+    x: foldedAxis(
+      translateTerms(moved.tx, () => px().x),
+      moved.x,
+      element.offsetWidth,
+    ),
+    y: foldedAxis(
+      translateTerms(moved.ty, () => px().y),
+      moved.y,
+      element.offsetHeight,
+    ),
   };
 }
 
@@ -96,9 +123,13 @@ export function cssTranslateForGsapPosition(
   const view = element.ownerDocument.defaultView as GsapView | null;
   if (!view || typeof view.gsap?.getProperty === "function") return null;
   const { x: ax, y: ay } = readCssFold(element, view);
-  const axis = (a: typeof ax, v: number) =>
-    `calc(${a.percent - a.kept.percent}% + ${v - a.kept.px}px)`;
-  return (x, y) => `${axis(ax, x)} ${axis(ay, y)}`;
+  // The transform's share is re-read at each frame: a resize moves a rotated -50% with the size.
+  const axis = (a: typeof ax, v: number, fromTransform: number, size: number) =>
+    `calc(${a.percent - a.kept.percent}% + ${v - fromTransform + (a.kept.percent * size) / 100}px)`;
+  return (x, y) => {
+    const now = foldedTranslation(view, view.getComputedStyle(element));
+    return `${axis(ax, x, now.x, element.offsetWidth)} ${axis(ay, y, now.y, element.offsetHeight)}`;
+  };
 }
 
 /**
@@ -112,12 +143,20 @@ export function cssTranslateForGsapPosition(
  * Used by both the tweened commit and the static `set` commit / live preview, so
  * the preview and the committed value agree by construction.
  */
+export interface DraggedGsapPosition {
+  newX: number;
+  newY: number;
+  baseGsapX: number;
+  baseGsapY: number;
+  initialOffset: { x: number; y: number };
+}
+
 // fallow-ignore-next-line complexity
 export function computeDraggedGsapPosition(
   element: HTMLElement,
   studioOffset: { x: number; y: number },
   fallbackBase: { x: number; y: number },
-): { newX: number; newY: number; baseGsapX: number; baseGsapY: number } {
+): DraggedGsapPosition {
   const rotStyle = element.style.getPropertyValue("--hf-studio-rotation");
   const rotDeg = Number.parseFloat(rotStyle) || 0;
   const rad = (-rotDeg * Math.PI) / 180;
@@ -138,5 +177,11 @@ export function computeDraggedGsapPosition(
     newY: roundTo3(baseGsapY + adjY),
     baseGsapX,
     baseGsapY,
+    initialOffset: { x: origX, y: origY },
   };
 }
+
+// Read once, when the gesture hands its commit over: the commit's awaits must not see a later
+// gesture's `data-hf-drag-*` stamps.
+export const draggedFromOffset = (element: HTMLElement, offset: { x: number; y: number }) =>
+  computeDraggedGsapPosition(element, offset, readGsapPosition(element));

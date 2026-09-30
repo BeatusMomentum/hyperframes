@@ -3,6 +3,7 @@ import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { tryGsapDragIntercept, tryGsapRotationIntercept } from "./gsapRuntimeBridge";
 import { usePlayerStore } from "../player/store/playerStore";
+import { draggedFromOffset } from "./draggedGsapPosition";
 
 /**
  * Regression: `selectedGsapAnimations` (and the fetch fallback) is an async
@@ -68,7 +69,7 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
     const commitMutation = vi.fn();
     const result = await tryGsapDragIntercept(
       selection,
-      { x: 10, y: 10 },
+      draggedFromOffset(selection.element, { x: 10, y: 10 }),
       [helperTween],
       fakeIframe("puck-b", []),
       commitMutation,
@@ -88,7 +89,7 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
 
     const result = await tryGsapDragIntercept(
       selection,
-      { x: 25, y: -10 },
+      draggedFromOffset(selection.element, { x: 25, y: -10 }),
       [],
       fakeIframe("puck-b", [liveTween]),
       commitMutation,
@@ -109,7 +110,13 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
       id: undefined,
       selector: undefined,
     } as unknown as DomEditSelection;
-    const result = await tryGsapDragIntercept(selectorless, { x: 1, y: 1 }, [], null, vi.fn());
+    const result = await tryGsapDragIntercept(
+      selectorless,
+      draggedFromOffset(selectorless.element, { x: 1, y: 1 }),
+      [],
+      null,
+      vi.fn(),
+    );
     expect(result).toEqual({ status: "blocked", reason: "no-selector" });
   });
 
@@ -133,7 +140,7 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
 
     const handled = await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 30 },
+      draggedFromOffset(selection.element, { x: -50, y: 30 }),
       [stalePositionAnim],
       iframe,
       commitMutation,
@@ -172,7 +179,7 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
 
     const handled = await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 30 },
+      draggedFromOffset(selection.element, { x: -50, y: 30 }),
       [existingSet],
       iframe,
       commitMutation,
@@ -211,7 +218,7 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
 
     const handled = await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 30 },
+      draggedFromOffset(selection.element, { x: -50, y: 30 }),
       [degenerateHold],
       iframe,
       commitMutation,
@@ -237,7 +244,13 @@ describe("tryGsapDragIntercept — stale-parse guard (no resurrection after dele
     // is the stale-parse guard must NOT be the reason.
     const iframe = fakeIframe("puck-b", [liveTween]);
 
-    await tryGsapDragIntercept(selection, { x: -50, y: 30 }, [stalePositionAnim], iframe, vi.fn());
+    await tryGsapDragIntercept(
+      selection,
+      draggedFromOffset(selection.element, { x: -50, y: 30 }),
+      [stalePositionAnim],
+      iframe,
+      vi.fn(),
+    );
 
     const staleLogged = logSpy.mock.calls.some((c) => String(c[1] ?? "").includes("stale parse"));
     expect(staleLogged).toBe(false);
@@ -447,7 +460,7 @@ describe("tryGsapDragIntercept — autoKeyframeEnabled toggle (#1808)", () => {
     const commitMutation = vi.fn();
     const handled = await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 0 },
+      draggedFromOffset(selection.element, { x: -50, y: 0 }),
       [keyframedPositionAnim],
       fakeIframe("puck-b", []),
       commitMutation,
@@ -477,7 +490,7 @@ describe("tryGsapDragIntercept — autoKeyframeEnabled toggle (#1808)", () => {
     const commitMutation = vi.fn();
     await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 0 },
+      draggedFromOffset(selection.element, { x: -50, y: 0 }),
       animations,
       fakeIframe("puck-b", []),
       commitMutation,
@@ -535,7 +548,7 @@ describe("tryGsapDragIntercept — motion paths", () => {
     const commitMutation = vi.fn();
     const handled = await tryGsapDragIntercept(
       selection,
-      { x: -50, y: 30 },
+      draggedFromOffset(selection.element, { x: -50, y: 30 }),
       [motionPathAnim],
       fakeIframe("puck-b", [liveTween]),
       commitMutation,

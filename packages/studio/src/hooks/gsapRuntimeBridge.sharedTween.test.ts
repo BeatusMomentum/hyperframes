@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { tryGsapDragIntercept } from "./gsapRuntimeBridge";
+import { draggedFromOffset } from "./draggedGsapPosition";
 
 const WORDS = ["How", "we", "build", "videos", "at", "scale", "every", "day"];
 
@@ -45,7 +46,7 @@ describe("tryGsapDragIntercept: one word of a staggered phrase", () => {
     const commitMutation = vi.fn();
     const outcome = await tryGsapDragIntercept(
       wordSelection(words[0]!, 0),
-      { x: -40, y: 0 },
+      draggedFromOffset(words[0]!, { x: -40, y: 0 }),
       [staggerIn],
       null,
       commitMutation,
@@ -61,7 +62,7 @@ describe("tryGsapDragIntercept: one word of a staggered phrase", () => {
     const commitMutation = vi.fn();
     const outcome = await tryGsapDragIntercept(
       wordSelection(words[0]!, 0),
-      { x: -40, y: 0 },
+      draggedFromOffset(words[0]!, { x: -40, y: 0 }),
       [own as GsapAnimation],
       null,
       commitMutation,
@@ -87,7 +88,7 @@ describe("tryGsapDragIntercept: which tweens a word's drag may use", () => {
     const commitMutation = vi.fn();
     const outcome = await tryGsapDragIntercept(
       wordSelection(words[0]!, 0),
-      { x: -40, y: 0 },
+      draggedFromOffset(words[0]!, { x: -40, y: 0 }),
       [staggerIn, own],
       null,
       commitMutation,
@@ -108,7 +109,7 @@ describe("tryGsapDragIntercept: which tweens a word's drag may use", () => {
     const commitMutation = vi.fn();
     const outcome = await tryGsapDragIntercept(
       wordSelection(word, 2),
-      { x: -40, y: 0 },
+      draggedFromOffset(word, { x: -40, y: 0 }),
       [titleOnly as GsapAnimation],
       null,
       commitMutation,
@@ -142,7 +143,7 @@ describe("tryGsapDragIntercept: one drag is one undo step", () => {
     const commitMutation = vi.fn();
     await tryGsapDragIntercept(
       { id: "hero", selector: "#hero", element: hero } as unknown as DomEditSelection,
-      { x: 20, y: 0 },
+      draggedFromOffset(hero, { x: 20, y: 0 }),
       [mixed],
       null,
       commitMutation,

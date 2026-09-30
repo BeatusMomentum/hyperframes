@@ -25,6 +25,17 @@ import {
   findExistingPositionWrite,
 } from "./gsapDragCommit";
 import { promoteSetToKeyframes } from "./useEnableKeyframes";
+import type { DraggedGsapPosition } from "./draggedGsapPosition";
+const dragged = (
+  offset: { x: number; y: number },
+  base: { x: number; y: number },
+): DraggedGsapPosition => ({
+  newX: base.x + offset.x,
+  newY: base.y + offset.y,
+  baseGsapX: base.x,
+  baseGsapY: base.y,
+  initialOffset: { x: 0, y: 0 },
+});
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -138,8 +149,7 @@ describe("gsapDragCommit — new-tween targets", () => {
 
     await commitStaticGsapPosition(
       classOnlySelection(groups[2]!),
-      { x: 10, y: 10 },
-      { x: 0, y: 0 },
+      dragged({ x: 10, y: 10 }, { x: 0, y: 0 }),
       ".group",
       null,
       callbacks,
@@ -212,8 +222,7 @@ describe("gsapDragCommit — new-tween targets", () => {
 
     await commitStaticGsapPosition(
       classOnlySelection(groups[0]!),
-      { x: 5, y: 5 },
-      { x: 0, y: 0 },
+      dragged({ x: 5, y: 5 }, { x: 0, y: 0 }),
       ".group",
       corruptHold,
       callbacks,
@@ -239,8 +248,7 @@ describe("gsapDragCommit — retargeting an existing tween is left alone", () =>
     await commitWholePathOffset(
       classOnlySelection(groups[2]!),
       groupTween,
-      { x: 10, y: 0 },
-      { x: 0, y: 0 },
+      dragged({ x: 10, y: 0 }, { x: 0, y: 0 }),
       null,
       ".group",
       callbacks,
@@ -267,8 +275,7 @@ describe("a re-nudge updates its own previous write instead of stacking a second
 
     await commitStaticGsapPosition(
       selection,
-      { x: 10, y: 10 },
-      { x: 0, y: 0 },
+      dragged({ x: 10, y: 10 }, { x: 0, y: 0 }),
       ".group",
       null,
       first.callbacks,
@@ -288,8 +295,7 @@ gsap.set(${JSON.stringify(written)}, { x: 10, y: 10 });
     const second = recorder();
     await commitStaticGsapPosition(
       selection,
-      { x: 5, y: 0 },
-      { x: 10, y: 10 },
+      dragged({ x: 5, y: 0 }, { x: 10, y: 10 }),
       ".group",
       existing,
       second.callbacks,
@@ -344,8 +350,7 @@ describe("the written selector survives the real writer and parser", () => {
 
     await commitStaticGsapPosition(
       classOnlySelection(groups[2]!),
-      { x: 10, y: 10 },
-      { x: 0, y: 0 },
+      dragged({ x: 10, y: 10 }, { x: 0, y: 0 }),
       ".group",
       null,
       callbacks,

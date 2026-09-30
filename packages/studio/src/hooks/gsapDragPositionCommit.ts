@@ -4,7 +4,7 @@ import { usePlayerStore } from "../player/store/playerStore";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
 import { KEYFRAME_PCT_MATCH, resolveEditableTweenDuration } from "./gsapShared";
 import { roundTo3 } from "../utils/rounding";
-import { computeDraggedGsapPosition } from "./draggedGsapPosition";
+import type { DraggedGsapPosition } from "./draggedGsapPosition";
 import {
   type GsapDragCommitCallbacks,
   computeCurrentPercentage,
@@ -266,21 +266,14 @@ async function commitFlatViaKeyframes(
 export async function commitGsapPositionFromDrag(
   selection: DomEditSelection,
   anim: GsapAnimation,
-  studioOffset: { x: number; y: number },
-  gsapPos: { x: number; y: number },
+  dragged: DraggedGsapPosition,
   iframe: HTMLIFrameElement | null,
   selector: string,
   callbacks: GsapDragCommitCallbacks,
 ): Promise<void> {
   const el = selection.element;
-  // fallow-ignore-next-line code-duplication
-  const { newX, newY, baseGsapX, baseGsapY } = computeDraggedGsapPosition(
-    el,
-    studioOffset,
-    gsapPos,
-  );
-  const origX = Number.parseFloat(el.getAttribute("data-hf-drag-initial-offset-x") ?? "") || 0;
-  const origY = Number.parseFloat(el.getAttribute("data-hf-drag-initial-offset-y") ?? "") || 0;
+  const { newX, newY, baseGsapX, baseGsapY } = dragged;
+  const { x: origX, y: origY } = dragged.initialOffset;
   const restoreOffset = () => {
     el.style.setProperty("--hf-studio-offset-x", `${origX}px`);
     el.style.setProperty("--hf-studio-offset-y", `${origY}px`);

@@ -32,7 +32,7 @@ import { roundTo3 } from "../utils/rounding";
 import type { GsapDragCommitCallbacks } from "./gsapDragCommit";
 import { isInstantHold, selectorFromSelection, writeTargetSelector } from "./gsapShared";
 import { findGsapPositionAnimation, pickClosestToPlayhead } from "./gsapPositionDetection";
-import { readGsapPosition } from "./draggedGsapPosition";
+import type { DraggedGsapPosition } from "./draggedGsapPosition";
 import { hasNonHoldTweenForElement } from "./gsapRuntimeKeyframes";
 import { getAnimationsForElement } from "./gsapElementMatch";
 import {
@@ -220,7 +220,7 @@ function oneUndoStep(
  *  restores its drafts) and save `element-offset` on the element itself. */
 export async function tryGsapDragIntercept(
   selection: DomEditSelection,
-  offset: { x: number; y: number },
+  dragged: DraggedGsapPosition,
   allAnimations: GsapAnimation[],
   iframe: HTMLIFrameElement | null,
   gestureCommit: GsapDragCommitCallbacks["commitMutation"],
@@ -298,8 +298,6 @@ export async function tryGsapDragIntercept(
     }
   }
 
-  const gsapPos = readGsapPosition(selection.element);
-
   // STATIC case (single source of truth = GSAP timeline): the element has no LIVE
   // keyframed/tweened position motion. Use the strict non-hold check — a leftover
   // position-hold `set` (after a delete-all, or a stale parse that lags it) must
@@ -323,7 +321,7 @@ export async function tryGsapDragIntercept(
       posAnim && isInstantHold(posAnim) && posAnim.targetSelector === selector
         ? posAnim
         : findExistingPositionWrite(resolvedAnimations, selector, selection.element);
-    await commitStaticGsapPosition(selection, offset, gsapPos, selector, existingSet, {
+    await commitStaticGsapPosition(selection, dragged, selector, existingSet, {
       commitMutation,
       fetchAnimations: fetchFallbackAnimations,
     });
@@ -353,9 +351,9 @@ export async function tryGsapDragIntercept(
   // inserting/updating a keyframe at the playhead.
   const autoKeyframeEnabled = usePlayerStore.getState().autoKeyframeEnabled;
   if (options?.altKey || !autoKeyframeEnabled) {
-    await commitWholePathOffset(selection, posAnim, offset, gsapPos, iframe, selector, cbs);
+    await commitWholePathOffset(selection, posAnim, dragged, iframe, selector, cbs);
   } else {
-    await commitGsapPositionFromDrag(selection, posAnim, offset, gsapPos, iframe, selector, cbs);
+    await commitGsapPositionFromDrag(selection, posAnim, dragged, iframe, selector, cbs);
   }
   return { status: "persisted" };
 }

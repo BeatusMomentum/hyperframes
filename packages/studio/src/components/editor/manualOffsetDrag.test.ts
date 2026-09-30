@@ -13,7 +13,7 @@ import {
   type ManualOffsetDragMatrix,
 } from "./manualOffsetDrag";
 import { STUDIO_OFFSET_X_PROP, STUDIO_OFFSET_Y_PROP } from "./manualEdits";
-import { computeDraggedGsapPosition } from "../../hooks/draggedGsapPosition";
+import { computeDraggedGsapPosition, readGsapPosition } from "../../hooks/draggedGsapPosition";
 
 function expectMatrixClose(actual: ManualOffsetDragMatrix, expected: ManualOffsetDragMatrix): void {
   expect(actual.a).toBeCloseTo(expected.a, 6);
@@ -701,10 +701,28 @@ describe("drag in a composition without GSAP", () => {
     }
   });
 
+  it("keeps a rotated transform centring's share current through a resize, as the commit does", () => {
+    // rotate(30deg) translate(-50%, -41px) as Chrome computes it at width w; happy-dom has no `rotate`.
+    const [cos, sin] = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)];
+    const at = (w: number) =>
+      `transform: matrix(${cos}, ${sin}, ${-sin}, ${cos}, ${(-w / 2) * cos + 41 * sin}, ${(-w / 2) * sin - 41 * cos});`;
+    const title = titleWith(at(146));
+    const member = title.start();
+    title.size.width = 246;
+    title.element.ownerDocument.head.innerHTML = `<style>#title { ${at(246)} }</style>`;
+    const offset = applyManualOffsetDragDraft(member, 0, 0);
+    const { newX, newY } = computeDraggedGsapPosition(title.element, offset, member.baseGsap);
+    const shown = readGsapPosition(title.element);
+    expect(shown.x).toBeCloseTo(newX, 3);
+    expect(shown.y).toBeCloseTo(newY, 3);
+  });
+
   it("leaves a transform's -50% centring to the transform, so a resize scales it as xPercent does", () => {
     const title = titleWith("transform: matrix(1, 0, 0, 1, -73, -41);");
     const member = title.start();
     title.size.width = 246;
+    title.element.ownerDocument.head.innerHTML =
+      "<style>#title { transform: matrix(1, 0, 0, 1, -123, -41); }</style>";
     const offset = applyManualOffsetDragDraft(member, 10, 5);
     const { newX, newY } = computeDraggedGsapPosition(title.element, offset, member.baseGsap);
     expect({ x: newX, y: newY }).toEqual({ x: 10, y: 5 });

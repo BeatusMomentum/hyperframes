@@ -14,6 +14,17 @@ import {
   type GsapDragCommitCallbacks,
 } from "./gsapDragCommit";
 import { usePlayerStore } from "../player/store/playerStore";
+import type { DraggedGsapPosition } from "./draggedGsapPosition";
+const dragged = (
+  offset: { x: number; y: number },
+  base: { x: number; y: number },
+): DraggedGsapPosition => ({
+  newX: base.x + offset.x,
+  newY: base.y + offset.y,
+  baseGsapX: base.x,
+  baseGsapY: base.y,
+  initialOffset: { x: 0, y: 0 },
+});
 
 // Minimal selection whose element has no drag-baseline attributes (origX/Y = 0).
 const selection = (): DomEditSelection =>
@@ -41,8 +52,7 @@ describe("lower GSAP commit helpers fail closed", () => {
     await expect(
       commitStaticGsapPosition(
         selectorlessSelection(),
-        { x: 10, y: 20 },
-        { x: 0, y: 0 },
+        dragged({ x: 10, y: 20 }, { x: 0, y: 0 }),
         ".shared",
         null,
         { commitMutation },
@@ -124,8 +134,7 @@ describe("commitGsapPositionFromDrag — flat tween", () => {
     await commitGsapPositionFromDrag(
       selection(),
       flatTween(),
-      { x: -100, y: 0 },
-      { x: 0, y: 0 },
+      dragged({ x: -100, y: 0 }, { x: 0, y: 0 }),
       null,
       "#puck-a",
       callbacks,
@@ -145,8 +154,7 @@ describe("commitGsapPositionFromDrag — flat tween", () => {
     await commitGsapPositionFromDrag(
       selection(),
       flatTween(),
-      { x: -100, y: 0 },
-      { x: 0, y: 0 },
+      dragged({ x: -100, y: 0 }, { x: 0, y: 0 }),
       null,
       "#puck-a",
       callbacks,
@@ -166,8 +174,7 @@ describe("commitGsapPositionFromDrag — flat tween", () => {
     await commitGsapPositionFromDrag(
       selection(),
       flatTween(),
-      { x: -100, y: 0 },
-      { x: 0, y: 0 },
+      dragged({ x: -100, y: 0 }, { x: 0, y: 0 }),
       null,
       "#puck-a",
       callbacks,
@@ -214,8 +221,7 @@ describe("commitGsapPositionFromDrag — keyframed tween backfill", () => {
     await commitGsapPositionFromDrag(
       selection(),
       keyframedTween(),
-      { x: 0, y: 780 }, // studioOffset: dragged straight down
-      { x: 0, y: 0 }, // gsapPos → base falls back to {0,0} (selection has no base attrs)
+      dragged({ x: 0, y: 780 }, { x: 0, y: 0 }), // gsapPos → base falls back to {0,0} (selection has no base attrs)
       null,
       "#puck-a",
       callbacks,
@@ -268,8 +274,7 @@ describe("commitGsapPositionFromDrag — from() tween dragged outside its range"
     await commitGsapPositionFromDrag(
       selection(),
       fromTween(),
-      { x: 0, y: -333 },
-      { x: 0, y: 0 },
+      dragged({ x: 0, y: -333 }, { x: 0, y: 0 }),
       null,
       "#title",
       callbacks,
@@ -326,8 +331,7 @@ describe("commitStaticGsapPosition — instantPatch (value-only set)", () => {
 
     await commitStaticGsapPosition(
       selection(),
-      { x: -50, y: 30 }, // studioOffset → newX/newY off a zero base
-      { x: 0, y: 0 },
+      dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
       "#puck-a",
       existingPositionSet(),
       callbacks,
@@ -356,9 +360,7 @@ describe("commitStaticGsapPosition — instantPatch (value-only set)", () => {
 
     await commitStaticGsapPosition(
       selection(),
-      { x: -50, y: 30 },
-      // fallow-ignore-next-line code-duplication
-      { x: 0, y: 0 },
+      dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
       "#puck-a",
       null, // no existing set → `add` a new base gsap.set
       callbacks,
@@ -376,8 +378,7 @@ describe("commitStaticGsapPosition — instantPatch (value-only set)", () => {
 
     await commitStaticGsapPosition(
       selection(),
-      { x: -50, y: 30 },
-      { x: 0, y: 0 },
+      dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
       "#puck-a",
       existingPositionSet(),
       callbacks,
@@ -485,8 +486,7 @@ describe("static position hold recognition + heal (frozen duration-0 keyframed t
 
     await commitStaticGsapPosition(
       selection(),
-      { x: -50, y: 30 },
-      { x: 0, y: 0 },
+      dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
       "#puck-a",
       keyframedZeroDurationHold(),
       callbacks,
@@ -512,8 +512,7 @@ describe("static position hold recognition + heal (frozen duration-0 keyframed t
     await expect(
       commitStaticGsapPosition(
         selection(),
-        { x: -50, y: 30 },
-        { x: 0, y: 0 },
+        dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
         "#puck-a",
         keyframedZeroDurationHold(),
         callbacks,
@@ -534,8 +533,7 @@ describe("static position hold recognition + heal (frozen duration-0 keyframed t
     await expect(
       commitStaticGsapPosition(
         selection(),
-        { x: -50, y: 30 },
-        { x: 0, y: 0 },
+        dragged({ x: -50, y: 30 }, { x: 0, y: 0 }),
         "#puck-a",
         keyframedZeroDurationHold(),
         callbacks,
@@ -591,8 +589,7 @@ describe("commitGsapPositionFromDrag — keyframe/structural commits omit instan
     await commitGsapPositionFromDrag(
       selection(),
       flatTween(),
-      { x: -100, y: 0 },
-      { x: 0, y: 0 },
+      dragged({ x: -100, y: 0 }, { x: 0, y: 0 }),
       null,
       "#puck-a",
       callbacks,

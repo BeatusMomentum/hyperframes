@@ -16,7 +16,7 @@ import {
   tryGsapRotationIntercept,
 } from "./gsapRuntimeBridge";
 import { tryGsapResizeIntercept } from "./gsapResizeIntercept";
-import { computeDraggedGsapPosition, readGsapPosition } from "./draggedGsapPosition";
+import { draggedFromOffset } from "./draggedGsapPosition";
 import { selectorFromSelection } from "./gsapShared";
 import { useAnimatedPropertyCommit } from "./useAnimatedPropertyCommit";
 import {
@@ -151,6 +151,7 @@ export function useGsapAwareEditing({
       modifiers?: { altKey?: boolean },
     ) => {
       if (gsapCommitMutation) {
+        const dragged = draggedFromOffset(selection.element, next);
         try {
           const ownedAnimations = getGsapAnimationsForSelection(selection);
           const targetAnimations = Array.isArray(ownedAnimations)
@@ -158,7 +159,7 @@ export function useGsapAwareEditing({
             : await ownedAnimations;
           const outcome = await tryGsapDragIntercept(
             selection,
-            next,
+            dragged,
             targetAnimations,
             previewIframeRef.current,
             gsapCommitMutation,
@@ -233,6 +234,12 @@ export function useGsapAwareEditing({
         queued.push({ selection, mutation, options: withGroupOptions(options) });
         return Promise.resolve();
       };
+      const draggedBy = new Map(
+        updates.map(({ selection, next }) => [
+          selection,
+          draggedFromOffset(selection.element, next),
+        ]),
+      );
       const preflightAnimations = new Map<DomEditSelection, GsapAnimation[]>();
       const offsetMembers = new Set<DomEditSelection>();
       // Editability is user-atomic: prove every member can be written before
@@ -248,7 +255,7 @@ export function useGsapAwareEditing({
           preflightAnimations.set(selection, animations);
           const outcome = await tryGsapDragIntercept(
             selection,
-            { x: 0, y: 0 },
+            draggedBy.get(selection)!,
             animations,
             previewIframeRef.current,
             coalescedCommit,
@@ -281,7 +288,7 @@ export function useGsapAwareEditing({
         try {
           const outcome = await tryGsapDragIntercept(
             selection,
-            next,
+            draggedBy.get(selection)!,
             preflightAnimations.get(selection) ?? [],
             previewIframeRef.current,
             coalescedCommit,
@@ -325,6 +332,7 @@ export function useGsapAwareEditing({
       offset?: { x: number; y: number },
       restore: () => void = () => undefined,
     ) => {
+      const anchor = offset && { offset, dragged: draggedFromOffset(selection.element, offset) };
       let targetAnimations: GsapAnimation[];
       try {
         const ownedAnimations = getGsapAnimationsForSelection(selection);
@@ -358,10 +366,9 @@ export function useGsapAwareEditing({
         settle: () => {
           // Scale resize settles its center-scale residual after the scale commit
           // renders. Width/height can settle its anchored position immediately.
-          if (!offset || scaleRoute || !selector) return;
-          const gsapPos = readGsapPosition(selection.element);
-          const { newX, newY } = computeDraggedGsapPosition(selection.element, offset, gsapPos);
-          logResize("sync-settle", { gsapPos, offset, newX, newY });
+          if (!anchor || scaleRoute || !selector) return;
+          const { newX, newY } = anchor.dragged;
+          logResize("sync-settle", { offset, newX, newY });
           setElementGsapPosition(selection.element, newX, newY);
         },
         persist: async (commit, coalesceKey) => {
@@ -391,10 +398,10 @@ export function useGsapAwareEditing({
               });
               // A resize that moved the element itself has already written
               // where it landed. Everything else leaves the anchor to the drag.
-              if (offset && !ownsDragOffset) {
+              if (anchor && !ownsDragOffset) {
                 const dragOutcome = await tryGsapDragIntercept(
                   selection,
-                  offset,
+                  anchor.dragged,
                   targetAnimations,
                   previewIframeRef.current,
                   commitMutation,
@@ -402,7 +409,7 @@ export function useGsapAwareEditing({
                 );
                 // Saved after the size, under its undo key, so the two are one step.
                 await saveMove(dragOutcome, async () => {
-                  anchorMove = stageElementPositionOffset(selection, offset, coalesceKey);
+                  anchorMove = stageElementPositionOffset(selection, anchor.offset, coalesceKey);
                 });
               }
               logResizeSettle(selection.element, ownsDragOffset ? "gsap-scale" : "gsap-size");

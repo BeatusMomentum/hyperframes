@@ -14,6 +14,7 @@ import { __resetForTests } from "../../utils/canvasNudgeGate";
 import type { DomEditSelection } from "./domEditing";
 import "./domEditOverlayTestMocks";
 import { DomEditOverlay } from "./DomEditOverlay";
+import { draggedFromOffset } from "../../hooks/draggedGsapPosition";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -281,7 +282,7 @@ describe("handles follow what Studio would commit", () => {
     const preflightOnly = { preflightOnly: true };
     const commit = tryGsapDragIntercept(
       selection,
-      { x: 0, y: 0 },
+      draggedFromOffset(selection.element, { x: 0, y: 0 }),
       commitList,
       preview,
       vi.fn(),
@@ -395,7 +396,7 @@ describe("handles follow what Studio would commit", () => {
     const groupPreflight = { preflightOnly: true, group: true };
     const commit = tryGsapDragIntercept(
       a!,
-      { x: 0, y: 0 },
+      draggedFromOffset(a!.element, { x: 0, y: 0 }),
       [stagger],
       preview,
       vi.fn(),

@@ -1,7 +1,7 @@
 /**
- * GSAP position-write detection helpers for the drag bridge: read the live
- * runtime position from the preview iframe, and find/score the position
- * animation for a selector (and pick the tween closest to the playhead).
+ * GSAP position-write detection helpers for the drag bridge: find/score the
+ * position animation for a selector, and pick the tween closest to the
+ * playhead.
  *
  * Extracted from gsapRuntimeBridge.ts to keep that file under the size cap.
  */
@@ -38,17 +38,23 @@ export function findGsapPositionAnimation(
       if (a.keyframes) score += 5;
       if (selector && a.targetSelector === selector) score += 8;
       else if (a.targetSelector.includes(",")) score -= 5;
-      const pos = a.resolvedStart ?? (typeof a.position === "number" ? a.position : 0);
-      const dur = a.duration ?? 0;
-      if (currentTime >= pos - 0.05 && currentTime <= pos + dur + 0.05) score += 50;
-      else
-        score -= Math.round(
-          Math.min(Math.abs(currentTime - pos), Math.abs(currentTime - pos - dur)) * 5,
-        );
-      return { anim: a, score };
+      return { anim: a, score: score + playheadScore(a, currentTime) };
     });
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.anim ?? animations[0];
+}
+
+function playheadScore(a: GsapAnimation, currentTime: number): number {
+  const pos = a.resolvedStart ?? (typeof a.position === "number" ? a.position : 0);
+  const dur = a.duration ?? 0;
+  if (currentTime >= pos - 0.05 && currentTime <= pos + dur + 0.05) return 50;
+  return -Math.round(Math.min(Math.abs(currentTime - pos), Math.abs(currentTime - pos - dur)) * 5);
+}
+
+function playheadDistance(a: GsapAnimation, ct: number): number {
+  const s = resolveTweenStart(a) ?? 0;
+  const e = s + resolveTweenDuration(a);
+  return ct >= s && ct <= e ? 0 : Math.min(Math.abs(ct - s), Math.abs(ct - e));
 }
 
 /**
@@ -63,13 +69,8 @@ export function pickClosestToPlayhead(anims: GsapAnimation[]): GsapAnimation | n
   if (anims.length <= 1) return anims[0] ?? null;
   const ct = usePlayerStore.getState().currentTime;
   return anims.reduce((best, a) => {
-    const s = resolveTweenStart(a) ?? 0;
-    const e = s + resolveTweenDuration(a);
-    const dist = ct >= s && ct <= e ? 0 : Math.min(Math.abs(ct - s), Math.abs(ct - e));
-    const bestS = resolveTweenStart(best) ?? 0;
-    const bestE = bestS + resolveTweenDuration(best);
-    const bestDist =
-      ct >= bestS && ct <= bestE ? 0 : Math.min(Math.abs(ct - bestS), Math.abs(ct - bestE));
+    const dist = playheadDistance(a, ct);
+    const bestDist = playheadDistance(best, ct);
     if (dist < bestDist) return a;
     if (
       dist === bestDist &&

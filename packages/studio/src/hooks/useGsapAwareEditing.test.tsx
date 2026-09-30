@@ -185,6 +185,35 @@ describe("useGsapAwareEditing shared-tween moves", () => {
   });
 });
 
+describe("useGsapAwareEditing move commit", () => {
+  it("commits the position it was released with, when the next gesture starts before it runs", async () => {
+    mocks.drag.mockResolvedValue({ status: "persisted" });
+    let loaded!: (animations: GsapAnimation[]) => void;
+    const pending = new Promise<GsapAnimation[]>((resolve) => (loaded = resolve));
+    const { pathOffsetCommit, root } = mountGroupHandler({
+      gsapCommitMutation: vi.fn().mockResolvedValue(undefined),
+      makeFetchFallback: () => () => pending,
+    });
+    const element = document.createElement("div");
+    const stamp = (x: number, y: number) => {
+      element.setAttribute("data-hf-drag-gsap-base-x", String(x));
+      element.setAttribute("data-hf-drag-gsap-base-y", String(y));
+      element.setAttribute("data-hf-drag-initial-offset-x", "0");
+      element.setAttribute("data-hf-drag-initial-offset-y", "0");
+    };
+    stamp(0, 0);
+    const selection = { element, id: "box", selector: "#box" } as unknown as DomEditSelection;
+
+    const commit = pathOffsetCommit(selection, { x: 90, y: 60 });
+    stamp(90, 60);
+    loaded([]);
+    await act(() => commit);
+
+    expect(mocks.drag.mock.calls[0]![1]).toMatchObject({ newX: 90, newY: 60 });
+    act(() => root.unmount());
+  });
+});
+
 describe("useGsapAwareEditing anchored resize", () => {
   it("uses the explicit target's animations instead of the human selection cache", async () => {
     const humanAnimation = { id: "human", propertyGroup: "scale" } as GsapAnimation;
@@ -228,7 +257,7 @@ describe("useGsapAwareEditing anchored resize", () => {
     await act(() => h.resize(h.selection, { width: 300, height: 200 }, { x: -50, y: -25 }));
     expect(h.fallback).not.toHaveBeenCalled();
     expect(mocks.drag).toHaveBeenCalledTimes(1);
-    expect(mocks.drag.mock.calls[0]![1]).toEqual({ x: -50, y: -25 });
+    expect(mocks.drag.mock.calls[0]![1]).toMatchObject({ newX: -50, newY: -25 });
     act(() => h.root.unmount());
   });
 

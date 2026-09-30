@@ -12,7 +12,7 @@ import { usePlayerStore } from "../player/store/playerStore";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
 import { roundTo3, roundToLayoutPx } from "../utils/rounding";
 import { computeElementPercentage, writeTargetSelector } from "./gsapShared";
-import { computeDraggedGsapPosition } from "./draggedGsapPosition";
+import type { DraggedGsapPosition } from "./draggedGsapPosition";
 import type { RuntimeTweenChange } from "./gsapRuntimePatch";
 import { isGestureTransactionCommit, runGestureTransaction } from "./gestureTransaction";
 import { setPatchFromUpdateProperty } from "./gsapDragStaticSetHelpers";
@@ -151,13 +151,12 @@ export async function materializeIfDynamic(
  */
 export async function commitStaticGsapPosition(
   selection: DomEditSelection,
-  studioOffset: { x: number; y: number },
-  gsapPos: { x: number; y: number },
+  dragged: DraggedGsapPosition,
   selector: string,
   existingSet: GsapAnimation | null,
   callbacks: GsapDragCommitCallbacks,
 ): Promise<void> {
-  const { newX, newY } = computeDraggedGsapPosition(selection.element, studioOffset, gsapPos);
+  const { newX, newY } = dragged;
   if (existingSet) {
     if (existingSet.keyframes) {
       // Keyframed zero-duration hold (drag-path corruption): can't update-property
@@ -428,23 +427,17 @@ export async function commitKeyframedSizeFromResize(
 export async function commitWholePathOffset(
   selection: DomEditSelection,
   anim: GsapAnimation,
-  studioOffset: { x: number; y: number },
-  gsapPos: { x: number; y: number },
+  dragged: DraggedGsapPosition,
   iframe: HTMLIFrameElement | null,
   selector: string,
   callbacks: GsapDragCommitCallbacks,
 ): Promise<void> {
   const el = selection.element;
-  const { newX, newY, baseGsapX, baseGsapY } = computeDraggedGsapPosition(
-    el,
-    studioOffset,
-    gsapPos,
-  );
+  const { newX, newY, baseGsapX, baseGsapY } = dragged;
   const deltaX = newX - baseGsapX;
   // fallow-ignore-next-line code-duplication
   const deltaY = newY - baseGsapY;
-  const origX = Number.parseFloat(el.getAttribute("data-hf-drag-initial-offset-x") ?? "") || 0;
-  const origY = Number.parseFloat(el.getAttribute("data-hf-drag-initial-offset-y") ?? "") || 0;
+  const { x: origX, y: origY } = dragged.initialOffset;
   const restoreOffset = () => {
     el.style.setProperty("--hf-studio-offset-x", `${origX}px`);
     el.style.setProperty("--hf-studio-offset-y", `${origY}px`);
