@@ -147,7 +147,7 @@ function loadFontLists(): void {
     fetchFontList("/api/fonts/google"),
   ])
     .then(([installed, google]) => {
-      const names = [...google, ...POPULAR_GOOGLE_FONT_FAMILIES];
+      const names = google.concat(POPULAR_GOOGLE_FONT_FAMILIES);
       const families: string[] = [];
       const googleKeys = new Set<string>();
       let next = 0;
