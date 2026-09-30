@@ -538,6 +538,37 @@ function lumaMatteStrips(): string {
     .join("");
 }
 
+/**
+ * A `luma-matte` host (`#a`) whose matte names ANOTHER HOST (`#b`), which itself
+ * runs a `luma-matte` over an opaque white panel with `#m`'s alpha strips. `#b`'s
+ * raw pixels are opaque everywhere; its OUTPUT carries the strips. So `#a`'s alpha
+ * tells which one the ref read. `#a` comes first in the DOM on purpose: it has to
+ * be painted after `#b` whatever the document order.
+ */
+function hostOutputRefFixture(chainA: string, chainB: string, bCanvasAttrs = ""): string {
+  return `<!doctype html>
+<style>
+  html, body { margin: 0; background: #000; }
+  .h { position: absolute; left: 0; width: ${HOST_W}px; height: ${HOST_H}px; }
+  .h > canvas, #m > canvas { position: absolute; inset: 0; width: ${HOST_W}px; height: ${HOST_H}px; }
+  .hf-vfx-in { position: absolute; left: 0; top: 0; width: ${HOST_W}px; height: ${HOST_H}px; }
+  #a { top: 0; } #b { top: 200px; } #m { position: absolute; left: 0; top: 400px; width: ${HOST_W}px; height: ${HOST_H}px; }
+</style>
+<div data-composition-id="root" data-start="0" data-duration="4" data-width="${HOST_W}" data-height="520">
+  <div id="a" class="h clip" data-start="0" data-duration="4" data-vfx-chain='${chainA}'>
+    <canvas layoutsubtree class="hf-vfx-src"><div class="hf-vfx-in"><div style="position:absolute;left:0;top:0;width:${HOST_W}px;height:${HOST_H}px;background:#ffffff"></div></div></canvas>
+    <canvas class="hf-vfx-out"></canvas>
+  </div>
+  <div id="b" class="h clip" data-start="0" data-duration="4" data-vfx-chain='${chainB}'>
+    <canvas layoutsubtree class="hf-vfx-src"${bCanvasAttrs}><div class="hf-vfx-in"><div style="position:absolute;left:0;top:0;width:${HOST_W}px;height:${HOST_H}px;background:#ffffff"></div></div></canvas>
+    <canvas class="hf-vfx-out"></canvas>
+  </div>
+  <div id="m">
+    <canvas layoutsubtree class="hf-vfx-src"><div class="hf-vfx-in">${alphaMatteStrips()}</div></canvas>
+  </div>
+</div>`;
+}
+
 interface OutSample {
   width: number;
   height: number;
@@ -1470,6 +1501,87 @@ describe("data-vfx-chain in the browser", () => {
       } finally {
         await page.close();
       }
+    }, 60_000);
+  });
+
+  describe("a ref that names another host's output", () => {
+    const points: [number, number][] = [
+      [20, 60],
+      [60, 60],
+      [100, 60],
+      [140, 60],
+    ];
+    const chainA = chainOf("luma-matte", { matte: "b", mode: 1 });
+    const chainB = chainOf("luma-matte", { matte: "m", mode: 1 });
+    // #b's output carries #m's alpha strips; its raw panel would give 255 x4.
+    const strips = [0, 85, 170, 255];
+
+    /**
+     * `beforeSeek` runs once the runtime is booted and before the seek, so a case
+     * can change what the preview path does.
+     */
+    async function alphasOfA(
+      html: string,
+      beforeSeek?: (page: Page) => Promise<void>,
+    ): Promise<{ alphas: number[]; errors: string[] }> {
+      const page = await open(html, { width: HOST_W, height: 520 });
+      try {
+        await beforeSeek?.(page);
+        expect(await seekAndResolve(page, 0)).toBe(true);
+        const alphas = await page.evaluate((pts: [number, number][]) => {
+          const out = document.querySelector("#a canvas.hf-vfx-out") as HTMLCanvasElement;
+          const gl = out.getContext("webgl2")!;
+          const buf = new Uint8Array(out.width * out.height * 4);
+          gl.readPixels(0, 0, out.width, out.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+          return pts.map(([x, y]) => buf[(y * out.width + x) * 4 + 3]!);
+        }, points);
+        return { alphas, errors: pageErrors.get(page) ?? [] };
+      } finally {
+        await page.close();
+      }
+    }
+
+    it("reads the processed output, not the host's raw pixels", async () => {
+      const { alphas, errors } = await alphasOfA(hostOutputRefFixture(chainA, chainB));
+      strips.forEach((expected, i) => {
+        expect(Math.abs(alphas[i]! - expected)).toBeLessThanOrEqual(6);
+      });
+      expect(errors).toEqual([]);
+    }, 60_000);
+
+    it("reads the output for the old data-vfx-ref-visible shape too", async () => {
+      const { alphas, errors } = await alphasOfA(
+        hostOutputRefFixture(chainA, chainB, " data-vfx-ref-visible"),
+      );
+      strips.forEach((expected, i) => {
+        expect(Math.abs(alphas[i]! - expected)).toBeLessThanOrEqual(6);
+      });
+      expect(errors).toEqual([]);
+    }, 60_000);
+
+    it("paints the referenced host first even when it comes later in the document", async () => {
+      // The engine's resolve is the only painter here: the preview path is held
+      // back (no `paint` event, no rAF), so `#a` sees `#b`'s output only if the
+      // registry put `#b` first. #a precedes #b in the DOM, and this is a cold
+      // frame, so document order would leave #a reading an empty canvas.
+      const { alphas, errors } = await alphasOfA(
+        hostOutputRefFixture(chainA, chainB),
+        async (page) => {
+          await page.evaluate(`
+            window.requestAnimationFrame = function() { return 1; };
+            var add = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type) {
+              if (type === "paint") return;
+              return add.apply(this, arguments);
+            };
+          `);
+        },
+      );
+      strips.forEach((expected, i) => {
+        expect(Math.abs(alphas[i]! - expected)).toBeLessThanOrEqual(6);
+      });
+      // The held-back preview path eventually times out; that is this case's setup.
+      expect(errors.filter((e) => !e.includes("no paint arrived"))).toEqual([]);
     }, 60_000);
   });
 });
