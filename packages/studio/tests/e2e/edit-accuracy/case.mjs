@@ -655,9 +655,11 @@ function injectControl(page) {
           return "";
         }
       };
-      const frames = [...document.querySelectorAll("iframe")].filter((f) =>
-        url(f).includes("/preview"),
-      );
+      const iframes = (root) =>
+        [...root.querySelectorAll("*")].flatMap((el) =>
+          el.tagName === "IFRAME" ? [el] : el.shadowRoot ? iframes(el.shadowRoot) : [],
+        );
+      const frames = iframes(document).filter((f) => url(f).includes("/preview"));
       const area = (f) => f.offsetWidth * f.offsetHeight;
       frames.reduce((a, b) => (area(b) > area(a) ? b : a)).contentWindow.location.reload();
     });

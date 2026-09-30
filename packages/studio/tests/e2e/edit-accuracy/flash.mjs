@@ -21,12 +21,17 @@ function markerOn() {
     if (e.type === "pointerup" || !MODIFIERS.has(e.key))
       marker.inputs.push({ type: e.type, key: e.key ?? null, n: marker.n, t: performance.now() });
   };
+  // Studio's preview iframe sits in the player's shadow root, out of querySelectorAll's reach.
+  const iframes = (root) =>
+    [...root.querySelectorAll("*")].flatMap((el) =>
+      el.tagName === "IFRAME" ? [el] : el.shadowRoot ? iframes(el.shadowRoot) : [],
+    );
   const listen = (w) => {
     for (const type of ["pointerup", "keydown"]) {
       w.addEventListener(type, log, true);
       marker.unlisten.push(() => w.removeEventListener(type, log, true));
     }
-    for (const f of w.document.querySelectorAll("iframe")) {
+    for (const f of iframes(w.document)) {
       try {
         listen(f.contentWindow);
       } catch {
