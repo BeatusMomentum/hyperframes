@@ -13,6 +13,7 @@ import { TimelineClipFades } from "./TimelineClipFades";
 import { ClipBadges } from "./ClipBadges";
 import { linkLabelColor } from "./linkLabelColor";
 import { OutOfSyncBadge } from "./OutOfSyncBadge";
+import { clipSpeedSuffix } from "./clipToolAttrs";
 
 interface TimelineClipProps {
   el: TimelineElement;
@@ -67,7 +68,7 @@ export const TimelineClip = memo(function TimelineClip({
   const leftPx = el.start * pps;
   const widthPx = Math.max(el.duration * pps, 4);
   const handleOpacity = getClipHandleOpacity({ isHovered, isSelected, isDragging });
-  const displayLabel = el.label || el.id || el.tag;
+  const displayLabel = `${el.label || el.id || el.tag}${clipSpeedSuffix(el.playbackRate, el.automation)}`;
   const ladder = clipWidthLadder(widthPx);
   const showHandles = handleOpacity > 0.01 && (widthPx >= 32 || isSelected);
   const showLabel = ladder === "labeled";
