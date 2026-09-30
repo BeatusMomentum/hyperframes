@@ -30,18 +30,28 @@ const cssValue = (style: CSSStyleDeclaration, prop: string) => {
   return value === "none" ? "" : value;
 };
 
-function foldedTransformTranslation(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
+function transformTranslation(view: Window & typeof globalThis, list: string) {
+  const matrix = list ? new view.DOMMatrix(list) : null;
+  return { x: matrix?.m41 ?? 0, y: matrix?.m42 ?? 0 };
+}
+
+// GSAP writes `translate rotate scale transform` as one inline transform; a value the browser rejects
+// (e.g. `rotate: x 30deg`) drops the whole string, leaving GSAP only the plain transform.
+function foldedTranslation(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
+  const [tx = "", ty = ""] = cssValue(style, "translate").split(/\s+/);
   const rotate = cssValue(style, "rotate");
   const scale = cssValue(style, "scale");
+  const transform = cssValue(style, "transform");
   const folded = [
     rotate && `rotate(${rotate})`,
     scale && `scale(${scale.split(/\s+/).join(",")})`,
-    cssValue(style, "transform"),
-  ]
-    .join(" ")
-    .trim();
-  const matrix = folded ? new view.DOMMatrix(folded) : null;
-  return { x: matrix?.m41 ?? 0, y: matrix?.m42 ?? 0 };
+    transform,
+  ];
+  try {
+    return { tx, ty, ...transformTranslation(view, folded.join(" ").trim()) };
+  } catch {
+    return { tx: "", ty: "", ...transformTranslation(view, transform) };
+  }
 }
 
 function foldedAxis(translate: string, fromTransform: number, size: number): number {
@@ -55,12 +65,10 @@ function foldedAxis(translate: string, fromTransform: number, size: number): num
 function readGsapFoldedCssPosition(element: HTMLElement): { x: number; y: number } {
   const view = element.ownerDocument.defaultView as (Window & typeof globalThis) | null;
   if (!view) return { x: 0, y: 0 };
-  const style = view.getComputedStyle(element);
-  const [tx = "", ty = ""] = cssValue(style, "translate").split(/\s+/);
-  const moved = foldedTransformTranslation(view, style);
+  const moved = foldedTranslation(view, view.getComputedStyle(element));
   return {
-    x: foldedAxis(tx, moved.x, element.offsetWidth),
-    y: foldedAxis(ty, moved.y, element.offsetHeight),
+    x: foldedAxis(moved.tx, moved.x, element.offsetWidth),
+    y: foldedAxis(moved.ty, moved.y, element.offsetHeight),
   };
 }
 

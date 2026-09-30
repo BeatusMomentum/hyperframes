@@ -557,22 +557,9 @@ describe("resumeGsapTimelines", () => {
 describe("drag in a composition without GSAP", () => {
   // The commit writes `gsap.set(x, y)`; once GSAP loads it folds the CSS translate and the
   // transform's translation into x/y, so the drag base must already count them.
-  function committedPosition(
-    css: string,
-    dx: number,
-    dy: number,
-    gsapBase?: { x: number; y: number },
-  ) {
+  function committedPosition(css: string, dx: number, dy: number, setup?: (w: Window) => void) {
     const window = new Window();
-    if (gsapBase) {
-      const base: Record<string, number> = gsapBase;
-      Object.assign(window, {
-        gsap: {
-          set: () => undefined,
-          getProperty: (_el: Element, prop: string) => base[prop] ?? 0,
-        },
-      });
-    }
+    setup?.(window);
     window.document.head.innerHTML = `<style>#title { ${css} }</style>`;
     const element = window.document.createElement("h1");
     element.id = "title";
@@ -615,8 +602,41 @@ describe("drag in a composition without GSAP", () => {
     expect(newY).toBeCloseTo(130);
   });
 
+  it("scales the transform's translation by a CSS scale", () => {
+    const { newX, newY } = committedPosition("scale: 2; transform: translate(10px, 0);", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 60, y: 30 });
+  });
+
+  it("falls back to the plain transform, as GSAP does, when the fold does not parse", () => {
+    // Chrome's DOMMatrix rejects an axis rotate inside a transform list; happy-dom's does not.
+    const rejectAxisRotate = (w: Window) => {
+      const Parsed = w.DOMMatrix;
+      class ChromeLike extends Parsed {
+        constructor(init?: string) {
+          if (init?.includes("rotate(x ")) throw new SyntaxError(`Failed to parse '${init}'`);
+          super(init);
+        }
+      }
+      Object.assign(w, { DOMMatrix: ChromeLike });
+    };
+    const { newX, newY } = committedPosition(
+      "rotate: x 30deg; translate: 0 -200px; transform: translate(-60px, 10px);",
+      40,
+      30,
+      rejectAxisRotate,
+    );
+    expect({ x: newX, y: newY }).toEqual({ x: -20, y: 40 });
+  });
+
   it("reads the base from GSAP itself once the page has it", () => {
-    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30, { x: 7, y: 5 });
+    const base: Record<string, number> = { x: 7, y: 5 };
+    const gsap = {
+      set: () => undefined,
+      getProperty: (_el: Element, prop: string) => base[prop] ?? 0,
+    };
+    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30, (w) =>
+      Object.assign(w, { gsap }),
+    );
     expect({ x: newX, y: newY }).toEqual({ x: 47, y: 35 });
   });
 
