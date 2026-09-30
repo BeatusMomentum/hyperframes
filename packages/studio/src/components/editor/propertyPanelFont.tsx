@@ -140,7 +140,6 @@ async function fetchFontList(url: string): Promise<string[]> {
   return data.fonts as string[];
 }
 
-// Fetched once per session; a failure clears the request so the next mount or open retries.
 function loadFontLists(): void {
   if (fontLists.loaded) return;
   fontListsRequest ??= Promise.all([
