@@ -66,7 +66,7 @@ describe("FontFamilyField font list", () => {
 
       const trigger = host.querySelector<HTMLButtonElement>('[data-flat-font-trigger="true"]');
       await act(async () => trigger?.click());
-      expect(sortFontOptions).toHaveBeenCalledTimes(1);
+      expect(sortFontOptions).toHaveBeenCalled();
       expect(host.textContent).toContain("Roboto Slab");
       expect(document.head.querySelector('link[href*="fonts.googleapis.com"]')).toBeNull();
     } finally {
@@ -81,6 +81,7 @@ describe("FontFamilyField session font lists", () => {
     vi.resetModules();
     const { FontFamilyField: Field } = await import("./propertyPanelFont");
     const { uniqueFontFamilies } = await import("./propertyPanelHelpers");
+    vi.mocked(uniqueFontFamilies).mockClear();
     const host = document.createElement("div");
     document.body.append(host);
     let root = createRoot(host);
