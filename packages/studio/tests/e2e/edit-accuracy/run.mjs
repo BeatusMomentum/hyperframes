@@ -207,7 +207,14 @@ const browsers = await Promise.all(
     puppeteer.launch({
       executablePath: chrome,
       headless: true,
-      args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+      // Software compositing: the screencast reads each frame back cheaply, so flash windows see ~95% of frames
+      // instead of 40-70% under swiftshader GL.
+      args: [
+        "--no-sandbox",
+        "--use-angle=swiftshader",
+        "--enable-unsafe-swiftshader",
+        "--disable-gpu-compositing",
+      ],
     }),
   ),
 );
