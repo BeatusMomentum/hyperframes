@@ -1,7 +1,4 @@
-import { COLOR_GRADING_SOURCE_HIDDEN_ATTR } from "@hyperframes/core/color-grading";
 import { isCompositionTemplate } from "@hyperframes/parsers/hf-ids";
-import { findAuthoredElement, parseSavedSource } from "./authoredSource";
-import { applyAuthoredInlineOpacity, readStampedAuthoredOpacity } from "./authoredOpacity";
 
 type IframeWindow = Window & {
   __timelines?: Record<string, { kill?: () => void; pause?: () => void }>;
@@ -115,40 +112,28 @@ export function extractGsapScriptText(html: string): string | null {
   return scripts[0].textContent || null;
 }
 
-/**
- * Confirm the re-run repopulated the timeline(s) this script owns. We check the
- * EXPECTED keys (the ones the script re-registers), not merely "any key": a
- * scoped soft reload only re-runs ONE composition, so the right success signal is
- * "my target keys are back", not "the global map is non-empty". Checking the
- * exact keys avoids the transient false where the global map momentarily looks
- * empty right after the re-run — the spurious trigger of the full-remount fallback.
- */
-function verifyTimelinesPopulated(win: IframeWindow, targetKeys: string[]): boolean {
-  const timelines = win.__timelines;
-  if (!timelines) return false;
-  if (targetKeys.length > 0) {
-    return targetKeys.every((key) => timelines[key] != null);
+// The preview route serves the bundled document a fresh load shows; null when it cannot be read.
+async function readFreshPreview(win: IframeWindow): Promise<Document | null> {
+  try {
+    const res = await win.fetch(win.location.href);
+    return res.ok ? new DOMParser().parseFromString(await res.text(), "text/html") : null;
+  } catch {
+    return null;
   }
-  return Object.keys(timelines).filter((k) => k !== "__proxied").length > 0;
 }
 
-// The reloaded file, and which composition file it is (null for the top-level one).
-type Fresh = { file: Document; own: string | null };
-
-// What a fresh load puts in the style attribute; undefined inside an inlined composition, which the bundler rewrites.
-function freshInlineStyle({ file, own }: Fresh, el: Element): string | null | undefined {
-  if (own !== null || sourceFile(el.parentElement) !== null) return undefined;
-  return findAuthoredElement(file, el)?.getAttribute("style") ?? null;
-}
-
-// The preview marks an inlined composition with data-composition-file; the runtime loader keeps -src.
-function sourceFile(el: Element | null | undefined): string | null {
-  const host = el?.closest("[data-composition-file], [data-composition-src]");
-  return (
-    host?.getAttribute("data-composition-file") ??
-    host?.getAttribute("data-composition-src") ??
-    null
-  );
+// The element's style attribute in a fresh load; undefined when the page cannot say which element it is.
+function freshInlineStyle(fresh: Document, el: Element): string | null | undefined {
+  const attr = el.hasAttribute("data-hf-id") ? "data-hf-id" : "id";
+  const value = el.getAttribute(attr);
+  if (!value) return null;
+  const selector = `[${attr}="${CSS.escape(value)}"]`;
+  const loaded = fresh.querySelectorAll(selector);
+  if (loaded.length === 0) return null;
+  const live = [...el.ownerDocument.querySelectorAll(selector)];
+  // A script's copies share their source's ids, so which is the loaded one is unknown.
+  if (loaded.length !== live.length) return undefined;
+  return loaded[live.indexOf(el)]!.getAttribute("style");
 }
 
 function compositionRoot(doc: Document, key: string): Element | undefined {
@@ -157,26 +142,10 @@ function compositionRoot(doc: Document, key: string): Element | undefined {
   );
 }
 
-function restoreNestedInline(el: HTMLElement, css: string): void {
-  const s = el.style;
-  s.cssText = css;
-  s.transform = "";
-  const authored = readStampedAuthoredOpacity(el);
-  if (authored !== null) {
-    applyAuthoredInlineOpacity(s, authored);
-  } else if (
-    el.hasAttribute(COLOR_GRADING_SOURCE_HIDDEN_ATTR) &&
-    s.getPropertyValue("opacity") === "0" &&
-    s.getPropertyPriority("opacity") === "important"
-  ) {
-    s.removeProperty("opacity");
-  }
-}
-
-// A script's clone of a plain template's element has no counterpart in the file; only a full load rebuilds it.
-function mayBeTemplateClone(fresh: Fresh, el: Element): boolean {
+// A script's clone of a plain template's element is not in the page; only a full load rebuilds it.
+function mayBeTemplateClone(fresh: Document, el: Element): boolean {
   if (freshInlineStyle(fresh, el) !== null) return false;
-  return [...fresh.file.querySelectorAll("template")].some(
+  return [...fresh.querySelectorAll("template")].some(
     (t) =>
       !isCompositionTemplate(t) &&
       [...t.content.querySelectorAll("*")].some(
@@ -191,19 +160,15 @@ type TimelineLike = {
   getChildren?: (deep: boolean) => Array<TimelineLike & { targets?: () => Element[] }>;
 };
 
-function resetToFile(win: IframeWindow, fresh: Fresh, targets: Element[]): void {
+function resetToFresh(win: IframeWindow, fresh: Document, targets: Element[]): void {
   if (targets.length === 0 || !win.gsap?.set) return;
-  const saved = targets.map(
-    (el) => [el as HTMLElement, (el as HTMLElement).style?.cssText] as const,
-  );
   try {
     win.gsap.set(targets, { clearProps: "all" });
   } catch {}
-  for (const [el, css] of saved) {
+  for (const el of targets) {
     const style = freshInlineStyle(fresh, el);
-    if (style === undefined) restoreNestedInline(el, css ?? "");
-    else if (style === null) el.removeAttribute("style");
-    else el.setAttribute("style", style);
+    if (style) el.setAttribute("style", style);
+    else el.removeAttribute("style");
   }
 }
 
@@ -233,11 +198,12 @@ function collectTargets(win: IframeWindow, doc: Document, keys: string[]): Eleme
   return [...new Set(targets)];
 }
 
-function planReset(win: IframeWindow, doc: Document, keys: string[], authoredHtml: string) {
-  const own = sourceFile(keys.map((key) => compositionRoot(doc, key)).find(Boolean));
-  const fresh: Fresh = { file: parseSavedSource(authoredHtml), own };
+function planReset(win: IframeWindow, doc: Document, keys: string[], fresh: Document) {
   const targets = collectTargets(win, doc, keys);
-  return targets.some((el) => mayBeTemplateClone(fresh, el)) ? null : { fresh, targets };
+  const rebuildable = targets.every(
+    (el) => freshInlineStyle(fresh, el) !== undefined && !mayBeTemplateClone(fresh, el),
+  );
+  return rebuildable ? targets : null;
 }
 
 function gsapParsedInOwnComposition(doc: Document, key: string): Element[] {
@@ -250,25 +216,17 @@ function gsapParsedInOwnComposition(doc: Document, key: string): Element[] {
 }
 
 /**
- * Outcome of a soft-reload attempt. Callers must distinguish PERMANENT failures
- * (the preview genuinely can't be soft-updated — escalate to a full reload) from
- * the TRANSIENT post-run empty-timeline window (the live `gsap.set` already shows
- * the correct value — do NOT escalate; a remount would re-flash the WebGL context
- * and revert subcomposition keyframes):
+ * Outcome of a soft-reload attempt:
  *
- * - `"applied"`            — the script ran (or is deferred to the async plugin
- *                            load and WILL run). The preview is/will be correct.
- * - `"verify-failed"`      — TRANSIENT: the re-run happened but `__timelines`
- *                            momentarily read empty. Live state is correct → do
- *                            NOT escalate. (Was a bare `false` before.)
+ * - `"applied"`            — the reload is queued and WILL run once the fresh page
+ *                            is read. A failure from then on (the page cannot be
+ *                            read or matched, the plugin load or the re-run fails)
+ *                            is surfaced via `onAsyncFailure`.
  * - `"cannot-soft-reload"` — PERMANENT/STRUCTURAL: no gsap runtime, no rebind
  *                            hook, or no scopable target key. The preview is
  *                            stale/broken → escalate.
- *
- * The async MotionPath-plugin load failure is still surfaced via
- * `onAsyncFailure` (it fires after this returned `"applied"` optimistically).
  */
-export type SoftReloadResult = "applied" | "verify-failed" | "cannot-soft-reload";
+export type SoftReloadResult = "applied" | "cannot-soft-reload";
 
 /**
  * Replace the GSAP script in the live iframe without reloading. This preserves
@@ -278,30 +236,20 @@ export type SoftReloadResult = "applied" | "verify-failed" | "cannot-soft-reload
  * elements (sub-compositions) are not visible to `querySelectorAll` and will
  * fall back to a full iframe reload.
  *
- * Returns `"cannot-soft-reload"` (caller should full-reload) when:
- * - The iframe or GSAP runtime isn't available
- * - The rebind hook isn't installed
- * - The script registers no scopable `__timelines` key
- * - The synchronous re-run threw
- *
- * Returns `"verify-failed"` when the re-run executed but the target timeline
- * keys read empty in the transient post-run window (live state is still correct).
- *
- * `onAsyncFailure` is invoked when the soft reload was deferred to load the
- * MotionPath plugin (so this returned `"applied"` optimistically) but the plugin
- * `<script>` then failed to load — the iframe is left without the plugin and the
- * caller should perform a full reload to recover. It never fires on the
- * synchronous paths.
+ * Every element the re-run rebuilds gets the inline style a fresh load of the
+ * preview gives it, so the reload first reads the page the preview route serves.
+ * Reloads apply in call order. `onAsyncFailure` is the full-reload escalation for
+ * everything that fails after this returned `"applied"`.
  */
 export interface SoftReloadOptions {
-  /** Escalation for async plugin-load failures (e.g. MotionPath CDN error). */
+  /** Escalation for failures after "applied": the fresh page, the plugin load or the re-run. */
   onAsyncFailure?: () => void;
   /** Seek target for the rebuilt timeline; defaults to the iframe player time. */
   currentTimeOverride?: number;
-  /** The file as just written: every reset element gets its inline style back from it. */
-  authoredHtml: string;
   /** A first edit's GSAP bootstrap: "added" may run with no live script, "removed" tears down and runs nothing. */
   bootstrap?: "added" | "removed";
+  /** Runs right before the reset, in the same task, so no frame shows it without the reset. */
+  beforeReset?: () => void;
 }
 
 /**
@@ -383,23 +331,21 @@ function scopeScript(doc: Document, scriptText: string, bootstrap: SoftReloadOpt
   return { targetKeys, staleScripts };
 }
 
+const pendingReloads = new WeakMap<object, Promise<void>>();
+
 export function applySoftReload(
   iframe: HTMLIFrameElement | null,
   scriptText: string,
   options: SoftReloadOptions,
 ): SoftReloadResult {
-  const { onAsyncFailure, currentTimeOverride, authoredHtml, bootstrap } = options;
-  const removeScript = bootstrap === "removed";
+  const { bootstrap } = options;
   if (!iframe || !scriptText) return "cannot-soft-reload";
 
   const win = iframe.contentWindow as IframeWindow | null;
   const doc = iframe.contentDocument;
   if (!win || !doc) return "cannot-soft-reload";
   if (!win.gsap || !win.__hfForceTimelineRebind) return "cannot-soft-reload";
-
-  const scope = scopeScript(doc, scriptText, bootstrap);
-  if (!scope) return "cannot-soft-reload";
-  const { targetKeys, staleScripts } = scope;
+  if (!scopeScript(doc, scriptText, bootstrap)) return "cannot-soft-reload";
 
   // Prefer the caller-supplied scrub position (the studio's own authoritative
   // currentTime, e.g. usePlayerStore) over the iframe's raw `__player.getTime()`:
@@ -408,21 +354,36 @@ export function applySoftReload(
   // doesn't reliably reflect that yet), which re-seeks the freshly rebuilt
   // timeline to the wrong frame and leaves the element (and its overlay)
   // rendered at a stale/unrelated position.
-  const currentTime = currentTimeOverride ?? win.__player?.getTime?.() ?? 0;
+  const currentTime = options.currentTimeOverride ?? win.__player?.getTime?.() ?? 0;
+  const fresh = readFreshPreview(win);
+  const queued = (pendingReloads.get(win) ?? Promise.resolve())
+    .then(() => fresh)
+    .then((page) => runSoftReload(win, doc, scriptText, options, currentTime, page));
+  pendingReloads.set(win, queued);
+  return "applied";
+}
 
-  // Track whether the MotionPath async path was taken. When it is, the script
-  // executes inside pluginScript.onload — after applySoftReload has already
-  // returned. We optimistically return true because the script WILL execute
-  // once the plugin loads; the alternative (returning false) would trigger a
-  // full iframe reload that destroys the very WebGL context we're preserving.
-  let deferredToAsync = false;
+// fallow-ignore-next-line complexity
+function runSoftReload(
+  win: IframeWindow,
+  doc: Document,
+  scriptText: string,
+  options: SoftReloadOptions,
+  currentTime: number,
+  fresh: Document | null,
+): void {
+  const { onAsyncFailure, bootstrap, beforeReset } = options;
+  // Scoped again here: an earlier queued reload may have replaced the script elements.
+  const scope = scopeScript(doc, scriptText, bootstrap);
+  const targets = scope && fresh && planReset(win, doc, scope.targetKeys, fresh);
+  if (!scope || !fresh || !targets) {
+    onAsyncFailure?.();
+    return;
+  }
+  const { targetKeys, staleScripts } = scope;
 
-  const reset = planReset(win, doc, targetKeys, authoredHtml);
-  if (!reset) return "cannot-soft-reload";
-  const { fresh, targets } = reset;
-
-  // fallow-ignore-next-line complexity
   const doReload = () => {
+    beforeReset?.();
     const timelines = win.__timelines;
 
     // Kill ONLY the target composition's timeline(s) — leaving every other
@@ -440,10 +401,10 @@ export function applySoftReload(
       }
     }
 
-    resetToFile(win, fresh, targets);
+    resetToFresh(win, fresh, targets);
 
     for (const script of staleScripts) script.remove();
-    if (removeScript) {
+    if (bootstrap === "removed") {
       finalizeSoftReload(win, currentTime);
       return;
     }
@@ -460,7 +421,6 @@ export function applySoftReload(
 
     const needsMotionPath = /motionPath\s*[:{]/.test(scriptText);
     if (needsMotionPath && !win.MotionPathPlugin && win.gsap) {
-      deferredToAsync = true;
       // A prior soft reload is already fetching the plugin — don't queue a second
       // <script> (it re-flashes the iframe). Defer THIS script's execution until
       // the in-flight load settles via a one-shot poll. The bootstrap guard is
@@ -490,9 +450,8 @@ export function applySoftReload(
       };
       pluginScript.onerror = () => {
         // The plugin failed to load. Running executeScript() now would leave the
-        // iframe with a motionPath tween referencing a missing plugin while the
-        // caller already thinks the soft reload succeeded. Signal failure so the
-        // caller can full-reload (which fetches the plugin fresh) instead.
+        // iframe with a motionPath tween referencing a missing plugin. Signal
+        // failure so the caller can full-reload (which fetches the plugin fresh).
         win.__hfMotionPathPluginLoading = false;
         onAsyncFailure?.();
       };
@@ -509,17 +468,9 @@ export function applySoftReload(
     } else {
       doReload();
     }
-    // When MotionPath needs async loading, the script hasn't executed yet —
-    // skip the __timelines check and report success optimistically (the script
-    // WILL run on plugin load; onAsyncFailure covers the CDN-error case).
-    if (deferredToAsync || removeScript) return "applied";
-    // The re-run executed. If the target keys read back, we're done; otherwise
-    // it's the TRANSIENT empty-timeline window (live state is correct) — surfaced
-    // as "verify-failed" so callers know NOT to escalate.
-    return verifyTimelinesPopulated(win, targetKeys) ? "applied" : "verify-failed";
   } catch {
-    // The synchronous re-run threw — the preview is now genuinely broken (target
-    // timeline killed, script not re-registered). Escalate to a full reload.
-    return "cannot-soft-reload";
+    // The re-run threw — the preview is now genuinely broken (target timeline
+    // killed, script not re-registered). Escalate to a full reload.
+    onAsyncFailure?.();
   }
 }

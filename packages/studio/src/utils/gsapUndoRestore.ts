@@ -263,7 +263,9 @@ export function applyUndoRestoreToPreview(
   }
   // Sync each changed element's attributes onto the live DOM from the restored
   // markup, so the runtime's seek-reapply reads the reverted values.
-  for (const target of changedTargets) syncElementAttributes(target.live, target.restored);
+  const syncAttributes = () => {
+    for (const target of changedTargets) syncElementAttributes(target.live, target.restored);
+  };
 
   const restoredScript = extractGsapScriptText(restored);
   const previousScript = extractGsapScriptText(previous);
@@ -282,7 +284,7 @@ export function applyUndoRestoreToPreview(
     const result = applySoftReload(iframe, script, {
       onAsyncFailure: reloadPreview,
       currentTimeOverride: currentTime,
-      authoredHtml: restored,
+      beforeReset: syncAttributes,
       bootstrap: removed ? "removed" : added ? "added" : undefined,
     });
     if (result === "cannot-soft-reload") {
@@ -295,6 +297,7 @@ export function applyUndoRestoreToPreview(
   // synced attributes need to take effect. Rebind-only finalization (zero
   // script execution); plain seek + manual reapply as a degraded fallback when
   // the runtime rebind hook is unavailable.
+  syncAttributes();
   if (applySoftReloadFinalization(iframe, currentTime)) return "soft";
   try {
     win.__player?.seek?.(currentTime);

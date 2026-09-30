@@ -303,6 +303,9 @@ function buildLivePreviewIframe(liveScripts: string[] = [LIVE_SCRIPT]) {
     __timelines: { root: { kill: vi.fn() } } as Record<string, unknown>,
     __player: { getTime: () => 0, seek: vi.fn() },
     __hfStudioManualEditsApply: vi.fn(),
+    // The preview route's page a fresh load shows, which the soft reload reads first.
+    location: { href: "http://studio.test/api/projects/p1/preview" },
+    fetch: async () => ({ ok: true, text: async () => "<html><body></body></html>" }),
   };
 
   const appendedScripts: string[] = [];
@@ -483,6 +486,7 @@ describe("nothing-to-rewrite timing edits rebind in place (no script re-executio
       ...clipFallbackInput({ reloadPreview, recordEdit: vi.fn(async () => {}) }),
       iframe,
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(reloadPreview).not.toHaveBeenCalled();
     expect(appendedScripts).toHaveLength(1);

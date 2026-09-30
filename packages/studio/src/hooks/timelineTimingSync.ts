@@ -87,8 +87,7 @@ function rebindPreviewTiming(iframe: HTMLIFrameElement | null, currentTime: numb
  *
  * Escalates to the full `reloadPreview()` only on the PERMANENT `cannot-soft-reload`
  * result (no gsap runtime / rebind hook / scopable key / script element, or the
- * re-run threw). The TRANSIENT `verify-failed` is NOT escalated — the live re-run
- * already applied the shift; a remount would re-flash for nothing.
+ * re-run threw); a failure after the fresh page is read escalates via `onAsyncFailure`.
  *
  * `mutated` is the canonical decision, regardless of whether the server echoes
  * the unchanged script text:
@@ -116,14 +115,13 @@ function syncTimingEditPreview(
     if (!rebindPreviewTiming(iframe, currentTime)) reloadPreview();
     return;
   }
-  if (!iframe || !outcome.scriptText || !outcome.after) {
+  if (!iframe || !outcome.scriptText) {
     reloadPreview();
     return;
   }
   const result = applySoftReload(iframe, outcome.scriptText, {
     onAsyncFailure: reloadPreview,
     currentTimeOverride: currentTime,
-    authoredHtml: outcome.after,
   });
   if (result === "cannot-soft-reload") reloadPreview();
 }

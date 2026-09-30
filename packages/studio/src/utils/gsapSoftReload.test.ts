@@ -1,13 +1,20 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   applySoftReload,
   applySoftReloadFinalization,
   ensureMotionPathPluginLoaded,
 } from "./gsapSoftReload";
 
-const FILE = { authoredHtml: "<html><body></body></html>" };
+const FILE = {};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+// What the preview route serves at the iframe's address: the page a fresh load shows.
+const served = (html = "<html><body></body></html>") => ({
+  location: { href: "http://studio.test/api/projects/p/preview" },
+  fetch: vi.fn(async () => ({ ok: true, text: async () => html })),
+});
+afterEach(() => void (document.body.innerHTML = ""));
 
 const SCRIPT_TEXT = `
 window.__timelines = window.__timelines || {};
@@ -38,6 +45,7 @@ function buildMockIframe(overrides: Record<string, unknown> = {}) {
     __player: { getTime: () => 2.0, seek: vi.fn() },
     __hfStudioManualEditsApply: vi.fn(),
     __hfSuppressSceneMutations: undefined as undefined | (<T>(fn: () => T) => T),
+    ...served(),
     ...overrides,
   };
 
@@ -97,17 +105,18 @@ describe("applySoftReload", () => {
     expect(applySoftReload(iframe, 'gsap.to("#box", { x: 1 });', FILE)).toBe("cannot-soft-reload");
   });
 
-  it("kills existing timelines, rebinds, and re-seeks on success", () => {
+  it("kills existing timelines, rebinds, and re-seeks on success", async () => {
     const { iframe, contentWindow, mockTimeline } = buildMockIframe();
     const result = applySoftReload(iframe, SCRIPT_TEXT, FILE);
     expect(result).toBe("applied");
+    await settle();
     expect(mockTimeline.kill).toHaveBeenCalled();
     expect(contentWindow.__hfForceTimelineRebind).toHaveBeenCalled();
     expect(contentWindow.__player.seek).toHaveBeenCalledWith(2.0);
     expect(contentWindow.__hfStudioManualEditsApply).toHaveBeenCalled();
   });
 
-  it("seeks to the caller-supplied currentTime override instead of the iframe's own __player.getTime()", () => {
+  it("seeks to the caller-supplied currentTime override instead of the iframe's own __player.getTime()", async () => {
     // Regression: the iframe's raw __player.getTime() (2.0 here, per the mock)
     // can desync from the studio's authoritative scrub position — e.g. a
     // keyframe-node drag parks the playhead via the store before this reload's
@@ -116,31 +125,70 @@ describe("applySoftReload", () => {
     const { iframe, contentWindow } = buildMockIframe();
     const result = applySoftReload(iframe, SCRIPT_TEXT, { ...FILE, currentTimeOverride: 0 });
     expect(result).toBe("applied");
+    await settle();
     expect(contentWindow.__player.seek).toHaveBeenCalledWith(0);
   });
 
+  it("reads the page the preview route serves at the iframe's own address", async () => {
+    const { iframe, contentWindow } = buildMockIframe();
+    applySoftReload(iframe, SCRIPT_TEXT, FILE);
+    await settle();
+    expect(contentWindow.fetch).toHaveBeenCalledWith(contentWindow.location.href);
+  });
+
+  it("escalates, touching nothing, when that page cannot be read", async () => {
+    const { iframe, contentWindow, mockTimeline } = buildMockIframe({
+      fetch: async () => ({ ok: false, text: async () => "" }),
+    });
+    const onAsyncFailure = vi.fn();
+    expect(applySoftReload(iframe, SCRIPT_TEXT, { onAsyncFailure })).toBe("applied");
+    await settle();
+    expect(onAsyncFailure).toHaveBeenCalledTimes(1);
+    expect(mockTimeline.kill).not.toHaveBeenCalled();
+    expect(contentWindow.__hfForceTimelineRebind).not.toHaveBeenCalled();
+  });
+
+  it("applies reloads in the order they were asked for, whichever page arrives first", async () => {
+    const pages: Array<() => void> = [];
+    const fetch = () =>
+      new Promise((resolve) => pages.push(() => resolve({ ok: true, text: async () => "" })));
+    const { iframe, contentWindow } = buildMockIframe({ fetch });
+    applySoftReload(iframe, SCRIPT_TEXT, { currentTimeOverride: 1 });
+    applySoftReload(iframe, SCRIPT_TEXT, { currentTimeOverride: 2 });
+    pages[1]!();
+    await settle();
+    expect(contentWindow.__player.seek).not.toHaveBeenCalled();
+    pages[0]!();
+    await settle();
+    expect(contentWindow.__player.seek.mock.calls).toEqual([[1], [2]]);
+  });
+
   describe("resets what GSAP parsed in the reloaded composition only", () => {
-    function reloadRoot(body: string, file = "") {
+    async function reloadRoot(body: string, file = "") {
       const doc = document.implementation.createHTMLDocument("");
       doc.body.innerHTML = `${body}<script>${SCRIPT_TEXT}</script>`;
       for (const el of doc.querySelectorAll("[data-gsap]")) Object.assign(el, { _gsap: {} });
       const cleared: Element[] = [];
       const set = (targets: Element[]) => cleared.push(...targets);
-      const { iframe } = buildMockIframe({ gsap: { timeline: vi.fn(), set } });
+      const { iframe } = buildMockIframe({
+        gsap: { timeline: vi.fn(), set },
+        ...served(`<html><body>${file}</body></html>`),
+      });
       Object.assign(iframe, { contentDocument: doc });
-      applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml: `<html><body>${file}</body></html>` });
+      applySoftReload(iframe, SCRIPT_TEXT, FILE);
+      await settle();
       return { doc, cleared: cleared.map((el) => el.id) };
     }
 
-    it("resets a standalone gsap.set target even after its inline style was synced away", () => {
-      const { cleared } = reloadRoot(
+    it("resets a standalone gsap.set target even after its inline style was synced away", async () => {
+      const { cleared } = await reloadRoot(
         `<div data-composition-id="root"><div id="held" data-gsap></div><div id="plain"></div></div>`,
       );
       expect(cleared).toEqual(["held"]);
     });
 
-    it("strips a stale inline transform from an orphaned (non-timeline-child) element", () => {
-      const { doc } = reloadRoot(
+    it("strips a stale inline transform from an orphaned (non-timeline-child) element", async () => {
+      const { doc } = await reloadRoot(
         `<div data-composition-id="root"><div id="orphan" data-gsap style="left: 1240px; transform: translate(449px, 0px)"></div></div>`,
         `<div id="orphan" style="left: 1240px"></div>`,
       );
@@ -148,7 +196,7 @@ describe("applySoftReload", () => {
       expect(doc.getElementById("orphan")!.style.left).toBe("1240px");
     });
 
-    it("leaves what a nested composition's own timeline animates alone, in the preview's inlined markup", () => {
+    it("leaves what a nested composition's own timeline animates alone, in the preview's inlined markup", async () => {
       // The markup the preview bundler writes for an inlined sub-composition: no data-composition-src left.
       const doc = document.implementation.createHTMLDocument("");
       doc.body.innerHTML =
@@ -169,19 +217,19 @@ describe("applySoftReload", () => {
       const { iframe } = buildMockIframe({
         gsap: { timeline: vi.fn(), set: (targets: Element[]) => cleared.push(...targets) },
         __timelines: { root, sub },
+        ...served(`<html><body><div id="plain"></div></body></html>`),
       });
       Object.assign(iframe, { contentDocument: doc });
-      applySoftReload(iframe, SCRIPT_TEXT, {
-        authoredHtml: `<html><body><div id="plain"></div></body></html>`,
-      });
+      applySoftReload(iframe, SCRIPT_TEXT, FILE);
+      await settle();
       expect(cleared).toEqual([plain]);
       expect(nsty.getAttribute("style")).toBe(
         "left: 420px; background: #f0f040; transform: translate(0px, 30px)",
       );
     });
 
-    it("leaves a nested composition's element alone: its script is not re-run", () => {
-      const { doc, cleared } = reloadRoot(
+    it("leaves a nested composition's element alone: its script is not re-run", async () => {
+      const { doc, cleared } = await reloadRoot(
         `<div data-composition-id="root"><div id="host" data-composition-id="sub" data-gsap>` +
           `<div id="nested" data-gsap style="transform: translate(90px, 60px)"></div></div></div>`,
       );
@@ -200,7 +248,7 @@ describe("applySoftReload", () => {
     );
   });
 
-  it("wraps execution in __hfSuppressSceneMutations when available", () => {
+  it("wraps execution in __hfSuppressSceneMutations when available", async () => {
     let suppressionCalled = false;
     const { iframe } = buildMockIframe({
       __hfSuppressSceneMutations: <T>(fn: () => T): T => {
@@ -210,39 +258,18 @@ describe("applySoftReload", () => {
     });
     const result = applySoftReload(iframe, SCRIPT_TEXT, FILE);
     expect(result).toBe("applied");
+    await settle();
     expect(suppressionCalled).toBe(true);
   });
 
-  it('returns "applied" when the re-run re-registers the script\'s expected key', () => {
-    // SCRIPT_TEXT registers __timelines["root"]; buildMockIframe's appendChild
-    // shim repopulates `root` on execution. The hardened verify checks the
-    // expected target key is present (not merely "some key"), so a correct re-run
-    // reliably reports "applied" — it doesn't spuriously hit the transient window.
+  it("the re-run re-registers the script's expected key", async () => {
     const { iframe, contentWindow } = buildMockIframe();
     expect(applySoftReload(iframe, SCRIPT_TEXT, FILE)).toBe("applied");
+    await settle();
     expect(contentWindow.__timelines.root).toBeDefined();
   });
 
-  it('returns "verify-failed" (transient) when the re-run leaves the key empty', () => {
-    // No appendChild shim repopulation: the body container has no shim, so the
-    // re-run kills __timelines["root"] and the new script doesn't re-register it.
-    // That is the TRANSIENT post-run window — surfaced as "verify-failed" so
-    // callers know NOT to escalate (the live gsap.set already shows the value).
-    const scriptEl = document.createElement("script");
-    scriptEl.textContent = 'window.__timelines["root"] = gsap.timeline();';
-    const container = document.createElement("div"); // no appendChild shim
-    container.appendChild(scriptEl);
-    const { iframe } = buildMockIframe();
-    (iframe as unknown as { contentDocument: unknown }).contentDocument = {
-      querySelectorAll: (sel: string) => (sel === "script:not([src])" ? [scriptEl] : []),
-      createElement: (tag: string) => document.createElement(tag),
-      body: container,
-      head: document.createElement("div"),
-    };
-    expect(applySoftReload(iframe, SCRIPT_TEXT, FILE)).toBe("verify-failed");
-  });
-
-  it("editing composition A leaves composition B's timeline intact (scoped kill)", () => {
+  it("editing composition A leaves composition B's timeline intact (scoped kill)", async () => {
     // Two comps live side by side; the soft reload only re-runs comp "root".
     // Comp "subscene" must survive untouched — the regression the full remount
     // (re-inline) used to cause.
@@ -256,17 +283,16 @@ describe("applySoftReload", () => {
     void mockTimeline;
 
     expect(applySoftReload(iframe, SCRIPT_TEXT, FILE)).toBe("applied");
+    await settle();
     // Comp B was never killed and is still registered.
     expect(subsceneTimeline.kill).not.toHaveBeenCalled();
     expect(contentWindow.__timelines.subscene).toBe(subsceneTimeline);
   });
 
-  it("runs synchronously (no async plugin load) when MotionPathPlugin is already present", () => {
+  it("runs without an async plugin load when MotionPathPlugin is already present", async () => {
     // The preview bootstrap pre-loads MotionPathPlugin, so win.MotionPathPlugin
     // is set before any motion-path edit. The soft reload must then execute the
-    // script inline — no CDN <script> appended to <head>, the timeline is
-    // repopulated synchronously, and verifyTimelinesPopulated reports the real
-    // result (not the optimistic-true async path).
+    // script inline — no CDN <script> appended to <head>.
     const headAppends: Node[] = [];
     const head = document.createElement("div");
     const realHeadAppend = head.appendChild.bind(head);
@@ -280,6 +306,7 @@ describe("applySoftReload", () => {
     const result = applySoftReload(iframe, MOTION_PATH_SCRIPT_TEXT, FILE);
 
     expect(result).toBe("applied");
+    await settle();
     // No CDN plugin <script> was appended to <head> — ran inline.
     expect(headAppends.filter((n) => n instanceof HTMLScriptElement)).toHaveLength(0);
     expect(contentWindow.__hfForceTimelineRebind).toHaveBeenCalled();
@@ -287,7 +314,7 @@ describe("applySoftReload", () => {
     expect(contentWindow.__timelines.root).toBeDefined();
   });
 
-  it("falls back to the async plugin load when MotionPathPlugin is genuinely absent", () => {
+  it("falls back to the async plugin load when MotionPathPlugin is genuinely absent", async () => {
     const head = document.createElement("div");
     const appendedScripts: HTMLScriptElement[] = [];
     const realHeadAppend = head.appendChild.bind(head);
@@ -308,6 +335,7 @@ describe("applySoftReload", () => {
     // Optimistically "applied" (script will run once the plugin loads) — and the
     // script has NOT executed yet, so the timeline isn't rebound synchronously.
     expect(result).toBe("applied");
+    await settle();
     expect(appendedScripts).toHaveLength(1);
     expect(appendedScripts[0]!.src).toContain("MotionPathPlugin");
     expect(contentWindow.__hfForceTimelineRebind).not.toHaveBeenCalled();
@@ -475,9 +503,16 @@ describe("ensureMotionPathPluginLoaded", () => {
   });
 });
 
-// Undo and commits must leave each element as a fresh load of the written file would.
-describe("applySoftReload restores each element's inline style from the file", () => {
-  function buildIframeWithTarget(el: Element, overrides: Record<string, unknown> = {}) {
+// Undo and commits must leave each element as a fresh load of the preview shows it.
+describe("applySoftReload restores each element's inline style from a fresh load", () => {
+  function buildIframeWithTarget(
+    el: Element,
+    fresh: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    let top = el;
+    while (top.parentElement) top = top.parentElement;
+    document.body.appendChild(top);
     const scriptEl = document.createElement("script");
     scriptEl.textContent =
       'const tl = gsap.timeline({ paused: true }); tl.to("#box", { opacity: 0.5 });';
@@ -492,6 +527,7 @@ describe("applySoftReload restores each element's inline style from the file", (
       __timelines: { root: tl } as Record<string, unknown>,
       __player: { getTime: () => 2.0, seek: vi.fn() },
       __hfStudioManualEditsApply: vi.fn(),
+      ...served(fresh),
       ...overrides,
     };
     const container = document.createElement("div");
@@ -517,99 +553,134 @@ describe("applySoftReload restores each element's inline style from the file", (
 
   const page = (body: string) => `<html><body>${body}</body></html>`;
 
-  it("gives an element in the file exactly the file's inline style", () => {
+  it("gives an element exactly the style attribute a fresh load gives it", async () => {
     const el = document.createElement("img");
     el.setAttribute("data-hf-id", "hf-1");
     el.setAttribute(
       "style",
       "opacity: 0 !important; translate: none; transform: translate(9px, 9px); visibility: visible",
     );
-    const { iframe } = buildIframeWithTarget(el);
-    const file = page(`<img data-hf-id="hf-1" style="opacity: 0.98; translate: 60px 40px">`);
-    expect(applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml: file })).toBe("applied");
+    const { iframe } = buildIframeWithTarget(
+      el,
+      page(`<img data-hf-id="hf-1" style="opacity: 0.98; translate: 60px 40px">`),
+    );
+    expect(applySoftReload(iframe, SCRIPT_TEXT, FILE)).toBe("applied");
+    await settle();
     expect(el.getAttribute("style")).toBe("opacity: 0.98; translate: 60px 40px");
   });
 
   it.each([
-    { who: "the file writes no inline style for", tag: "div", id: "box" },
+    { who: "a fresh load writes no inline style for", tag: "div", id: "box" },
     { who: "a script created (the re-run recreates its state)", tag: "span", id: "" },
-  ])("leaves no inline style on an element $who", ({ tag, id }) => {
+  ])("leaves no inline style on an element $who", async ({ tag, id }) => {
     const el = document.createElement(tag);
     el.id = id;
     el.setAttribute("style", "opacity: 0.4213; translate: none; transform: translate(9px, 9px)");
-    const { iframe } = buildIframeWithTarget(el);
-    applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml: page(`<div id="box"></div>`) });
+    const { iframe } = buildIframeWithTarget(el, page(`<div id="box"></div>`));
+    applySoftReload(iframe, SCRIPT_TEXT, FILE);
+    await settle();
     expect(el.hasAttribute("style")).toBe(false);
   });
 
-  it("keeps an SVG child's authored inline transform", () => {
+  it("keeps an SVG child's authored inline transform", async () => {
     const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     el.setAttribute("data-hf-id", "hf-1");
     el.setAttribute("style", "transform: translate(9px, 9px) rotate(20deg)");
-    const { iframe } = buildIframeWithTarget(el);
-    const authoredHtml = page(
-      `<svg><rect data-hf-id="hf-1" style="transform: rotate(20deg)"></rect></svg>`,
+    const { iframe } = buildIframeWithTarget(
+      el,
+      page(`<svg><rect data-hf-id="hf-1" style="transform: rotate(20deg)"></rect></svg>`),
     );
-    applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml });
+    applySoftReload(iframe, SCRIPT_TEXT, FILE);
+    await settle();
     expect(el.style.transform).toBe("rotate(20deg)");
   });
 
-  it("full-reloads rather than restyle what may be a plain template's clone", () => {
+  it("full-reloads rather than restyle what may be a plain template's clone", async () => {
     const el = document.createElement("li");
     el.id = "item";
     el.setAttribute("style", "opacity: 0.3");
-    const { iframe } = buildIframeWithTarget(el);
-    const authoredHtml = page(`<template><li id="item" style="opacity: 1"></li></template>`);
-    expect(applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml })).toBe("cannot-soft-reload");
+    const { iframe } = buildIframeWithTarget(
+      el,
+      page(`<template><li id="item" style="opacity: 1"></li></template>`),
+    );
+    const onAsyncFailure = vi.fn();
+    applySoftReload(iframe, SCRIPT_TEXT, { onAsyncFailure });
+    await settle();
+    expect(onAsyncFailure).toHaveBeenCalledTimes(1);
     expect(el.getAttribute("style")).toBe("opacity: 0.3");
   });
 
-  it("a nested composition's reload keeps what the parent file and the bundler wrote", () => {
-    const doc = document.implementation.createHTMLDocument("");
-    doc.body.innerHTML =
-      `<div data-composition-id="root"><div data-composition-file="compositions/sub.html" id="host" data-hf-id="hf-host" data-composition-id="sub" style="left: 300px; transform: translateY(9px)">` +
-      `<div style="width:1920px;height:400px" data-hf-inner-root="true" data-hf-authored-id="sub" data-hf-id="hf-in">` +
-      `</div></div></div>` +
-      `<script>${SCRIPT_TEXT.replaceAll('"root"', '"sub"')}</script>`;
-    const [host, inner] = ["hf-host", "hf-in"].map(
-      (id) => doc.querySelector(`[data-hf-id="${id}"]`) as HTMLElement,
-    );
-    const { iframe } = buildMockIframe({
-      gsap: { timeline: vi.fn(), set: vi.fn() },
-      __timelines: {
-        sub: { kill: vi.fn(), getChildren: () => [{ targets: () => [host, inner] }] },
-      },
-    });
-    Object.assign(iframe, { contentDocument: doc });
-    const sub = `<template><div id="sub" data-hf-id="hf-in" data-composition-id="sub"></div></template>`;
-    applySoftReload(iframe, SCRIPT_TEXT.replaceAll('"root"', '"sub"'), { authoredHtml: sub });
-    expect([host.style.left, host.style.transform]).toEqual(["300px", ""]);
-    expect([inner.style.width, inner.style.height]).toEqual(["1920px", "400px"]);
-  });
-
-  it("keeps soft reloads for a script-made node unlike any plain template's content", () => {
+  it("keeps soft reloads for a script-made node unlike any plain template's content", async () => {
     const el = document.createElement("span");
     el.setAttribute("style", "opacity: 0.3");
-    const { iframe } = buildIframeWithTarget(el);
-    const authoredHtml = page(`<template><li class="row"></li></template><div id="box"></div>`);
-    expect(applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml })).toBe("applied");
+    const onAsyncFailure = vi.fn();
+    const { iframe } = buildIframeWithTarget(
+      el,
+      page(`<template><li class="row"></li></template><div id="box"></div>`),
+    );
+    applySoftReload(iframe, SCRIPT_TEXT, { onAsyncFailure });
+    await settle();
+    expect(onAsyncFailure).not.toHaveBeenCalled();
     expect(el.hasAttribute("style")).toBe(false);
   });
 
-  it("keeps a nested composition's element's inline style, minus GSAP's transform", () => {
-    const host = document.createElement("div");
-    host.setAttribute("data-composition-file", "compositions/sub.html"); // as the preview inlines it
-    const el = document.createElement("img");
-    el.setAttribute("data-hf-id", "hf-from-sub");
-    el.setAttribute("data-hf-authored-opacity", "0.5");
-    el.setAttribute("style", "left: 10px; opacity: 0; transform: translate(9px, 9px)");
-    host.appendChild(el);
-    const { iframe } = buildIframeWithTarget(el);
-    applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml: page(`<div id="box"></div>`) });
-    expect([el.style.left, el.style.opacity, el.style.transform]).toEqual(["10px", "0.5", ""]);
+  it("full-reloads when a script copy shares its source's id, since which is which is unknown", async () => {
+    const el = document.createElement("div");
+    el.setAttribute("data-hf-id", "hf-1");
+    const copy = el.cloneNode() as Element;
+    const { iframe } = buildIframeWithTarget(el, page(`<div data-hf-id="hf-1"></div>`));
+    document.body.appendChild(copy);
+    const onAsyncFailure = vi.fn();
+    applySoftReload(iframe, SCRIPT_TEXT, { onAsyncFailure });
+    await settle();
+    expect(onAsyncFailure).toHaveBeenCalledTimes(1);
   });
 
-  it("the finalize seek cannot paint the killed timeline over the restored transform", () => {
+  // The inlined markup the preview bundler writes: sizes on the flattened root, asset urls re-pointed.
+  const INLINED = (host: string, inner: string, img: string) =>
+    `<div data-composition-file="compositions/sub.html" data-hf-id="hf-host" data-composition-id="sub" style="${host}">` +
+    `<div data-hf-inner-root="true" data-hf-id="hf-in" style="${inner}">` +
+    `<img data-hf-id="hf-img" style="${img}"></div></div>`;
+
+  it("gives a nested composition's elements what the preview bundler wrote for them", async () => {
+    const fresh = INLINED(
+      "left: 300px",
+      "width:1920px;height:400px",
+      "left: 12px; background: url(compositions/a.png)",
+    );
+    const holder = document.createElement("div");
+    holder.innerHTML = INLINED(
+      "left: 300px; transform: translateY(9px)",
+      "width:1920px;height:400px;opacity:0.5",
+      "left: 12px; width: 345px; background: url(compositions/a.png)",
+    );
+    const targets = [...holder.querySelectorAll("[data-hf-id]")];
+    const { iframe } = buildIframeWithTarget(targets[2]!, page(fresh), {
+      __timelines: { root: { kill: vi.fn(), getChildren: () => [{ targets: () => targets }] } },
+    });
+    applySoftReload(iframe, SCRIPT_TEXT, FILE);
+    await settle();
+    expect(targets.map((el) => el.getAttribute("style"))).toEqual([
+      "left: 300px",
+      "width:1920px;height:400px",
+      "left: 12px; background: url(compositions/a.png)",
+    ]);
+  });
+
+  it("runs the caller's step right before the reset, in the same task", async () => {
+    const el = document.createElement("div");
+    el.id = "box";
+    const order: string[] = [];
+    const { iframe } = buildIframeWithTarget(el, page(`<div id="box"></div>`), {
+      gsap: { timeline: vi.fn(), set: () => order.push("reset") },
+    });
+    applySoftReload(iframe, SCRIPT_TEXT, { beforeReset: () => order.push("sync") });
+    expect(order).toEqual([]);
+    await settle();
+    expect(order).toEqual(["sync", "reset"]);
+  });
+
+  it("the finalize seek cannot paint the killed timeline over the restored transform", async () => {
     const el = document.createElement("div");
     el.style.cssText = "translate: none; transform: translate3d(77.5px, 40px, 0px)";
     const children = [{ targets: () => [el] }];
@@ -622,12 +693,13 @@ describe("applySoftReload restores each element's inline style from the file", (
     const seek = () =>
       children.forEach(() => (el.style.transform = "translate3d(77.5px, 0px, 0px)"));
     let transformAtRebind: string | null = null;
-    const { iframe } = buildIframeWithTarget(el, {
+    const { iframe } = buildIframeWithTarget(el, page(""), {
       __timelines: { root: killed },
       __player: { getTime: () => 1, seek },
       __hfForceTimelineRebind: () => (transformAtRebind = el.style.transform),
     });
-    applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml: page("") });
+    applySoftReload(iframe, SCRIPT_TEXT, FILE);
+    await settle();
     expect(transformAtRebind).toBe("");
   });
 });
