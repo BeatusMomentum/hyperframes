@@ -164,8 +164,9 @@ describe("applyUndoRestoreToPreview", () => {
   describe("an undo that re-runs a changed script matches a fresh load of the restored file", () => {
     const script = (extra: string) => `window.__timelines["root"]=gsap.timeline();${extra}`;
     const undoScriptEdit = (live: string, authored: string, edit: string) => {
+      const comp = (body: string) => `<div data-composition-id="root">${body}</div>`;
       const { iframe, contentWindow, doc } = buildLiveIframe(
-        `${live}<script>${script(edit)}</script>`,
+        `${comp(live)}<script>${script(edit)}</script>`,
       );
       const clearProps = (targets: HTMLElement[]) =>
         targets.forEach((t) => t.removeAttribute("style"));
@@ -173,8 +174,8 @@ describe("applyUndoRestoreToPreview", () => {
       for (const el of doc.querySelectorAll("[style*=transform]")) Object.assign(el, { _gsap: {} });
       const files = {
         [ROOT]: {
-          previous: wrap(`${authored}<script>${script(edit)}</script>`),
-          restored: wrap(`${authored}<script>${script("")}</script>`),
+          previous: wrap(`${comp(authored)}<script>${script(edit)}</script>`),
+          restored: wrap(`${comp(authored)}<script>${script("")}</script>`),
         },
       };
       expect(applyUndoRestoreToPreview(iframe, ROOT, files, 3, vi.fn())).toBe("soft");
@@ -252,6 +253,30 @@ describe("applyUndoRestoreToPreview", () => {
     expect(contentWindow.__player.seek).toHaveBeenCalledWith(3);
     expect(contentWindow.__hfStudioManualEditsApply).toHaveBeenCalled();
     expect(doc.getElementById("a")!.getAttribute("style")).toBe("z-index: 3");
+  });
+
+  it("re-runs an unchanged script when the restore syncs an element GSAP parsed", () => {
+    const script = `window.__timelines["root"]=gsap.timeline().to("#a",{x:1});`;
+    const { iframe, contentWindow, doc } = buildLiveIframe(
+      `<div data-composition-id="root"><div id="a" style="translate: none; transform: translate(-50%, -50%); clip-path: inset(0px 40px 0px 0px)">t</div></div><script>${script}</script>`,
+    );
+    Object.assign(doc.getElementById("a")!, { _gsap: {} });
+    const reset: Element[] = [];
+    Object.assign(contentWindow.gsap, { set: (targets: Element[]) => reset.push(...targets) });
+    const markup = (style: string) =>
+      wrap(
+        `<div data-composition-id="root"><div id="a"${style}>t</div></div><script>${script}</script>`,
+      );
+    const files = {
+      [ROOT]: {
+        previous: markup(` style="clip-path: inset(0px 40px 0px 0px)"`),
+        restored: markup(""),
+      },
+    };
+    expect(applyUndoRestoreToPreview(iframe, ROOT, files, 3, vi.fn())).toBe("soft");
+    // GSAP re-parses the element as a fresh load would, instead of keeping its stale masks.
+    expect(reset).toContain(doc.getElementById("a"));
+    expect(doc.getElementById("a")!.style.getPropertyValue("translate")).toBe("");
   });
 
   it("full-reloads a changed two-script restore without partially touching the live DOM", () => {

@@ -143,6 +143,17 @@ function restoreAuthoredTransforms(
   }
 }
 
+function gsapParsedInOwnComposition(doc: Document, key: string): Element[] {
+  const comp = [...doc.querySelectorAll("[data-composition-id]")].find(
+    (el) => el.getAttribute("data-composition-id") === key,
+  );
+  if (!comp) return [];
+  return [comp, ...comp.querySelectorAll("*")].filter(
+    (el) =>
+      "_gsap" in el && (el === comp || el.parentElement?.closest("[data-composition-id]") === comp),
+  );
+}
+
 /**
  * Outcome of a soft-reload attempt. Callers must distinguish PERMANENT failures
  * (the preview genuinely can't be soft-updated — escalate to a full reload) from
@@ -361,20 +372,9 @@ export function applySoftReload(
       }
     }
 
-    // Also reset elements carrying a GSAP-applied inline `transform` that the
-    // timeline-children sweep above missed — a dragged element whose position
-    // was a standalone `gsap.set` (never a timeline child), or one whose
-    // keyframes were just removed (no longer in any timeline). Their last
-    // `gsap.set` transform is otherwise orphaned: the re-run won't re-set it
-    // and the sweep above can't see it, so the element renders offset from its
-    // source position (matching the overlay) until a full reload. The clear
-    // below runs BEFORE the re-run, which re-applies the transform for any
-    // element the new script still animates.
     const seenTargets = new Set<Element>(allTargets);
-    for (const el of doc.querySelectorAll<HTMLElement>("[style*='transform']")) {
-      // Gate on the GSAP cache (`_gsap`) so we only reset transforms GSAP owns —
-      // never strip an authored, non-GSAP inline transform.
-      if (el.style.transform && "_gsap" in el && !seenTargets.has(el)) {
+    for (const el of targetKeys.flatMap((key) => gsapParsedInOwnComposition(doc, key))) {
+      if (!seenTargets.has(el)) {
         seenTargets.add(el);
         allTargets.push(el);
       }

@@ -260,7 +260,13 @@ export function applyUndoRestoreToPreview(
 
   const restoredScript = extractGsapScriptText(restored);
   const previousScript = extractGsapScriptText(previous);
-  if (restoredScript && restoredScript !== previousScript) {
+  // GSAP keeps what it parsed from an element (folded translate, its masks); a fresh load re-parses it.
+  const gsapParsedChanged = changedTargets.some(({ live }) => "_gsap" in live);
+  if (restoredScript !== previousScript || gsapParsedChanged) {
+    if (!restoredScript) {
+      reloadPreview();
+      return "full";
+    }
     syncStaleEditMarks(doc, restored);
     const result = applySoftReload(iframe, restoredScript, {
       onAsyncFailure: reloadPreview,

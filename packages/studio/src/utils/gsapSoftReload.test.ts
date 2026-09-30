@@ -117,33 +117,42 @@ describe("applySoftReload", () => {
     expect(contentWindow.__player.seek).toHaveBeenCalledWith(0);
   });
 
-  it("strips a stale inline transform from an orphaned (non-timeline-child) element", () => {
-    // Repro: an element dragged via gsap.set whose keyframes were then removed is
-    // no longer a timeline child, so the timeline-children sweep misses it. Its
-    // stale inline transform must still be cleared so it snaps back to its source
-    // (overlay) position instead of rendering offset.
-    const orphan = document.createElement("div");
-    orphan.style.cssText = "left: 1240px; top: 200px; transform: translate(449px, 0px)";
-    Object.assign(orphan, { _gsap: {} }); // GSAP cache marker (set by gsap.set)
+  describe("resets what GSAP parsed in the reloaded composition only", () => {
+    function reloadRoot(body: string) {
+      const doc = document.implementation.createHTMLDocument("");
+      doc.body.innerHTML = `${body}<script>${SCRIPT_TEXT}</script>`;
+      for (const el of doc.querySelectorAll("[data-gsap]")) Object.assign(el, { _gsap: {} });
+      const cleared: Element[] = [];
+      const set = (targets: Element[]) => cleared.push(...targets);
+      const { iframe } = buildMockIframe({ gsap: { timeline: vi.fn(), set } });
+      Object.assign(iframe, { contentDocument: doc });
+      applySoftReload(iframe, SCRIPT_TEXT);
+      return { doc, cleared: cleared.map((el) => el.id) };
+    }
 
-    const scriptEl = document.createElement("script");
-    scriptEl.textContent = 'const tl = gsap.timeline({ paused: true }); tl.to("#x", { x: 1 });';
-    const container = document.createElement("div");
-    container.appendChild(scriptEl);
+    it("resets a standalone gsap.set target even after its inline style was synced away", () => {
+      const { cleared } = reloadRoot(
+        `<div data-composition-id="root"><div id="held" data-gsap></div><div id="plain"></div></div>`,
+      );
+      expect(cleared).toEqual(["held"]);
+    });
 
-    const { iframe } = buildMockIframe({ gsap: { timeline: vi.fn(), set: vi.fn() } });
-    (iframe as unknown as { contentDocument: unknown }).contentDocument = {
-      querySelectorAll: (sel: string) =>
-        sel === "script:not([src])" ? [scriptEl] : sel === "[style*='transform']" ? [orphan] : [],
-      createElement: (tag: string) => document.createElement(tag),
-      body: container,
-      head: document.createElement("div"),
-    };
+    it("strips a stale inline transform from an orphaned (non-timeline-child) element", () => {
+      const { doc } = reloadRoot(
+        `<div data-composition-id="root"><div id="orphan" data-gsap style="left: 1240px; transform: translate(449px, 0px)"></div></div>`,
+      );
+      expect(doc.getElementById("orphan")!.style.transform).toBe("");
+      expect(doc.getElementById("orphan")!.style.left).toBe("1240px");
+    });
 
-    applySoftReload(iframe, SCRIPT_TEXT);
-
-    expect(orphan.style.transform).toBe(""); // stale GSAP transform stripped
-    expect(orphan.style.left).toBe("1240px"); // authored CSS base preserved
+    it("leaves a nested composition's element alone: its script is not re-run", () => {
+      const { doc, cleared } = reloadRoot(
+        `<div data-composition-id="root"><div id="host" data-composition-id="sub" data-gsap>` +
+          `<div id="nested" data-gsap style="transform: translate(90px, 60px)"></div></div></div>`,
+      );
+      expect(cleared).toEqual(["host"]);
+      expect(doc.getElementById("nested")!.style.transform).toBe("translate(90px, 60px)");
+    });
   });
 
   it("wraps execution in __hfSuppressSceneMutations when available", () => {
