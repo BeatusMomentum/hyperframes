@@ -133,7 +133,9 @@ describe("applySoftReload", () => {
     const { iframe, contentWindow } = buildMockIframe();
     applySoftReload(iframe, SCRIPT_TEXT, FILE);
     await settle();
-    expect(contentWindow.fetch).toHaveBeenCalledWith(contentWindow.location.href);
+    expect(contentWindow.fetch).toHaveBeenCalledWith(contentWindow.location.href, {
+      cache: "no-store",
+    });
   });
 
   it("escalates, touching nothing, when that page cannot be read", async () => {

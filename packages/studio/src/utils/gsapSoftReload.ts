@@ -115,7 +115,7 @@ export function extractGsapScriptText(html: string): string | null {
 // The preview route serves the bundled document a fresh load shows; null when it cannot be read.
 async function readFreshPreview(win: IframeWindow): Promise<Document | null> {
   try {
-    const res = await win.fetch(win.location.href);
+    const res = await win.fetch(win.location.href, { cache: "no-store" });
     return res.ok ? new DOMParser().parseFromString(await res.text(), "text/html") : null;
   } catch {
     return null;
