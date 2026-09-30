@@ -25,34 +25,42 @@ function getOffsetDragGsap(element: HTMLElement): OffsetDragGsap | null {
   return gsap?.set && gsap.getProperty ? (gsap as OffsetDragGsap) : null;
 }
 
+const cssValue = (style: CSSStyleDeclaration, prop: string) => {
+  const value = style.getPropertyValue(prop).trim();
+  return value === "none" ? "" : value;
+};
+
+function foldedTransformTranslation(view: Window & typeof globalThis, style: CSSStyleDeclaration) {
+  const rotate = cssValue(style, "rotate");
+  const scale = cssValue(style, "scale");
+  const folded = [
+    rotate && `rotate(${rotate})`,
+    scale && `scale(${scale.split(/\s+/).join(",")})`,
+    cssValue(style, "transform"),
+  ]
+    .join(" ")
+    .trim();
+  const matrix = folded ? new view.DOMMatrix(folded) : null;
+  return { x: matrix?.m41 ?? 0, y: matrix?.m42 ?? 0 };
+}
+
+function foldedAxis(translate: string, fromTransform: number, size: number): number {
+  const raw = Number.parseFloat(translate) || 0;
+  const t = (translate.endsWith("%") ? (raw * size) / 100 : raw) + fromTransform;
+  return t && Math.round(size / 2) === Math.round(-t) ? t + size / 2 : t;
+}
+
 // The x/y GSAP reports once the commit loads it into a page without it, as its CSSPlugin parses:
 // the CSS `translate`, then `rotate`, `scale` and `transform` in that order, less a -50% centering kept in x/yPercent.
 function readGsapFoldedCssPosition(element: HTMLElement): { x: number; y: number } {
   const view = element.ownerDocument.defaultView as (Window & typeof globalThis) | null;
   if (!view) return { x: 0, y: 0 };
   const style = view.getComputedStyle(element);
-  const translate = style.getPropertyValue("translate").trim();
-  const [tx = "0", ty = "0"] = translate === "none" ? [] : translate.split(/\s+/);
-  const read = (prop: string) => {
-    const value = style.getPropertyValue(prop).trim();
-    return value === "none" ? "" : value;
-  };
-  const rotate = read("rotate");
-  const scale = read("scale");
-  const folded = [
-    rotate && `rotate(${rotate})`,
-    scale && `scale(${scale.split(/\s+/).join(",")})`,
-    read("transform"),
-  ].join(" ");
-  const matrix = folded.trim() ? new view.DOMMatrix(folded) : null;
-  const axis = (value: string, fromTransform: number, size: number) => {
-    const raw = Number.parseFloat(value) || 0;
-    const t = (value.endsWith("%") ? (raw * size) / 100 : raw) + fromTransform;
-    return t && Math.round(size / 2) === Math.round(-t) ? t + size / 2 : t;
-  };
+  const [tx = "", ty = ""] = cssValue(style, "translate").split(/\s+/);
+  const moved = foldedTransformTranslation(view, style);
   return {
-    x: axis(tx, matrix?.m41 ?? 0, element.offsetWidth),
-    y: axis(ty, matrix?.m42 ?? 0, element.offsetHeight),
+    x: foldedAxis(tx, moved.x, element.offsetWidth),
+    y: foldedAxis(ty, moved.y, element.offsetHeight),
   };
 }
 
