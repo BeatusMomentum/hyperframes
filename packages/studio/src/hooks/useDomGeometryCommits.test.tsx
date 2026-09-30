@@ -144,6 +144,37 @@ describe("useDomGeometryCommits read-only preview", () => {
   });
 });
 
+describe("useDomGeometryCommits on an element GSAP animates", () => {
+  it("refuses the CSS offset fallback for any GSAP tween on the element, and only on it", async () => {
+    const [faded, plain] = ["faded", "plain"].map((id) => {
+      const element = document.createElement("div");
+      element.id = id;
+      document.body.append(element);
+      return element;
+    });
+    const tween = { targets: () => [faded], vars: { opacity: 0, duration: 1 } };
+    const win = window as unknown as { __timelines?: unknown };
+    win.__timelines = { main: { getChildren: () => [tween] } };
+    const commitPositionPatchToHtml = vi
+      .fn<UseDomGeometryCommitsParams["commitPositionPatchToHtml"]>()
+      .mockResolvedValue(undefined);
+    const { commits, unmount } = mountCommits(commitPositionPatchToHtml);
+    const selectionOn = (element: HTMLElement) =>
+      ({ id: element.id, selector: `#${element.id}`, element }) as unknown as DomEditSelection;
+    try {
+      await expect(
+        commits().handleDomPathOffsetCommit(selectionOn(faded!), { x: 5, y: 6 }),
+      ).rejects.toThrow("GSAP-animated");
+      expect(commitPositionPatchToHtml).not.toHaveBeenCalled();
+      await commits().handleDomPathOffsetCommit(selectionOn(plain!), { x: 5, y: 6 });
+      expect(commitPositionPatchToHtml).toHaveBeenCalledTimes(1);
+    } finally {
+      delete win.__timelines;
+      unmount();
+    }
+  });
+});
+
 describe("useDomGeometryCommits element position offset", () => {
   it("persists left/top on the element and no translate offset", async () => {
     const element = document.createElement("span");
