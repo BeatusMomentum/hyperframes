@@ -2,7 +2,6 @@
  * Gesture-begin functions: startGroupDrag and startGesture.
  * These are pure "start a new gesture" operations — no draft rect updates.
  */
-import { readElementGsapNumber } from "../../utils/elementGsap";
 import { type DomEditSelection } from "./domEditing";
 import {
   createManualOffsetDragMember,
@@ -174,18 +173,6 @@ export function startGesture(
     Number.isFinite(rawContentScaleX) && rawContentScaleX > 0 ? rawContentScaleX : 1;
   const contentScaleY =
     Number.isFinite(rawContentScaleY) && rawContentScaleY > 0 ? rawContentScaleY : 1;
-  let resizeAnchor: GestureState["resizeAnchor"];
-  if (kind === "resize") {
-    const startBcr = sel.element.getBoundingClientRect();
-    resizeAnchor = {
-      anchorX: startBcr.x,
-      anchorY: startBcr.y,
-      baseGsapX: readElementGsapNumber(sel.element, "x") ?? 0,
-      baseGsapY: readElementGsapNumber(sel.element, "y") ?? 0,
-      pinX: 0,
-      pinY: 0,
-    };
-  }
   let initialPathOffset = captureStudioPathOffset(sel.element);
   let manualEditDragToken: string | undefined;
   let pathOffsetMember: ManualOffsetDragMember | undefined;
@@ -283,7 +270,6 @@ export function startGesture(
     editScaleY: rect.editScaleY,
     contentScaleX,
     contentScaleY,
-    resizeAnchor,
     manualEditDragToken,
     snapContext,
     resizeHandle: kind === "resize" ? (options?.resizeHandle ?? "se") : undefined,

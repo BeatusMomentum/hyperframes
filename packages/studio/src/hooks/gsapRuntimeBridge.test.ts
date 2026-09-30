@@ -33,6 +33,7 @@ function fakeIframe(elId: string, children: unknown[]): HTMLIFrameElement {
 // so without the guard the drag would reach commitMutation (resurrecting the tween).
 const fakeElement = {
   id: "puck-b",
+  ownerDocument: { defaultView: { gsap: { getProperty: () => 0 } } },
   style: { getPropertyValue: () => "" },
   getAttribute: () => null,
   getBoundingClientRect: () => ({ top: 100, left: 100, width: 50, height: 50 }),
@@ -459,6 +460,32 @@ describe("tryGsapDragIntercept — autoKeyframeEnabled toggle (#1808)", () => {
     expect(handled).toEqual({ status: "persisted" });
     expect(types).toContain("replace-with-keyframes");
     expect(types).not.toContain("add-keyframe");
+  });
+
+  it("keeps an xPercent/yPercent set: it does not write x/y, so it is no duplicate", async () => {
+    usePlayerStore.setState({ currentTime: 1 });
+    const centering = {
+      id: "#puck-b-set-position",
+      targetSelector: "#puck-b",
+      propertyGroup: "position",
+      method: "set",
+      properties: { xPercent: -50, yPercent: -50 },
+      position: 0,
+      duration: 0,
+    } as unknown as GsapAnimation;
+    const animations = [centering, keyframedPositionAnim];
+    const commitMutation = vi.fn();
+    await tryGsapDragIntercept(
+      selection,
+      { x: -50, y: 0 },
+      animations,
+      fakeIframe("puck-b", []),
+      commitMutation,
+      async () => animations,
+    );
+    const types = commitMutation.mock.calls.map(([, mutation]) => mutation.type);
+    expect(types).not.toContain("consolidate-position-writes");
+    expect(types).toContain("add-keyframe");
   });
 
   it("still adds/updates a keyframe at the playhead when the toggle is on (default)", async () => {

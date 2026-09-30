@@ -511,7 +511,7 @@ describe("a stylesheet translate after a committed GSAP drag", () => {
 
   it("is not masked when GSAP does not own the position", () => {
     const element = draggedTitle("#title { translate: 0 -200px; }", true, false);
-    expect(element.style.getPropertyValue("translate")).toContain(STUDIO_OFFSET_X_PROP);
+    expect(element.style.getPropertyValue("translate")).toMatch(/^calc\(0% \+ -?[\d.]+px\)/);
   });
 
   it("is not left behind when nothing sits under the draft's mask", () => {
@@ -564,5 +564,121 @@ describe("resumeGsapTimelines", () => {
     const element = window.document.createElement("div");
     window.document.body.append(element);
     expect(() => resumeGsapTimelines(element)).not.toThrow();
+  });
+});
+
+describe("drag in a composition without GSAP", () => {
+  // The commit writes `gsap.set(x, y)`; once GSAP loads it folds the CSS translate and the
+  // transform's translation into x/y, so the drag base must already count them.
+  function committedPosition(css: string, dx: number, dy: number, setup?: (w: Window) => void) {
+    const window = new Window();
+    setup?.(window);
+    window.document.head.innerHTML = `<style>#title { ${css} }</style>`;
+    const element = window.document.createElement("h1");
+    element.id = "title";
+    window.document.body.append(element);
+    Object.defineProperty(element, "offsetWidth", { value: 146 });
+    Object.defineProperty(element, "offsetHeight", { value: 82 });
+    element.getBoundingClientRect = () => {
+      const x = Number.parseFloat(element.style.getPropertyValue(STUDIO_OFFSET_X_PROP)) || 0;
+      const y = Number.parseFloat(element.style.getPropertyValue(STUDIO_OFFSET_Y_PROP)) || 0;
+      return new window.DOMRect(100 + x, 300 + y, 146, 82);
+    };
+    const result = createManualOffsetDragMember({
+      key: "title",
+      selection: { element } as never,
+      element,
+      rect: { left: 100, top: 300, width: 146, height: 82, editScaleX: 1, editScaleY: 1 },
+    });
+    if (!result.ok) throw new Error(result.reason);
+    const offset = applyManualOffsetDragCommit(result.member, dx, dy);
+    return computeDraggedGsapPosition(element, offset, { x: 0, y: 0 });
+  }
+
+  it("keeps a stylesheet translate, so a 30px drag moves the element 30px", () => {
+    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 40, y: -170 });
+  });
+
+  it("keeps a stylesheet transform translation the same way", () => {
+    const { newX, newY } = committedPosition("transform: translate(-60px, 10px);", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: -20, y: 40 });
+  });
+
+  it("turns the transform's translation by a CSS rotate, as GSAP folds it", () => {
+    const { newX, newY } = committedPosition(
+      "rotate: 90deg; transform: translate(100px, 0);",
+      40,
+      30,
+    );
+    expect(newX).toBeCloseTo(40);
+    expect(newY).toBeCloseTo(130);
+  });
+
+  it("scales the transform's translation by a CSS scale", () => {
+    const { newX, newY } = committedPosition("scale: 2; transform: translate(10px, 0);", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 60, y: 30 });
+  });
+
+  it("falls back to the plain transform, as GSAP does, when the fold does not parse", () => {
+    // Chrome's DOMMatrix rejects an axis rotate inside a transform list; happy-dom's does not.
+    const rejectAxisRotate = (w: Window) => {
+      const Parsed = w.DOMMatrix;
+      class ChromeLike extends Parsed {
+        constructor(init?: string) {
+          if (init?.includes("rotate(x ")) throw new SyntaxError(`Failed to parse '${init}'`);
+          super(init);
+        }
+      }
+      Object.assign(w, { DOMMatrix: ChromeLike });
+    };
+    const { newX, newY } = committedPosition(
+      "rotate: x 30deg; translate: 0 -200px; transform: translate(-60px, 10px);",
+      40,
+      30,
+      rejectAxisRotate,
+    );
+    expect({ x: newX, y: newY }).toEqual({ x: -20, y: 40 });
+  });
+
+  it("reads the base from GSAP itself once the page has it", () => {
+    const base: Record<string, number> = { x: 7, y: 5 };
+    const gsap = {
+      set: () => undefined,
+      getProperty: (_el: Element, prop: string) => base[prop] ?? 0,
+    };
+    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30, (w) =>
+      Object.assign(w, { gsap }),
+    );
+    expect({ x: newX, y: newY }).toEqual({ x: 47, y: 35 });
+  });
+
+  it("drafts the committed x/y: a percent translate no longer grows with a resize", () => {
+    const window = new Window();
+    window.document.head.innerHTML = "<style>#title { translate: 25% -50%; }</style>";
+    const element = window.document.createElement("h1");
+    element.id = "title";
+    window.document.body.append(element);
+    let width = 240;
+    Object.defineProperty(element, "offsetWidth", { get: () => width });
+    Object.defineProperty(element, "offsetHeight", { value: 160 });
+    element.getBoundingClientRect = () => new window.DOMRect(100, 300, width, 160);
+    const result = createManualOffsetDragMember({
+      key: "title",
+      selection: { element } as never,
+      element,
+      rect: { left: 100, top: 300, width: 240, height: 160, editScaleX: 1, editScaleY: 1 },
+    });
+    if (!result.ok) throw new Error(result.reason);
+    width = 340;
+    const offset = applyManualOffsetDragDraft(result.member, 10, 5);
+    const { newX, newY } = computeDraggedGsapPosition(element, offset, result.member.baseGsap);
+    expect({ x: newX, y: newY }).toEqual({ x: 70, y: 5 });
+    expect(element.style.getPropertyValue("translate")).toBe("calc(0% + 70px) calc(-50% + 5px)");
+  });
+
+  it("leaves a -50% centering out of x/y, since GSAP keeps it as xPercent/yPercent", () => {
+    const { newX, newY } = committedPosition("translate: -50% -50%;", 40, 30);
+    expect({ x: newX, y: newY }).toEqual({ x: 40, y: 30 });
   });
 });

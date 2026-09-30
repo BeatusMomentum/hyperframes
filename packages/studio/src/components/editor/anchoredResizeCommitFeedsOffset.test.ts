@@ -17,19 +17,23 @@ const ORIGIN_CENTER = {
 // Consistent geometry stub: model the physical truth the real DOM would report.
 // A CSS width/height change grows the box from its top-left, so the rendered
 // center drifts by half the size delta; the manual offset the gesture applies
-// (read back from the element's studio vars) pulls it back. `elementCornerOverlayPoints`
+// (read back from the drafted `translate`) pulls it back. `elementCornerOverlayPoints`
 // returns the four corners of that drifted box; `overlayCornersCentroid` (kept
 // real) averages them so the anchor loop can measure the true center each frame.
 vi.mock("./domEditOverlayGeometry", async () => {
   const actual = await vi.importActual<typeof import("./domEditOverlayGeometry")>(
     "./domEditOverlayGeometry",
   );
-  const { readStudioBoxSize, readStudioPathOffset } = await import("./manualEditsDom");
+  const { readStudioBoxSize } = await import("./manualEditsDom");
+  const draftedOffset = (element: HTMLElement) => {
+    const px = element.style.getPropertyValue("translate").match(/-?[\d.]+(?=px)/g) ?? [];
+    return { x: Number(px[0] ?? 0), y: Number(px[1] ?? 0) };
+  };
   const physicalCenter = (element: HTMLElement) => {
     const size = readStudioBoxSize(element);
     const width = size.width > 0 ? size.width : ORIGIN.width;
     const height = size.height > 0 ? size.height : ORIGIN.height;
-    const offset = readStudioPathOffset(element);
+    const offset = draftedOffset(element);
     return {
       x: ORIGIN_CENTER.x + (width - ORIGIN.width) / 2 + offset.x,
       y: ORIGIN_CENTER.y + (height - ORIGIN.height) / 2 + offset.y,

@@ -7,24 +7,7 @@
  */
 import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import { usePlayerStore } from "../player/store/playerStore";
-import { getIframeGsap, queryIframeElement } from "./gsapShared";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
-
-// fallow-ignore-next-line complexity
-export function readGsapPositionFromIframe(
-  iframe: HTMLIFrameElement | null,
-  elementSelector: string,
-): { x: number; y: number } | null {
-  const gsap = getIframeGsap(iframe);
-  if (!gsap) return null;
-
-  const element = queryIframeElement(iframe, elementSelector);
-  if (!element) return null;
-
-  const x = Number(gsap.getProperty(element, "x")) || 0;
-  const y = Number(gsap.getProperty(element, "y")) || 0;
-  return { x, y };
-}
 
 // fallow-ignore-next-line complexity
 function animHasPosition(anim: GsapAnimation): boolean {

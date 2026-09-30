@@ -16,8 +16,7 @@ import {
   tryGsapRotationIntercept,
 } from "./gsapRuntimeBridge";
 import { tryGsapResizeIntercept } from "./gsapResizeIntercept";
-import { computeDraggedGsapPosition } from "./draggedGsapPosition";
-import { readGsapPositionFromIframe } from "./gsapPositionDetection";
+import { computeDraggedGsapPosition, readGsapPosition } from "./draggedGsapPosition";
 import { selectorFromSelection } from "./gsapShared";
 import { useAnimatedPropertyCommit } from "./useAnimatedPropertyCommit";
 import {
@@ -360,10 +359,7 @@ export function useGsapAwareEditing({
           // Scale resize settles its center-scale residual after the scale commit
           // renders. Width/height can settle its anchored position immediately.
           if (!offset || scaleRoute || !selector) return;
-          const gsapPos = readGsapPositionFromIframe(previewIframeRef.current, selector) ?? {
-            x: 0,
-            y: 0,
-          };
+          const gsapPos = readGsapPosition(selection.element);
           const { newX, newY } = computeDraggedGsapPosition(selection.element, offset, gsapPos);
           logResize("sync-settle", { gsapPos, offset, newX, newY });
           setElementGsapPosition(selection.element, newX, newY);

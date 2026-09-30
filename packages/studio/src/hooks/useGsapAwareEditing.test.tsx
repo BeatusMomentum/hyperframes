@@ -12,7 +12,6 @@ import { mountReactHarness } from "./domSelectionTestHarness";
 const mocks = vi.hoisted(() => ({
   resize: vi.fn(),
   drag: vi.fn(),
-  readPosition: vi.fn(),
   setPosition: vi.fn(),
   commitAnimatedProperty: vi.fn(),
   commitAnimatedProperties: vi.fn(),
@@ -23,9 +22,6 @@ vi.mock("./gsapRuntimeBridge", () => ({
   POSITION_CHANNELS: ["x", "y"],
   tryGsapDragIntercept: mocks.drag,
   tryGsapRotationIntercept: vi.fn(),
-}));
-vi.mock("./gsapPositionDetection", () => ({
-  readGsapPositionFromIframe: mocks.readPosition,
 }));
 vi.mock("../utils/elementGsap", () => ({ setElementGsapPosition: mocks.setPosition }));
 vi.mock("./useAnimatedPropertyCommit", () => ({
@@ -276,7 +272,6 @@ describe("useGsapAwareEditing anchored resize", () => {
     });
     mocks.resize.mockReturnValue(pendingResize);
     mocks.drag.mockResolvedValue({ status: "persisted" });
-    mocks.readPosition.mockReturnValue({ x: 120.4, y: 80.2 });
     const h = mountResizeHandler([]);
     h.selection.element.setAttribute("data-hf-drag-gsap-base-x", "120.4");
     h.selection.element.setAttribute("data-hf-drag-gsap-base-y", "80.2");

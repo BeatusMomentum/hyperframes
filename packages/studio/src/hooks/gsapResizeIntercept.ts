@@ -25,8 +25,8 @@ import {
   materializeIfDynamic,
 } from "./gsapDragCommit";
 import type { GsapDragCommitCallbacks } from "./gsapDragCommit";
-import { computeDraggedGsapPosition } from "./draggedGsapPosition";
-import { pickClosestToPlayhead, readGsapPositionFromIframe } from "./gsapPositionDetection";
+import { computeDraggedGsapPosition, readGsapPosition } from "./draggedGsapPosition";
+import { pickClosestToPlayhead } from "./gsapPositionDetection";
 import { commitWholePropertyOffset } from "./gsapWholePropertyOffsetCommit";
 import { commitGsapPositionFromDrag } from "./gsapDragPositionCommit";
 import { resolveTweenStart, resolveTweenDuration } from "../utils/globalTimeCompiler";
@@ -337,7 +337,7 @@ export async function tryGsapResizeIntercept(
     // composed that residual onto the pre-gesture base (it reads the gesture's
     // own base attributes, not the live value), so the element landed a full
     // drag away from the drop point on every scale resize.
-    const gsapPos = readGsapPositionFromIframe(iframe, selector) ?? { x: 0, y: 0 };
+    const gsapPos = readGsapPosition(selection.element);
     const { baseGsapX, baseGsapY } = computeDraggedGsapPosition(
       selection.element,
       { x: 0, y: 0 },

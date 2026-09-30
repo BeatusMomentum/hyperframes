@@ -30,11 +30,8 @@ import { resolveTweenDuration } from "../utils/globalTimeCompiler";
 import { roundTo3 } from "../utils/rounding";
 import type { GsapDragCommitCallbacks } from "./gsapDragCommit";
 import { isInstantHold, selectorFromSelection, writeTargetSelector } from "./gsapShared";
-import {
-  findGsapPositionAnimation,
-  pickClosestToPlayhead,
-  readGsapPositionFromIframe,
-} from "./gsapPositionDetection";
+import { findGsapPositionAnimation, pickClosestToPlayhead } from "./gsapPositionDetection";
+import { readGsapPosition } from "./draggedGsapPosition";
 import { hasNonHoldTweenForElement } from "./gsapRuntimeKeyframes";
 import { getAnimationsForElement } from "./gsapElementMatch";
 import {
@@ -60,6 +57,8 @@ export const POSITION_CHANNELS: string[] = [
   "translateY",
 ];
 const POSITION_CHANNEL_SET = new Set<string>(POSITION_CHANNELS);
+const XY_CHANNEL_SET = new Set(["x", "y"]);
+const writesXY = (a: GsapAnimation) => animationWritesAnyProperty(a, XY_CHANNEL_SET);
 
 const ROTATION_CHANNELS: string[] = ["rotation", "rotationX", "rotationY", "rotationZ"];
 const ROTATION_CHANNEL_SET = new Set<string>(ROTATION_CHANNELS);
@@ -259,8 +258,7 @@ export async function tryGsapDragIntercept(
   // the live keyframed/real tween if present (else any), strip the rest, so the
   // commit below updates ONE write instead of fighting duplicates.
   let workingAnimations = animations;
-  const isPosWrite = (a: GsapAnimation) =>
-    a.targetSelector === selector && a.propertyGroup === "position";
+  const isPosWrite = (a: GsapAnimation) => a.targetSelector === selector && writesXY(a);
   if (animations.filter(isPosWrite).length > 1 && fetchFallbackAnimations) {
     const fresh = await fetchFallbackAnimations();
     const dupes = fresh.filter(isPosWrite);
@@ -301,7 +299,7 @@ export async function tryGsapDragIntercept(
     }
   }
 
-  const gsapPos = readGsapPositionFromIframe(iframe, selector) ?? { x: 0, y: 0 };
+  const gsapPos = readGsapPosition(selection.element);
 
   // STATIC case (single source of truth = GSAP timeline): the element has no LIVE
   // keyframed/tweened position motion. Use the strict non-hold check — a leftover
@@ -343,13 +341,10 @@ export async function tryGsapDragIntercept(
   // current ID and avoid a stale-ID remove that creates duplicate tweens.
   if (fetchFallbackAnimations) {
     const fresh = await fetchFallbackAnimations();
-    const freshMatch = fresh.find(
-      (a) =>
-        a.targetSelector === posAnim!.targetSelector && a.propertyGroup === posAnim!.propertyGroup,
-    );
-    if (freshMatch && freshMatch.id !== posAnim.id) {
-      posAnim = freshMatch;
-    }
+    const freshMatch = fresh.some((a) => a.id === posAnim!.id)
+      ? undefined
+      : fresh.find((a) => a.targetSelector === posAnim!.targetSelector && writesXY(a));
+    if (freshMatch) posAnim = freshMatch;
   }
 
   const cbs = { commitMutation, fetchAnimations: fetchFallbackAnimations };

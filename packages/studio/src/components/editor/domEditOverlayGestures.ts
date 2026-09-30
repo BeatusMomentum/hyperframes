@@ -70,20 +70,6 @@ export interface GestureState {
   // follows the cursor instead of overshooting by the live scale.
   contentScaleX: number;
   contentScaleY: number;
-  // Resize anchor pinning: with a live scale transform, growing the CSS box
-  // shifts the rendered box (scaling happens around the element center), so the
-  // un-dragged corner creeps during the draft. The move handler measures the
-  // gesture-start top-left drift each frame and counters it through the GSAP
-  // position channel; the pin accumulates so the correction converges.
-  // Present only on resize gestures.
-  resizeAnchor?: {
-    anchorX: number;
-    anchorY: number;
-    baseGsapX: number;
-    baseGsapY: number;
-    pinX: number;
-    pinY: number;
-  };
   manualEditDragToken?: string;
   snapContext?: SnapContext;
   lastSnappedDx?: number;

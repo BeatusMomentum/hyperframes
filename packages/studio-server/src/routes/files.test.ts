@@ -1714,6 +1714,35 @@ const tl = gsap.timeline({ paused: true });
     expect(html.indexOf('tl.set("#card"')).toBeGreaterThan(declaration);
   });
 
+  it("a first write into a script-less sub-composition lands inside its template", async () => {
+    const projectDir = createProjectDir();
+    const app = new Hono();
+    registerFileRoutes(app, createAdapter(projectDir));
+    writeHtml(
+      projectDir,
+      "sub.html",
+      '<template id="sub-template"><div data-composition-id="sub"><div id="card"></div></div></template>',
+    );
+
+    const res = await app.request("http://localhost/projects/demo/gsap-mutations/sub.html", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "add",
+        targetSelector: "#card",
+        method: "set",
+        position: 0,
+        properties: { x: 40, y: 30 },
+        global: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const html = readFileSync(join(projectDir, "sub.html"), "utf-8");
+    expect(html.indexOf('gsap.set("#card"')).toBeGreaterThan(html.indexOf("<template"));
+    expect(html.indexOf("</template>")).toBeGreaterThan(html.lastIndexOf("</script>"));
+  });
+
   it("consolidate-position-writes leaves exactly one position write per selector", async () => {
     const projectDir = createProjectDir();
     const CORRUPTED = `<!DOCTYPE html><html><body><script data-hyperframes-gsap>

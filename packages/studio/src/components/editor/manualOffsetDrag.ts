@@ -1,6 +1,5 @@
 import type { DomEditSelection } from "./domEditing";
 import {
-  applyStudioPathOffset,
   applyStudioPathOffsetDraft,
   beginStudioManualEditGesture,
   captureStudioPathOffset,
@@ -10,7 +9,11 @@ import {
   restoreStudioPathOffset,
   type StudioPathOffsetSnapshot,
 } from "./manualEdits";
-import { computeDraggedGsapPosition } from "../../hooks/draggedGsapPosition";
+import {
+  computeDraggedGsapPosition,
+  cssTranslateForGsapPosition,
+  readGsapPosition,
+} from "../../hooks/draggedGsapPosition";
 
 interface OffsetDragGsap {
   set: (el: Element, vars: Record<string, number | string>) => void;
@@ -25,35 +28,27 @@ function getOffsetDragGsap(element: HTMLElement): OffsetDragGsap | null {
   return gsap?.set && gsap.getProperty ? (gsap as OffsetDragGsap) : null;
 }
 
-/**
- * Live drag preview through the GSAP channel — the SAME channel the commit
- * lands in (a `tl.set`/keyframe on the timeline), so what the user sees while
- * dragging equals what gets written (plan R3/R4). Reuses the commit's
- * base+delta+rotation math so preview and commit agree by construction. Returns
- * true when handled via gsap; false when gsap is unavailable (caller falls back
- * to the CSS draft).
- */
-function applyOffsetDragDraftViaGsap(
-  element: HTMLElement,
-  offset: { x: number; y: number },
-  baseGsap: { x: number; y: number },
-): boolean {
+// The draft shows the x/y the commit writes, from the stable gesture-start base (a live read would
+// integrate frame over frame).
+function applyOffsetDragDraft(member: ManualOffsetDragMember, offset: { x: number; y: number }) {
+  const { element } = member;
+  const { newX, newY } = computeDraggedGsapPosition(element, offset, member.baseGsap);
   const gsap = getOffsetDragGsap(element);
-  if (!gsap) return false;
-  // GSAP owns the transform; neutralize the CSS translate longhand so the two
-  // channels can't compose into a doubled position.
+  if (member.cssTranslate || !gsap) {
+    element.style.setProperty(
+      "translate",
+      member.cssTranslate?.(newX, newY) ?? `${newX}px ${newY}px`,
+    );
+    return;
+  }
+  // GSAP owns the transform; neutralize the CSS translate so the two can't compose.
   element.style.setProperty("translate", "none");
-  // Use the STABLE gesture-start base (captured in JS), NOT `gsap.getProperty`.
-  // After `translate: none`, getProperty reads the transform we set last frame,
-  // so `base + delta` would integrate frame-over-frame and fling the element.
-  const { newX, newY } = computeDraggedGsapPosition(element, offset, baseGsap);
   gsap.set(element, { x: newX, y: newY });
-  return true;
 }
 
 /**
  * Live rotation preview through the GSAP channel — the SAME channel the commit
- * lands in (a `tl.set`/keyframe rotation), mirroring `applyOffsetDragDraftViaGsap`.
+ * lands in (a `tl.set`/keyframe rotation), mirroring `applyOffsetDragDraft`.
  * GSAP owns the transform rotation, so neutralize the CSS `rotate` longhand to keep
  * the two channels from composing. `angle` is the absolute target rotation. Returns
  * false when gsap is unavailable (caller falls back to the CSS draft).
@@ -102,9 +97,11 @@ export interface ManualOffsetDragMember {
    * re-render (which reverts inline style + wipes the `data-hf-drag-gsap-base-*`
    * attrs) can't drop the base. Without this the draft falls back to the LIVE
    * transform — i.e. the value it set last frame — and `base + delta` integrates,
-   * making the element accelerate away ("flies"). See applyOffsetDragDraftViaGsap.
+   * making the element accelerate away ("flies"). See applyOffsetDragDraft.
    */
   baseGsap: { x: number; y: number };
+  /** Without GSAP in the page, how the draft shows x/y (see cssTranslateForGsapPosition). */
+  cssTranslate: ((x: number, y: number) => string) | null;
   initialPathOffset: StudioPathOffsetSnapshot;
   gestureToken: string;
   screenToOffset: ManualOffsetDragMatrix;
@@ -342,12 +339,10 @@ export function createManualOffsetDragMember(input: {
 
   const win = input.element.ownerDocument.defaultView as
     | (Window & {
-        gsap?: { getProperty?: (el: Element, prop: string) => number };
         __timelines?: Record<string, { pause?: () => void; paused?: () => boolean }>;
       })
     | null;
-  const gsapX = win?.gsap?.getProperty?.(input.element, "x") || 0;
-  const gsapY = win?.gsap?.getProperty?.(input.element, "y") || 0;
+  const { x: gsapX, y: gsapY } = readGsapPosition(input.element);
   input.element.setAttribute("data-hf-drag-gsap-base-x", String(gsapX));
   input.element.setAttribute("data-hf-drag-gsap-base-y", String(gsapY));
 
@@ -375,44 +370,27 @@ export function createManualOffsetDragMember(input: {
     scaleY: input.rect.editScaleY,
   });
   const baseGsap = { x: gsapX, y: gsapY };
-  if (!measured.ok) {
-    // Fallback: when GSAP transforms interfere with probe measurement, use
-    // the preview scale as an approximation. The commit path reads the actual
-    // GSAP position from the iframe runtime, so visual imprecision during
-    // drag is acceptable — the final committed position is always exact.
-    const scaleX = input.rect.editScaleX || 1;
-    const scaleY = input.rect.editScaleY || 1;
-    const w = readTransformWDivisor(input.element);
-    return {
-      ok: true,
-      member: {
-        key: input.key,
-        selection: input.selection,
-        element: input.element,
-        initialOffset,
-        baseGsap,
-        initialPathOffset,
-        gestureToken,
-        screenToOffset: { a: w / scaleX, b: 0, c: 0, d: w / scaleY },
-        originRect: input.rect,
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    member: {
-      key: input.key,
-      selection: input.selection,
-      element: input.element,
-      initialOffset,
-      baseGsap,
-      initialPathOffset,
-      gestureToken,
-      screenToOffset: measured.matrix,
-      originRect: input.rect,
-    },
+  const cssTranslate = cssTranslateForGsapPosition(input.element);
+  // Fallback: when GSAP transforms interfere with probe measurement, use the preview scale.
+  const w = readTransformWDivisor(input.element);
+  const screenToOffset = measured.ok
+    ? measured.matrix
+    : { a: w / (input.rect.editScaleX || 1), b: 0, c: 0, d: w / (input.rect.editScaleY || 1) };
+  const member: ManualOffsetDragMember = {
+    key: input.key,
+    selection: input.selection,
+    element: input.element,
+    initialOffset,
+    baseGsap,
+    cssTranslate,
+    initialPathOffset,
+    gestureToken,
+    screenToOffset,
+    originRect: input.rect,
   };
+  // Swap the authored translate for the drafted one before a resize can grow its percentages.
+  if (cssTranslate) applyOffsetDragDraft(member, initialOffset);
+  return { ok: true, member };
 }
 
 function resolveManualOffsetDragMemberOffset(
@@ -434,12 +412,7 @@ export function applyManualOffsetDragDraft(
   dy: number,
 ): { x: number; y: number } {
   const offset = resolveManualOffsetDragMemberOffset(member, dx, dy);
-  // Position is single-sourced on the GSAP timeline; preview through gsap.set so
-  // the live draft matches the committed `tl.set`/keyframe. CSS draft only when
-  // gsap is unavailable (no preview iframe runtime).
-  if (!applyOffsetDragDraftViaGsap(member.element, offset, member.baseGsap)) {
-    applyStudioPathOffsetDraft(member.element, offset);
-  }
+  applyOffsetDragDraft(member, offset);
   return offset;
 }
 
@@ -463,13 +436,8 @@ function applyManualOffsetCommitValue(
   offset: { x: number; y: number },
 ): { x: number; y: number } {
   restampManualOffsetDragGestureBase(member);
-  // Optimistic visual through the GSAP channel (same as the live draft and the
-  // committed `tl.set`), so the element holds its dropped position until the
-  // source mutation soft-reloads — no transient CSS `--hf-studio-offset` write.
-  // CSS apply only when gsap is unavailable.
-  if (!applyOffsetDragDraftViaGsap(member.element, offset, member.baseGsap)) {
-    applyStudioPathOffset(member.element, offset);
-  }
+  // The element holds its dropped position until the source mutation reloads.
+  applyOffsetDragDraft(member, offset);
   return offset;
 }
 
@@ -496,9 +464,7 @@ export function applyManualOffsetNudgeDraft(
     x: member.initialOffset.x + delta.x,
     y: member.initialOffset.y + delta.y,
   };
-  if (!applyOffsetDragDraftViaGsap(member.element, offset, member.baseGsap)) {
-    applyStudioPathOffsetDraft(member.element, offset);
-  }
+  applyOffsetDragDraft(member, offset);
   return offset;
 }
 
