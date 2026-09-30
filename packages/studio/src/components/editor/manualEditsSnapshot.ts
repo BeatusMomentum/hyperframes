@@ -3,6 +3,7 @@ import {
   styleUsesStudioSize,
   styleUsesStudioRotation,
   restoreInlineDisplay,
+  forgetStudioBoxSizeDraftBase,
 } from "./manualEditsDom";
 import {
   STUDIO_OFFSET_X_PROP,
@@ -114,6 +115,7 @@ function restoreStyleProperty(element: HTMLElement, property: string, value: str
 }
 
 export function restoreStudioBoxSize(element: HTMLElement, previous: StudioBoxSizeSnapshot): void {
+  forgetStudioBoxSizeDraftBase(element);
   restoreStyleProperty(element, "width", previous.width);
   restoreStyleProperty(element, "height", previous.height);
   restoreStyleProperty(element, "min-width", previous.minWidth);
@@ -290,6 +292,7 @@ export function clearStudioRotation(element: HTMLElement): void {
 }
 
 export function clearStudioBoxSize(element: HTMLElement): void {
+  forgetStudioBoxSizeDraftBase(element);
   if (
     element.hasAttribute(STUDIO_BOX_SIZE_ATTR) ||
     styleUsesStudioSize(element.style.getPropertyValue("width")) ||

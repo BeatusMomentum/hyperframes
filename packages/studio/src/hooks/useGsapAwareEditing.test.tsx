@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 
 import React, { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import type { DomEditGroupPathOffsetCommit } from "../components/editor/DomEditOverlay";
-import { mountReactHarness } from "./domSelectionTestHarness";
+import { mountReactHarness, withInlineLayoutBox } from "./domSelectionTestHarness";
+import { DomEditCropHandles } from "../components/editor/DomEditCropHandles";
+import { applyStudioBoxSizeDraft } from "../components/editor/manualEdits";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,6 +58,7 @@ function mountResizeHandler(
   const anchorRollback = vi.fn();
   const elementOffset = vi.fn(() => ({ save: anchorSave, rollback: anchorRollback }));
   const commitMutation = vi.fn().mockResolvedValue(undefined);
+  const commitPatch = vi.fn().mockResolvedValue(undefined);
   let resize:
     | ((
         selection: DomEditSelection,
@@ -64,8 +67,9 @@ function mountResizeHandler(
         restore?: () => void,
       ) => Promise<void>)
     | null = null;
+  let property: ReturnType<typeof useGsapAwareEditing>["commitAnimatedProperty"] | null = null;
   function Harness() {
-    resize = useGsapAwareEditing({
+    const editing = useGsapAwareEditing({
       domEditSelection: selection,
       selectedGsapAnimations: animations,
       gsapCommitMutation: commitMutation,
@@ -76,11 +80,14 @@ function mountResizeHandler(
       trackGsapInteractionFailure: vi.fn(),
       stageElementPositionOffset: elementOffset,
       handleDomBoxSizeCommit: fallback,
+      commitPositionPatchToHtml: commitPatch,
       addGsapAnimation: vi.fn(),
       convertToKeyframes: vi.fn(),
       setArcPath: vi.fn(),
       updateArcSegment: vi.fn(),
-    }).handleGsapAwareBoxSizeCommit;
+    });
+    resize = editing.handleGsapAwareBoxSizeCommit;
+    property = editing.commitAnimatedProperty;
     return null;
   }
   const root = mountReactHarness(<Harness />);
@@ -91,7 +98,9 @@ function mountResizeHandler(
     anchorSave,
     anchorRollback,
     commitMutation,
+    commitPatch,
     resize: resize!,
+    property: property!,
     root,
   };
 }
@@ -122,6 +131,7 @@ function mountGroupHandler({
       trackGsapInteractionFailure,
       stageElementPositionOffset,
       handleDomBoxSizeCommit: vi.fn(),
+      commitPositionPatchToHtml: vi.fn(),
       addGsapAnimation: vi.fn(),
       convertToKeyframes: vi.fn(),
       setArcPath: vi.fn(),
@@ -254,6 +264,92 @@ describe("useGsapAwareEditing anchored resize", () => {
     expect(h.anchorSave.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.commitMutation.mock.invocationCallOrder[0]!,
     );
+    act(() => h.root.unmount());
+  });
+
+  function mountCropped() {
+    const h = mountResizeHandler([]);
+    const el = withInlineLayoutBox(h.selection.element);
+    el.id = "clip";
+    el.style.cssText = "width: 300px; height: 200px; clip-path: inset(0px 60px 0px 0px)";
+    document.body.append(el);
+    const rect = { left: 0, top: 0, width: 300, height: 200, editScaleX: 1, editScaleY: 1 };
+    const crop = mountReactHarness(
+      <DomEditCropHandles selection={h.selection} overlayRect={rect} onStyleCommit={vi.fn()} />,
+    );
+    return { ...h, el, crop };
+  }
+
+  function resizeLandsWhen(where: "intercept" | "dispatch", h: { commitMutation: Mock }) {
+    const land = (el: HTMLElement) => {
+      el.style.width = "450px";
+      el.style.height = "300px";
+    };
+    mocks.resize.mockImplementation(async (selection, _next, _a, _i, commit) => {
+      if (where === "intercept") land(selection.element);
+      await commit(selection, { type: "size" }, { label: "Resize", softReload: true });
+      return { status: "persisted" };
+    });
+    if (where === "dispatch") h.commitMutation.mockImplementation(async (s) => land(s.element));
+  }
+
+  const scaled = "inset(0px 90px 0px 0px)";
+
+  it("saves the crop scaled with a size that lands only when saved (the W/H fields)", async () => {
+    const h = mountCropped();
+    resizeLandsWhen("dispatch", h);
+    await act(() => h.resize(h.selection, { width: 450, height: 300 }));
+
+    expect(h.commitPatch).toHaveBeenCalledWith(
+      h.selection,
+      [{ type: "inline-style", property: "clip-path", value: scaled }],
+      expect.objectContaining({ coalesceKey: h.commitMutation.mock.calls[0]![2].coalesceKey }),
+    );
+    act(() => h.crop.unmount());
+    expect(h.el.style.getPropertyValue("clip-path")).toBe(scaled);
+    act(() => h.root.unmount());
+  });
+
+  it("scales from the box before a draft its caller applied (the agent tool)", async () => {
+    const h = mountCropped();
+    resizeLandsWhen("intercept", h);
+    applyStudioBoxSizeDraft(h.el, { width: 450, height: 300 });
+    await act(() => h.resize(h.selection, { width: 450, height: 300 }));
+
+    expect(h.commitPatch.mock.calls[0]![1]).toEqual([
+      { type: "inline-style", property: "clip-path", value: scaled },
+    ]);
+    act(() => h.crop.unmount());
+    act(() => h.root.unmount());
+  });
+
+  it("a W field on an animated element saves the scaled crop in the same undo step", async () => {
+    const h = mountCropped();
+    mocks.commitAnimatedProperties.mockImplementation(async (selection, _props, keyed) => {
+      await (keyed ?? h.commitMutation)(selection, { type: "set" }, { label: "Edit width" });
+      selection.element.style.width = "450px";
+    });
+    await act(() => h.property(h.selection, "width", 450));
+
+    const key = h.commitMutation.mock.calls[0]![2].coalesceKey;
+    expect(key).toBeTruthy();
+    expect(h.commitPatch).toHaveBeenCalledWith(
+      h.selection,
+      [{ type: "inline-style", property: "clip-path", value: "inset(0px 90px 0px 0px)" }],
+      expect.objectContaining({ coalesceKey: key }),
+    );
+    act(() => h.crop.unmount());
+    act(() => h.root.unmount());
+  });
+
+  it("shows the scaled crop when deselected before the save lands", async () => {
+    const h = mountCropped();
+    resizeLandsWhen("intercept", h);
+    const saved = h.resize(h.selection, { width: 450, height: 300 });
+    act(() => h.crop.unmount());
+    await act(() => saved);
+
+    expect(h.el.style.getPropertyValue("clip-path")).toBe(scaled);
     act(() => h.root.unmount());
   });
 

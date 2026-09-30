@@ -314,6 +314,7 @@ export function useDomEditCommits({
     handleDomAddTextField,
     handleDomRemoveTextField,
     stageElementPositionOffset,
+    commitPositionPatchToHtml,
     handleDomPathOffsetCommit,
     handleDomBoxSizeCommit,
     handleDomRotationCommit,

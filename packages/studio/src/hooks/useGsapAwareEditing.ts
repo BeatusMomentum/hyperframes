@@ -34,14 +34,14 @@ import { logResize, logResizeSettle } from "../utils/resizeDebug";
 import type { DomEditGroupPathOffsetCommit } from "../components/editor/DomEditOverlay";
 import { runGestureTransaction } from "./gestureTransaction";
 import { hasNonHoldTweenForElement } from "./gsapRuntimeKeyframes";
-import { assertGsapEditPersisted, type GsapEditOutcome } from "./gsapEditOutcome";
+import { assertGsapEditPersisted, saveMove } from "./gsapEditOutcome";
 import type { GsapAnimationFetchOptions } from "./useGsapAnimationFetchFallback";
-
-/** A move only a shared tween positions is saved on the element itself; a blocked one throws. */
-async function saveMove(outcome: GsapEditOutcome, saveOnElement: () => Promise<void>) {
-  if (outcome.status === "element-offset") return saveOnElement();
-  assertGsapEditPersisted(outcome);
-}
+import type { ElementOffsetStagerDeps } from "./elementOffsetStager";
+import {
+  prepareCropResize,
+  saveCropResize,
+  writeSizeWithCrop,
+} from "../components/editor/cropResize";
 
 // Distinct coalesceKey per group drag so consecutive group drags don't fold
 // into one another's undo entry (module-local counter, not Date.now()).
@@ -87,6 +87,7 @@ export interface UseGsapAwareEditingParams {
     next: { width: number; height: number },
     offset?: { x: number; y: number },
   ) => Promise<void>;
+  commitPositionPatchToHtml: ElementOffsetStagerDeps["commitPositionPatchToHtml"];
   // GSAP script commit ops (from useGsapScriptCommits)
   addGsapAnimation: (
     sel: DomEditSelection,
@@ -130,6 +131,7 @@ export function useGsapAwareEditing({
   trackGsapInteractionFailure,
   stageElementPositionOffset,
   handleDomBoxSizeCommit,
+  commitPositionPatchToHtml,
   addGsapAnimation,
   convertToKeyframes,
   setArcPath,
@@ -353,6 +355,8 @@ export function useGsapAwareEditing({
         animGroups: targetAnimations.map((a) => `${a.propertyGroup}:${a.method}`),
       });
       let anchorMove: ReturnType<typeof stageElementPositionOffset> | null = null;
+      const stageCrop = prepareCropResize(selection.element);
+      let cropUndoKey: string | null = null;
       return runGestureTransaction({
         element: selection.element,
         label: "Resize layer",
@@ -381,6 +385,7 @@ export function useGsapAwareEditing({
                 makeFetchFallback(selection),
               );
               assertGsapEditPersisted(outcome);
+              cropUndoKey = coalesceKey;
               // What the resize actually did, not what its animations suggest
               // it would do. An element whose scale is an instant hold has a
               // scale-group tween and still commits width/height, so guessing
@@ -424,7 +429,13 @@ export function useGsapAwareEditing({
           logResizeSettle(selection.element, "dom-route");
           await handleDomBoxSizeCommit(selection, next, offset);
         },
-        afterBufferedCommitsSaved: () => anchorMove?.save() ?? Promise.resolve(),
+        afterBufferedCommitsSaved: async () => {
+          await anchorMove?.save();
+          // Only now is the size live for every caller, drag or not.
+          if (cropUndoKey) {
+            await saveCropResize(stageCrop, selection, commitPositionPatchToHtml, cropUndoKey);
+          }
+        },
         restore: () => {
           anchorMove?.rollback();
           restore();
@@ -434,6 +445,7 @@ export function useGsapAwareEditing({
     },
     [
       handleDomBoxSizeCommit,
+      commitPositionPatchToHtml,
       stageElementPositionOffset,
       gsapCommitMutation,
       previewIframeRef,
@@ -481,10 +493,7 @@ export function useGsapAwareEditing({
 
   // ── Animated property commit ──
 
-  const {
-    commitAnimatedProperty: commitAnimatedPropertyRaw,
-    commitAnimatedProperties: commitAnimatedPropertiesRaw,
-  } = useAnimatedPropertyCommit({
+  const { commitAnimatedProperties: commitAnimatedPropertiesRaw } = useAnimatedPropertyCommit({
     selectedGsapAnimations,
     gsapCommitMutation,
     addGsapAnimation: (sel, method, time) => addGsapAnimation(sel, method, time),
@@ -496,25 +505,30 @@ export function useGsapAwareEditing({
   const commitAnimatedProperties = useCallback(
     async (selection: DomEditSelection, properties: Record<string, number | string>) => {
       try {
-        await commitAnimatedPropertiesRaw(selection, properties);
+        await writeSizeWithCrop(
+          selection,
+          properties,
+          gsapCommitMutation,
+          commitPositionPatchToHtml,
+          (keyed) => commitAnimatedPropertiesRaw(selection, properties, keyed),
+        );
       } catch (error) {
         trackGsapInteractionFailure(error, selection, "property", "Edit animated property");
         throw error;
       }
     },
-    [commitAnimatedPropertiesRaw, trackGsapInteractionFailure],
+    [
+      commitAnimatedPropertiesRaw,
+      commitPositionPatchToHtml,
+      gsapCommitMutation,
+      trackGsapInteractionFailure,
+    ],
   );
 
   const commitAnimatedProperty = useCallback(
-    async (selection: DomEditSelection, property: string, value: number | string) => {
-      try {
-        await commitAnimatedPropertyRaw(selection, property, value);
-      } catch (error) {
-        trackGsapInteractionFailure(error, selection, "property", "Edit animated property");
-        throw error;
-      }
-    },
-    [commitAnimatedPropertyRaw, trackGsapInteractionFailure],
+    (selection: DomEditSelection, property: string, value: number | string) =>
+      commitAnimatedProperties(selection, { [property]: value }),
+    [commitAnimatedProperties],
   );
 
   // ── Arc path wrappers ──

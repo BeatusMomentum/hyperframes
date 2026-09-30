@@ -457,10 +457,26 @@ export function applyStudioBoxSize(
   applyStudioBoxSizeDimensions(element, size);
 }
 
+// The element's box before a resize draft first changed it; gone once the resize saves or is restored.
+const boxSizeDraftBases = new WeakMap<HTMLElement, { width: number; height: number }>();
+
+export function readStudioBoxSizeDraftBase(
+  element: HTMLElement,
+): { width: number; height: number } | null {
+  return boxSizeDraftBases.get(element) ?? null;
+}
+
+export function forgetStudioBoxSizeDraftBase(element: HTMLElement): void {
+  boxSizeDraftBases.delete(element);
+}
+
 export function applyStudioBoxSizeDraft(
   element: HTMLElement,
   size: { width: number; height: number },
 ): void {
+  if (!boxSizeDraftBases.has(element)) {
+    boxSizeDraftBases.set(element, { width: element.offsetWidth, height: element.offsetHeight });
+  }
   promoteInlineForTransform(element);
   applyStudioBoxSizeDimensions(element, size);
 }

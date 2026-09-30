@@ -67,6 +67,12 @@ export function assertGsapEditPersisted(outcome: GsapEditOutcome): void {
   if (outcome.status === "blocked") throw new GsapEditBlockedError(outcome.reason, outcome.detail);
 }
 
+/** A move only a shared tween positions is saved on the element itself; a blocked one throws. */
+export async function saveMove(outcome: GsapEditOutcome, saveOnElement: () => Promise<void>) {
+  if (outcome.status === "element-offset") return saveOnElement();
+  assertGsapEditPersisted(outcome);
+}
+
 function assertGsapAnimationDirectlyEditable(animation: GsapAnimation): void {
   const editability = editabilityForProvenance(animation.provenance);
   if (editability === "unroll") throw new GsapEditBlockedError("unroll-required");

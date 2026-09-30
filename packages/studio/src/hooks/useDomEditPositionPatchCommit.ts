@@ -12,12 +12,12 @@ interface UseDomEditPositionPatchCommitParams {
   showToast: (message: string, tone?: "error" | "info") => void;
 }
 
-interface PositionPatchOptions {
+type PositionPatchOptions = {
   label: string;
   coalesceKey: string;
   coalesceMs?: number;
   skipRefresh?: boolean;
-}
+};
 
 export function useDomEditPositionPatchCommit({
   activeCompPath,

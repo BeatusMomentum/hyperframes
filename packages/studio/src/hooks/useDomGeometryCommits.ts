@@ -15,6 +15,7 @@ import {
   clearStudioRotation,
 } from "../components/editor/manualEdits";
 import { stageElementOffset } from "./elementOffsetStager";
+import { prepareCropResize } from "../components/editor/cropResize";
 import {
   buildPathOffsetPatches,
   buildBoxSizePatches,
@@ -103,7 +104,9 @@ export function useDomGeometryCommits({
       if (gsapFallback) return gsapFallback;
       const beforeSize = captureStudioBoxSize(selection.element);
       const beforeOffset = offset ? captureStudioPathOffset(selection.element) : null;
+      const stageCrop = prepareCropResize(selection.element);
       applyStudioBoxSize(selection.element, next);
+      const crop = stageCrop();
       // Anchored-corner resize (NW/NE/SW) also moves the element to keep the
       // opposite corner fixed. Apply the offset and emit BOTH patch sets in a
       // SINGLE commit: one persist = one undo entry, and there is no
@@ -111,6 +114,7 @@ export function useDomGeometryCommits({
       // offset is not (that frame was the release "jump"). Both builders read
       // the already-mutated live element, so concatenation is safe.
       const patches = buildBoxSizePatches(selection.element);
+      if (crop) patches.push(crop.patch);
       if (offset) {
         applyStudioPathOffset(selection.element, offset);
         patches.push(...buildPathOffsetPatches(selection.element));
@@ -121,6 +125,7 @@ export function useDomGeometryCommits({
       }).catch((error) => {
         restoreStudioBoxSize(selection.element, beforeSize);
         if (beforeOffset) restoreStudioPathOffset(selection.element, beforeOffset);
+        crop?.revert();
         throw error;
       });
     },

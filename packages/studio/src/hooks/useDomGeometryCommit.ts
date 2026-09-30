@@ -136,6 +136,7 @@ export function useDomGeometryCommit({
     trackGsapInteractionFailure,
     stageElementPositionOffset,
     handleDomBoxSizeCommit: noDomBoxSizeRoute,
+    commitPositionPatchToHtml: commitWithFreshQueue,
     addGsapAnimation: gsap.addGsapAnimation,
     convertToKeyframes: gsap.convertToKeyframes,
     setArcPath: gsap.setArcPath,

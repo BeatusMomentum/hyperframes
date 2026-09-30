@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DomEditSelection } from "./domEditing";
 import type { OverlayRect } from "./domEditOverlayGeometry";
 import { DomEditCropHandles } from "./DomEditCropHandles";
+import { isElementCropLifted } from "./domEditOverlayCrop";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,27 +56,27 @@ function render(
   return { root, rerender: draw };
 }
 
-// Regression: the deselect restore used a ref recomputed from RENDER state — on
-// a direct A→B selection switch, state re-syncs to B before A's effect cleanup
-// runs, so A used to get B's crop string (or lose its crop entirely). The
-// restore value must be owned by A's own lift effect / crop gesture.
-describe("DomEditCropHandles clip lift/restore", () => {
-  it("lifts on select and restores the inline clip verbatim on unmount", () => {
+// The lift never touches the element's own clip-path: select+deselect must leave what the author
+// wrote verbatim, and a direct A→B switch must drop A's lift, not B's.
+describe("DomEditCropHandles clip lift", () => {
+  it("lifts on select without rewriting the inline clip, and drops the lift on unmount", () => {
     const a = makeEl("a", "inset(16px round 12px)");
     const { root } = render(a);
-    expect(a.style.getPropertyValue("clip-path")).toBe("none");
+    expect(isElementCropLifted(a)).toBe(true);
+    expect(a.style.getPropertyValue("clip-path")).toBe("inset(16px round 12px)");
     act(() => root.unmount());
+    expect(isElementCropLifted(a)).toBe(false);
     expect(a.style.getPropertyValue("clip-path")).toBe("inset(16px round 12px)");
   });
 
-  it("restores A's own clip when switching directly to B", () => {
+  it("drops A's lift when switching directly to B", () => {
     const a = makeEl("a", "inset(16px)");
     const b = makeEl("b", "inset(40px 8px 4px 2px)");
     const { root, rerender } = render(a);
     rerender(b);
-    // A got ITS clip back, not B's (and not removed); B is now lifted.
+    expect(isElementCropLifted(a)).toBe(false);
+    expect(isElementCropLifted(b)).toBe(true);
     expect(a.style.getPropertyValue("clip-path")).toBe("inset(16px)");
-    expect(b.style.getPropertyValue("clip-path")).toBe("none");
     act(() => root.unmount());
     expect(b.style.getPropertyValue("clip-path")).toBe("inset(40px 8px 4px 2px)");
   });
@@ -83,47 +84,9 @@ describe("DomEditCropHandles clip lift/restore", () => {
   it("never lifts an uneditable clip and leaves it untouched across select/deselect", () => {
     const a = makeEl("a", "circle(50% at 50% 50%)");
     const { root } = render(a);
-    expect(a.style.getPropertyValue("clip-path")).toBe("circle(50% at 50% 50%)");
+    expect(isElementCropLifted(a)).toBe(false);
     act(() => root.unmount());
     expect(a.style.getPropertyValue("clip-path")).toBe("circle(50% at 50% 50%)");
-  });
-
-  it("re-lifts synchronously after the commit path re-applies the cropped value", async () => {
-    const a = makeEl("a", "inset(10px)");
-    let resolveCommit: (() => void) | undefined;
-    const pendingCommit = new Promise<void>((resolve) => {
-      resolveCommit = resolve;
-    });
-    const onStyleCommit = vi.fn((property: string, value: string) => {
-      a.style.setProperty(property, value);
-      return pendingCommit;
-    });
-    const { root } = render(a, onStyleCommit);
-    const handle = document.querySelector<HTMLButtonElement>('[aria-label="Crop right"]');
-    expect(handle).toBeTruthy();
-
-    act(() =>
-      handle!.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 100 }),
-      ),
-    );
-    act(() =>
-      handle!.dispatchEvent(
-        new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 80 }),
-      ),
-    );
-    act(() =>
-      handle!.dispatchEvent(
-        new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 80 }),
-      ),
-    );
-
-    expect(onStyleCommit).toHaveBeenCalledWith("clip-path", "inset(10px 30px 10px 10px)");
-    expect(a.style.getPropertyValue("clip-path")).toBe("none");
-    resolveCommit?.();
-    await act(async () => pendingCommit);
-    act(() => root.unmount());
-    expect(a.style.getPropertyValue("clip-path")).toBe("inset(10px 30px 10px 10px)");
   });
 
   it.each([
@@ -189,33 +152,38 @@ describe("DomEditCropHandles clip lift/restore", () => {
     expect(a.style.getPropertyValue("clip-path")).toBe("inset(0px 20px 0px 0px)");
   });
 
-  it("re-lifts when the crop commit rejects", async () => {
+  it("commits the dragged crop and stays lifted, whether the save lands or fails", async () => {
     const a = makeEl("a", "inset(10px)");
     const onStyleCommit = vi.fn((property: string, value: string) => {
       a.style.setProperty(property, value);
       return Promise.reject(new Error("persist failed"));
     });
     const { root } = render(a, onStyleCommit);
-    const handle = document.querySelector<HTMLButtonElement>('[aria-label="Crop right"]');
-
-    act(() =>
-      handle!.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, clientX: 100 }),
-      ),
-    );
-    act(() =>
-      handle!.dispatchEvent(
-        new PointerEvent("pointermove", { bubbles: true, pointerId: 2, clientX: 80 }),
-      ),
-    );
-    await act(async () => {
-      handle!.dispatchEvent(
-        new PointerEvent("pointerup", { bubbles: true, pointerId: 2, clientX: 80 }),
+    const handle = document.querySelector<HTMLButtonElement>('[aria-label="Crop right"]')!;
+    const press = (type: string, clientX: number) =>
+      act(() =>
+        handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })),
       );
+    press("pointerdown", 100);
+    press("pointermove", 80);
+    await act(async () => {
+      press("pointerup", 80);
       await Promise.resolve();
     });
 
-    expect(a.style.getPropertyValue("clip-path")).toBe("none");
+    expect(onStyleCommit).toHaveBeenCalledWith("clip-path", "inset(10px 30px 10px 10px)");
+    expect(isElementCropLifted(a)).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it("draws the crop the element has now, after an undo rewrites it", () => {
+    const a = makeEl("a", "inset(0px 20px 0px 0px)");
+    const { root, rerender } = render(a);
+    const outline = () => document.querySelector<HTMLElement>(".border-dashed")!.style.width;
+    expect(outline()).toBe("180px");
+    a.style.setProperty("clip-path", "inset(0px 50px 0px 0px)");
+    rerender(a);
+    expect(outline()).toBe("150px");
     act(() => root.unmount());
   });
 });
