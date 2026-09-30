@@ -26,15 +26,25 @@ function getOffsetDragGsap(element: HTMLElement): OffsetDragGsap | null {
 }
 
 // The x/y GSAP reports once the commit loads it into a page without it, as its CSSPlugin parses:
-// the CSS `translate` plus the transform's translation, less a -50% centering it keeps in x/yPercent.
+// the CSS `translate`, then `rotate`, `scale` and `transform` in that order, less a -50% centering kept in x/yPercent.
 function readGsapFoldedCssPosition(element: HTMLElement): { x: number; y: number } {
   const view = element.ownerDocument.defaultView as (Window & typeof globalThis) | null;
   if (!view) return { x: 0, y: 0 };
   const style = view.getComputedStyle(element);
   const translate = style.getPropertyValue("translate").trim();
   const [tx = "0", ty = "0"] = translate === "none" ? [] : translate.split(/\s+/);
-  const transform = style.getPropertyValue("transform");
-  const matrix = transform && transform !== "none" ? new view.DOMMatrix(transform) : null;
+  const read = (prop: string) => {
+    const value = style.getPropertyValue(prop).trim();
+    return value === "none" ? "" : value;
+  };
+  const rotate = read("rotate");
+  const scale = read("scale");
+  const folded = [
+    rotate && `rotate(${rotate})`,
+    scale && `scale(${scale.split(/\s+/).join(",")})`,
+    read("transform"),
+  ].join(" ");
+  const matrix = folded.trim() ? new view.DOMMatrix(folded) : null;
   const axis = (value: string, fromTransform: number, size: number) => {
     const raw = Number.parseFloat(value) || 0;
     const t = (value.endsWith("%") ? (raw * size) / 100 : raw) + fromTransform;

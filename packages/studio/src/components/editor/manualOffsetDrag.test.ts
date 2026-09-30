@@ -557,8 +557,22 @@ describe("resumeGsapTimelines", () => {
 describe("drag in a composition without GSAP", () => {
   // The commit writes `gsap.set(x, y)`; once GSAP loads it folds the CSS translate and the
   // transform's translation into x/y, so the drag base must already count them.
-  function committedPosition(css: string, dx: number, dy: number) {
+  function committedPosition(
+    css: string,
+    dx: number,
+    dy: number,
+    gsapBase?: { x: number; y: number },
+  ) {
     const window = new Window();
+    if (gsapBase) {
+      const base: Record<string, number> = gsapBase;
+      Object.assign(window, {
+        gsap: {
+          set: () => undefined,
+          getProperty: (_el: Element, prop: string) => base[prop] ?? 0,
+        },
+      });
+    }
     window.document.head.innerHTML = `<style>#title { ${css} }</style>`;
     const element = window.document.createElement("h1");
     element.id = "title";
@@ -589,6 +603,21 @@ describe("drag in a composition without GSAP", () => {
   it("keeps a stylesheet transform translation the same way", () => {
     const { newX, newY } = committedPosition("transform: translate(-60px, 10px);", 40, 30);
     expect({ x: newX, y: newY }).toEqual({ x: -20, y: 40 });
+  });
+
+  it("turns the transform's translation by a CSS rotate, as GSAP folds it", () => {
+    const { newX, newY } = committedPosition(
+      "rotate: 90deg; transform: translate(100px, 0);",
+      40,
+      30,
+    );
+    expect(newX).toBeCloseTo(40);
+    expect(newY).toBeCloseTo(130);
+  });
+
+  it("reads the base from GSAP itself once the page has it", () => {
+    const { newX, newY } = committedPosition("translate: 0 -200px;", 40, 30, { x: 7, y: 5 });
+    expect({ x: newX, y: newY }).toEqual({ x: 47, y: 35 });
   });
 
   it("leaves a -50% centering out of x/y, since GSAP keeps it as xPercent/yPercent", () => {
