@@ -125,8 +125,7 @@ export function localFontSortScore(font: LocalFontData): number {
   return 3;
 }
 
-export function uniqueFontFamilies(values: string[]): string[] {
-  const seen = new Set<string>();
+export function uniqueFontFamilies(values: string[], seen = new Set<string>()): string[] {
   return values.reduce<string[]>((result, value) => {
     const family = value.trim();
     if (!family) return result;
