@@ -5,6 +5,7 @@ const frames = { intervals: [16, 17, 16], work: [2, 3, 2] };
 const result = (undo) => ({
   tracking: { max: 0 },
   pressJump: 0,
+  teleport: null,
   drop: 0,
   reload: 0,
   render: 0,

@@ -2,6 +2,7 @@
 // Projects are written to a tmp dir per case; nothing checked in is edited.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { dragCases } from "./drags.mjs";
 
 export const COMPOSITION = { width: 1920, height: 1080 };
 /** Frame-aligned at 30 fps, inside every tween, so preview and producer sample the same instant. */
@@ -33,8 +34,9 @@ const caseId = (c) =>
 export function buildGrid(kind = "full") {
   return product({ ...AXES, gesture: GESTURES })
     .filter((c) => c.placement !== "xpercent" || c.gsap !== "none") // xPercent only exists through GSAP
-    .filter((c) => kind !== "pr" || (c.zoom === 100 && c.nesting === "root"))
-    .map((c) => ({ id: caseId(c), ...c }));
+    .map((c) => ({ id: caseId(c), ...c }))
+    .concat(dragCases())
+    .filter((c) => kind !== "pr" || (c.zoom === 100 && c.nesting === "root"));
 }
 
 const PLACEMENT_CSS = {
@@ -42,11 +44,28 @@ const PLACEMENT_CSS = {
   pct: "left: 560px; top: 300px; translate: 25% 25%;",
   center: "left: 50%; top: 50%; translate: -50% -50%;",
   xpercent: "left: 50%; top: 50%;",
+  transform: "left: 50%; top: 50%; transform: translate(-50%, -50%);",
 };
+
+// A second element for the sequences that switch between two; its luminance is under the render's threshold.
+const OTHER = { width: 200, height: 120, color: "#0000ff" };
+const OTHER_PLACEMENT_CSS = {
+  px: "left: 1100px; top: 560px; translate: 40px 30px;",
+  pct: "left: 1100px; top: 560px; translate: 25% 25%;",
+  center: "left: 75%; top: 75%; translate: -50% -50%;",
+};
+
+export const TEXT = "Edit accuracy bench";
+const targetText = (spec) => (spec.text ? TEXT : "");
 
 function targetCss(spec) {
   const rotate = spec.rotation ? ` rotate: ${spec.rotation}deg;` : "";
-  return `#target { position: absolute; ${PLACEMENT_CSS[spec.placement]} width: ${TARGET.width}px; height: ${TARGET.height}px; background: ${TARGET.color};${rotate} }`;
+  const other = spec.other
+    ? `\n      #other { position: absolute; ${OTHER_PLACEMENT_CSS[spec.placement]} width: ${OTHER.width}px; height: ${OTHER.height}px; background: ${OTHER.color}; }`
+    : "";
+  // White text reads as full coverage in the render's luminance box, so it leaves that metric alone.
+  const text = spec.text ? " color: #ffffff; font: 28px/1.2 sans-serif;" : "";
+  return `#target { position: absolute; ${PLACEMENT_CSS[spec.placement]} width: ${TARGET.width}px; height: ${TARGET.height}px; background: ${TARGET.color};${rotate}${text} }${other}`;
 }
 
 function gsapLines(spec) {
@@ -74,7 +93,7 @@ function rootHtml(spec) {
   const nested = spec.nesting === "nested";
   const body = nested
     ? `<div id="scene-sub" data-composition-id="sub" data-composition-src="compositions/sub.html" data-start="0" data-duration="4" data-track-index="1" style="position: absolute; left: ${NESTED_HOST.left}px; top: ${NESTED_HOST.top}px; width: ${NESTED_HOST.width}px; height: ${NESTED_HOST.height}px; overflow: hidden"></div>`
-    : `<div id="target" class="clip" data-start="0" data-duration="4" data-track-index="1"></div>`;
+    : `<div id="target" class="clip" data-start="0" data-duration="4" data-track-index="1">${targetText(spec)}</div>${spec.other ? `\n      <div id="other" class="clip" data-start="0" data-duration="4" data-track-index="2"></div>` : ""}`;
   const script = spec.gsap === "none" ? "" : timelineScript("main", nested ? [] : gsapLines(spec));
   return `<!doctype html>
 <html lang="en">
@@ -100,7 +119,7 @@ function subHtml(spec) {
   const script = spec.gsap === "none" ? "" : timelineScript("sub", gsapLines(spec));
   return `<template id="sub-template">
   <div id="sub" data-composition-id="sub" data-width="${NESTED_HOST.width}" data-height="${NESTED_HOST.height}">
-    <div id="target"></div>
+    <div id="target">${targetText(spec)}</div>${spec.other ? `\n    <div id="other"></div>` : ""}
     <style>
       #sub { position: relative; width: ${NESTED_HOST.width}px; height: ${NESTED_HOST.height}px; background: ${BACKGROUND}; overflow: hidden; }
       ${targetCss(spec)}

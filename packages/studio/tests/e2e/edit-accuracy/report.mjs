@@ -9,12 +9,24 @@ export const UNDO_WRITE_MAX_MS = 2000;
 // A frame over 1.5 vsyncs is dropped; raw rAF p95 stays reported so a different rule re-scores without a re-run.
 const DROPPED_FRAME_MS = 25;
 const WORK_MS = 8;
-export const METRICS = ["tracking", "press", "drop", "reload", "render", "undo", "smooth"];
+export const METRICS = [
+  "tracking",
+  "press",
+  "teleport",
+  "drop",
+  "reload",
+  "render",
+  "undo",
+  "text",
+  "smooth",
+];
 
 /** Worst-first value per metric; undo ranks by box distance, and its byte failures are counted apart. */
 const worstValue = {
   tracking: (r) => r.tracking.max,
   press: (r) => r.pressJump ?? 0,
+  teleport: (r) => r.teleport?.max ?? 0,
+  text: (r) => (r.text && !r.text.pass ? 1 : 0),
   drop: (r) => r.drop,
   reload: (r) => r.reload,
   render: (r) => r.render ?? 0,
@@ -52,6 +64,10 @@ export function score(spec, r) {
   const checks = {
     tracking: r.tracking.max <= LIMIT_PX,
     press: r.pressJump === null || r.pressJump <= LIMIT_PX,
+    // Null for a key gesture; a drag whose frames could not be measured fails.
+    teleport: r.teleport === null || r.teleport.pass === true,
+    // Text cases only: the typed word saved and shown after a reload (and a selected word stays editable).
+    text: !r.text || r.text.pass,
     drop: r.drop <= LIMIT_PX,
     reload: r.reload <= LIMIT_PX,
     render: r.render !== null && r.render <= LIMIT_PX,
@@ -142,7 +158,7 @@ function table(summary, meta, results) {
     `Every metric counts except smoothness, which is reported against the blank-page control: ${summary.perMetric.find((m) => m.metric === "smooth").pass}/${summary.total} pass it, and ${summary.passing}/${summary.total} pass everything including it.`,
     "",
     `Studio ${meta.studio} (build ${meta.build}), bench ${meta.bench}, grid \`${meta.grid}\`, ${meta.date}, ${summary.seconds}s with ${meta.jobs} jobs, ${summary.errors} harness errors, load ${meta.load}.`,
-    `Pass: tracking, press jump, drop, reload and render ≤ ${LIMIT_PX} px; undo and redo byte-identical with the box ≤ ${LIMIT_PX} px; no more frames over ${DROPPED_FRAME_MS} ms than the blank-page control, and main-thread work ≤ ${WORK_MS} ms per frame at p95.`,
+    `Pass: tracking, press jump, teleport, drop, reload and render ≤ ${LIMIT_PX} px; undo and redo byte-identical with the box ≤ ${LIMIT_PX} px; no more frames over ${DROPPED_FRAME_MS} ms than the blank-page control, and main-thread work ≤ ${WORK_MS} ms per frame at p95.`,
     "",
     `Undo or redo left different bytes in ${summary.bytesDiffer.undo} undo and ${summary.bytesDiffer.redo} redo cases.`,
     `The preview never held still for 1 s within 15 s in ${summary.unsettled} cases; the metrics that snapshot feeds fail.`,
@@ -175,6 +191,8 @@ export function entry(r) {
     pass: r.pass,
     tracking: roundUp(r.tracking.max),
     pressJump: roundUp(r.pressJump),
+    teleport: roundUp(r.teleport?.max ?? null),
+    ...(r.text && { text: r.text.pass }),
     drop: roundUp(r.drop),
     reload: roundUp(r.reload),
     render: roundUp(r.render),

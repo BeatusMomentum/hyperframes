@@ -18,8 +18,9 @@ import {
   toPoints,
   visibleQuad,
 } from "./geometry.mjs";
+import { frameSampler, scoreTeleport, startFrames, stopFrames } from "./teleport.mjs";
 
-const VIEWPORT = { width: 1600, height: 900 };
+export const VIEWPORT = { width: 1600, height: 900 };
 const STEPS = 20;
 const MOVE_BY = [90, 60];
 const RESIZE_BY = 60;
@@ -28,7 +29,7 @@ const CROP_BY = 40;
 const NUDGES = 5;
 const ZOOM_SENSITIVITY = 0.007; // previewZoom.ts: one wheel unit scales zoom by exp(0.007)
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const up = (port) =>
   fetch(`http://127.0.0.1:${port}/api/projects`).then(
@@ -98,7 +99,7 @@ export async function stopServer(child) {
 }
 
 /** Runs in the top frame before Studio: the WebMCP host plus a frame-interval and long-task recorder. */
-function instrumentPage() {
+export function instrumentPage() {
   if (window.top !== window) return;
   const tools = new Map();
   Object.defineProperty(document, "modelContext", {
@@ -120,7 +121,7 @@ function instrumentPage() {
   }).observe({ type: "longtask" });
 }
 
-const nextFrame = (page, n = 1) =>
+export const nextFrame = (page, n = 1) =>
   page.evaluate(
     (count) =>
       new Promise((r) => {
@@ -130,14 +131,14 @@ const nextFrame = (page, n = 1) =>
     n,
   );
 
-function readFiles(dir, files) {
+export function readFiles(dir, files) {
   return Object.fromEntries(files.map((f) => [f, readFileSync(join(dir, f), "utf8")]));
 }
-const sameFiles = (a, b) => Object.keys(a).every((f) => a[f] === b[f]);
+export const sameFiles = (a, b) => Object.keys(a).every((f) => a[f] === b[f]);
 
 /** Waits until the files differ from `from` (or equal `want`, or just exist) and then hold still for 300 ms. */
 // fallow-ignore-next-line complexity
-async function waitForFiles(ctx, { from, want, timeout = 5000 }) {
+export async function waitForFiles(ctx, { from, want, timeout = 5000 }) {
   const deadline = Date.now() + timeout;
   let last = readFiles(ctx.dir, ctx.files);
   let stableSince = Date.now();
@@ -152,16 +153,22 @@ async function waitForFiles(ctx, { from, want, timeout = 5000 }) {
 }
 
 // fallow-ignore-next-line complexity
-async function previewCandidate(frame) {
-  const target = await frame.$("#target");
-  const box = target && (await (await frame.frameElement())?.boundingBox());
+async function previewCandidate(frame, selector) {
+  const target = await frame.$(selector);
+  const host = target && (await frame.frameElement());
+  // Studio loads an edit in a same-size shadow iframe hidden with visibility; it is not what is on screen.
+  const shown =
+    host && (await host.evaluate((e) => e.checkVisibility({ visibilityProperty: true })));
+  const box = shown && (await host.boundingBox());
   return box && { area: box.width * box.height, frame, target };
 }
 
 /** The largest visible preview iframe holding the target; a frame Studio detaches mid-scan is skipped. */
-async function findTarget(page) {
+async function findTarget(page, selector = "#target") {
   const previews = page.frames().filter((f) => f.url().includes("/preview"));
-  const found = await Promise.all(previews.map((f) => previewCandidate(f).catch(() => null)));
+  const found = await Promise.all(
+    previews.map((f) => previewCandidate(f, selector).catch(() => null)),
+  );
   return found.filter(Boolean).reduce((a, b) => (!a || b.area > a.area ? b : a), null);
 }
 
@@ -175,8 +182,8 @@ async function contentQuad(handle) {
 }
 
 async function findHandles(ctx) {
-  const found = await findTarget(ctx.page);
-  if (!found) throw new Error("target not found in preview");
+  const found = await findTarget(ctx.page, ctx.selector);
+  if (!found) throw new Error(`${ctx.selector ?? "#target"} not found in preview`);
   ctx.handles = { target: found.target, root: await found.frame.$('[data-composition-id="main"]') };
 }
 
@@ -193,7 +200,7 @@ async function readQuads({ handles }) {
 }
 
 /** The target's rendered quad, visible (cropped) quad and the screen/composition mapping, from CDP quads. */
-async function measure(ctx) {
+export async function measure(ctx) {
   // Studio can swap the preview into a fresh iframe; a cached handle then reads a hidden copy, so find it again.
   let read = null;
   for (let attempt = 0; !read; attempt++) {
@@ -225,7 +232,7 @@ const previewFrames = (page) =>
 
 /** Measures once the preview frames and the box have held still for STILL_MS; Studio updates both after a save. */
 // fallow-ignore-next-line complexity
-async function settled(ctx, timeout = 15_000) {
+export async function settled(ctx, timeout = 15_000) {
   const deadline = Date.now() + timeout;
   let start = { m: await measure(ctx), frames: previewFrames(ctx.page) };
   let now = start;
@@ -243,7 +250,7 @@ async function settled(ctx, timeout = 15_000) {
 
 /** Ready once Studio's own seek tool reports the composition and the playhead landed. */
 // fallow-ignore-next-line complexity
-async function openStudio(ctx) {
+export async function openStudio(ctx) {
   ctx.handles = null;
   await ctx.page.waitForFunction(() => window.__editBench?.has("studio_seek"), { timeout: 90_000 });
   let seek = null;
@@ -261,21 +268,21 @@ async function openStudio(ctx) {
 }
 
 /** Puppeteer presses one key at a time: hold the modifiers around the last key. */
-async function chord(page, keys) {
+export async function chord(page, keys) {
   const [key, ...mods] = keys.split("+").reverse();
   for (const m of mods) await page.keyboard.down(m);
   await page.keyboard.press(key);
   for (const m of mods) await page.keyboard.up(m);
 }
 
-async function blurPreview(page) {
+export async function blurPreview(page) {
   await page.evaluate(() => {
     if (document.activeElement?.tagName === "IFRAME") document.activeElement.blur();
   });
 }
 
 /** Snapping deliberately pulls the box off the pointer, so the bench turns it off with Studio's own toggle. */
-async function disableSnap(page) {
+export async function disableSnap(page) {
   const title = await page.$eval('[aria-label="Toggle snap"]', (b) => b.title);
   if (/enabled/i.test(title)) await page.click('[aria-label="Toggle snap"]');
   const after = await page.$eval('[aria-label="Toggle snap"]', (b) => b.title);
@@ -289,7 +296,7 @@ const zoomOf = (page) =>
   });
 
 /** Ctrl+wheel over the target, as a person zooms; wheel units are solved exactly from the zoom law. */
-async function setZoom(ctx, percent, anchor) {
+export async function setZoom(ctx, percent, anchor) {
   if (percent === 100) return 100;
   await ctx.page.mouse.move(anchor[0], anchor[1]);
   await ctx.page.keyboard.down("Control");
@@ -321,7 +328,7 @@ const overlayRect = (page, selector) =>
     }),
   );
 
-async function selectTarget(ctx, m) {
+export async function selectTarget(ctx, m) {
   const c = m.map.toScreen(centre(m.visible));
   const want = m.visible.map(m.map.toScreen);
   const isSelected = async () => {
@@ -436,7 +443,7 @@ const TRACE_CATEGORIES = ["toplevel", "devtools.timeline", "blink.user_timing"];
 const TRACE_MARK = "edit-bench-end";
 
 /** Frame stamps plus a main-thread trace of the drag; the end mark ties performance.now() to trace time. */
-async function recording(page, on) {
+export async function recording(page, on) {
   if (on) await page.tracing.start({ categories: TRACE_CATEGORIES });
   const rec = await page.evaluate(
     (flag, mark) => {
@@ -494,7 +501,7 @@ function mainThreadPerFrame({ frames, mark, trace }) {
 
 const hundredth = (v) => Math.round(v * 100) / 100;
 
-function smoothness(rec) {
+export function smoothness(rec) {
   const intervals = rec.frames.slice(1).map((t, i) => t - rec.frames[i]);
   const work = mainThreadPerFrame(rec);
   return {
@@ -510,7 +517,7 @@ const CONTROL_PAGE = `data:text/html,<body style="margin:0;background:%23202020"
   style="position:absolute;left:600px;top:300px;width:240px;height:160px;background:%23f0c020"></div>`;
 
 /** The case's drag schedule and per-frame reads on a blank page in the same Chrome: the machine's own frame drops. */
-async function controlDrag(browser, gesture) {
+export async function controlDrag(browser, gesture) {
   const context = await browser.createBrowserContext();
   try {
     const page = await context.newPage();
@@ -547,10 +554,11 @@ async function controlDrag(browser, gesture) {
   }
 }
 
-async function pointerGesture(ctx, gesture, pre) {
+/** `route`, given the press point, replaces the gesture's straight path; a `{ pause }` entry holds still. */
+export async function pointerGesture(ctx, gesture, pre, route) {
   const press = await handlePoint(ctx, pre, gesture);
   const pressComp = pre.map.toComp(press);
-  const g = plan(gesture, pre, pressComp);
+  const g = { ...plan(gesture, pre, pressComp), ...(route && { path: route(press) }) };
   const hit = await ctx.page.evaluate(([x, y]) => {
     const e = document.elementFromPoint(x, y);
     return e
@@ -558,6 +566,8 @@ async function pointerGesture(ctx, gesture, pre) {
       : null;
   }, press);
   await ctx.page.mouse.move(press[0], press[1]);
+  await startFrames(ctx.page, ctx.selector ?? "#target");
+  await nextFrame(ctx.page, 2);
   await ctx.page.mouse.down();
   await nextFrame(ctx.page);
   const s0 = await sample(ctx, gesture, g.point, press);
@@ -565,6 +575,10 @@ async function pointerGesture(ctx, gesture, pre) {
   const errors = [];
   let last = s0;
   for (const p of g.path) {
+    if (p.pause) {
+      await sleep(p.pause);
+      continue;
+    }
     await ctx.page.mouse.move(p[0], p[1]);
     await nextFrame(ctx.page);
     last = await sample(ctx, gesture, g.point, p);
@@ -577,6 +591,7 @@ async function pointerGesture(ctx, gesture, pre) {
   return {
     errors,
     lastQuad,
+    lastMeasure: last.m,
     pressJump: quadDistance(s0.m.visible, pre.visible),
     smooth,
     diag: {
@@ -622,6 +637,7 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
   try {
     await page.setViewport(VIEWPORT);
     await page.evaluateOnNewDocument(instrumentPage);
+    await page.evaluateOnNewDocument(frameSampler);
     await page.goto(url);
     let pre = await openStudio(ctx);
     await disableSnap(page);
@@ -644,6 +660,7 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     await blurPreview(page);
     await page.keyboard.press("Escape");
     const committed = await settled(ctx);
+    const frames = await stopFrames(page);
     await shoot("committed");
     committedFiles = readFiles(dir, files);
     const saved = !sameFiles(committedFiles, original);
@@ -683,8 +700,13 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
         frames: drive.errors.length,
       },
       pressJump: drive.pressJump,
+      teleport: spec.gesture === "nudge" ? null : scoreTeleport(spec.gesture, frames),
       drop: quadDistance(drive.lastQuad, committed.visible),
-      reload: quadDistance(committed.visible, reloaded.visible),
+      // Also against the box the gesture left, so a write the file drops shows here and not only as drop.
+      reload: Math.max(
+        quadDistance(committed.visible, reloaded.visible),
+        quadDistance(drive.lastQuad, reloaded.visible),
+      ),
       undo: {
         bytes: saved && undo.reached && sameFiles(undo.files, original),
         box: quadDistance(undone.visible, pre.visible),
