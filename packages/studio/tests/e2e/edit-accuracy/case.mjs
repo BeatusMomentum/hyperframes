@@ -28,6 +28,10 @@ const ROTATE_BY = (25 * Math.PI) / 180;
 const CROP_BY = 40;
 const NUDGES = 5;
 const ZOOM_SENSITIVITY = 0.007; // previewZoom.ts: one wheel unit scales zoom by exp(0.007)
+// Flash controls, for proving the metric only: tap (release without a move), blink (hide the preview for one frame
+// after the release), reload (reload the preview frame mid-settle). EDIT_BENCH_MARKER=0 captures without the marker.
+const CONTROL = process.env.EDIT_BENCH_CONTROL;
+const CAPTURE = { marker: process.env.EDIT_BENCH_MARKER !== "0" };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -523,7 +527,7 @@ async function controlDrag(browser, gesture) {
     const read = () => readQuads(ctx);
     if (gesture === "nudge") {
       await recording(page, true);
-      for (let i = 0; i < NUDGES; i++) {
+      for (let i = 1; i < NUDGES; i++) {
         await page.keyboard.press("ArrowRight");
         await nextFrame(page);
       }
@@ -554,7 +558,8 @@ const perimeterPx = (m) =>
     m.visible.map(m.map.toScreen).reduce((sum, p, i, q) => sum + dist(p, q[(i + 1) % 4]), 0),
   );
 
-/** Drives the drag and returns with the button still down; the flash window starts at pointer-up. */
+/** Drives the drag and returns with the button still down; `release` (pointer-up) runs in the flash window. */
+// fallow-ignore-next-line complexity
 async function pointerGesture(ctx, gesture, pre) {
   const press = await handlePoint(ctx, pre, gesture);
   const pressComp = pre.map.toComp(press);
@@ -572,7 +577,7 @@ async function pointerGesture(ctx, gesture, pre) {
   await recording(ctx.page, true);
   const errors = [];
   let last = s0;
-  for (const p of g.path) {
+  for (const p of CONTROL === "tap" ? g.path.map(() => press) : g.path) {
     await ctx.page.mouse.move(p[0], p[1]);
     await nextFrame(ctx.page);
     last = await sample(ctx, gesture, g.point, p);
@@ -582,8 +587,10 @@ async function pointerGesture(ctx, gesture, pre) {
   const smooth = smoothness(rec);
   const lastQuad = gesture === "crop" ? last.m.outline : last.m.visible;
   return {
-    errors,
-    lastQuad,
+    release: async () => {
+      await ctx.page.mouse.up();
+      return { errors, lastQuad };
+    },
     pressJump: quadDistance(s0.m.visible, pre.visible),
     smooth,
     diag: {
@@ -594,23 +601,48 @@ async function pointerGesture(ctx, gesture, pre) {
   };
 }
 
+/** Nudges all but the last step traced; `release` presses the last one in the flash window, so a key commits there. */
 async function nudgeGesture(ctx, pre) {
   await recording(ctx.page, true);
-  for (let i = 0; i < NUDGES; i++) {
+  for (let i = 1; i < NUDGES; i++) {
     await ctx.page.keyboard.press("ArrowRight");
     await nextFrame(ctx.page);
   }
   await nextFrame(ctx.page, 2);
   const smooth = smoothness(await recording(ctx.page, false));
-  const m = await measure(ctx);
-  const [a, b] = [centre(pre.visible), centre(m.visible)];
   return {
-    errors: [dist([b[0] - a[0], b[1] - a[1]], [NUDGES, 0])],
-    lastQuad: m.visible,
+    release: async () => {
+      await ctx.page.keyboard.press("ArrowRight");
+      await nextFrame(ctx.page, 2);
+      const m = await measure(ctx);
+      const [a, b] = [centre(pre.visible), centre(m.visible)];
+      return { errors: [dist([b[0] - a[0], b[1] - a[1]], [NUDGES, 0])], lastQuad: m.visible };
+    },
     pressJump: null,
     smooth,
     diag: {},
   };
+}
+
+/** The positive flash controls, started right after the committing input. */
+function injectControl(page) {
+  if (CONTROL === "blink")
+    return page.evaluate(() =>
+      requestAnimationFrame(() => {
+        const s = document.querySelector('[data-testid="preview-zoom-stage"]').style;
+        s.opacity = "0";
+        requestAnimationFrame(() => (s.opacity = ""));
+      }),
+    );
+  if (CONTROL === "reload")
+    return page.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      const frames = [...document.querySelectorAll("iframe")].filter((f) =>
+        f.src.includes("/preview"),
+      );
+      const area = (f) => f.offsetWidth * f.offsetHeight;
+      frames.reduce((a, b) => (area(b) > area(a) ? b : a)).contentWindow.location.reload();
+    });
 }
 
 /** One case, end to end, in a fresh browser context against a Studio already serving `dir`. */
@@ -644,8 +676,9 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
         : await pointerGesture(ctx, spec.gesture, pre);
     // Flash windows: each action to its settle is screencast, untraced; the drag's trace has already stopped.
     const flash = { regions: await panes(page), tolPx: perimeterPx(pre), windows: {} };
-    let capture = await startCapture(page);
-    if (spec.gesture !== "nudge") await page.mouse.up();
+    let capture = await startCapture(page, CAPTURE);
+    const { errors, lastQuad } = await drive.release();
+    await injectControl(page);
     await waitForFiles(ctx, { from: original, timeout: spec.gesture === "nudge" ? 6000 : 5000 });
     await settled(ctx);
     flash.windows.release = await capture.stop();
@@ -659,7 +692,7 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     // Undo and redo run before any reload. Each waits up to 15 s for its own write; redo waits for undo.
     const landed = (from) =>
       saved ? waitForFiles(ctx, { from, timeout: 15_000 }) : { reached: true, files: from };
-    capture = await startCapture(page);
+    capture = await startCapture(page, CAPTURE);
     await chord(page, "Control+z");
     const undo = await landed(committedFiles);
     const undone = await settled(ctx);
@@ -668,7 +701,7 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     let [redo, redone] = [{ reached: false }, null];
     if (undo.reached) {
       await blurPreview(page);
-      capture = await startCapture(page);
+      capture = await startCapture(page, CAPTURE);
       await chord(page, "Control+Shift+z");
       redo = await landed(undo.files);
       redone = await settled(ctx);
@@ -680,7 +713,10 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     // The reload window starts once Studio can seek the composition; before that Studio itself is loading.
     const lastSettled = (flash.windows.redo ?? flash.windows.undo).frames.at(-1);
     await page.reload();
-    const reloaded = await openStudio(ctx, async () => (capture = await startCapture(page)));
+    const reloaded = await openStudio(
+      ctx,
+      async () => (capture = await startCapture(page, CAPTURE)),
+    );
     flash.windows.reload = { ...(await capture.stop()), before: lastSettled };
     await shoot("reloaded");
     const quads = Object.fromEntries(
@@ -691,12 +727,12 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
       zoom,
       saved,
       tracking: {
-        max: Math.max(...drive.errors),
-        p95: percentile(drive.errors, 95),
-        frames: drive.errors.length,
+        max: Math.max(...errors),
+        p95: percentile(errors, 95),
+        frames: errors.length,
       },
       pressJump: drive.pressJump,
-      drop: quadDistance(drive.lastQuad, committed.visible),
+      drop: quadDistance(lastQuad, committed.visible),
       reload: quadDistance(committed.visible, reloaded.visible),
       undo: {
         bytes: saved && undo.reached && sameFiles(undo.files, original),

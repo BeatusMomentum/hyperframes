@@ -7,7 +7,19 @@ export const LIMIT_PX = 0.5;
 // A frame over 1.5 vsyncs is dropped; raw rAF p95 stays reported so a different rule re-scores without a re-run.
 const DROPPED_FRAME_MS = 25;
 const WORK_MS = 8;
-export const METRICS = ["tracking", "press", "drop", "reload", "render", "undo", "flash", "smooth"];
+export const METRICS = [
+  "tracking",
+  "press",
+  "drop",
+  "reload",
+  "render",
+  "undo",
+  "flash",
+  "paint",
+  "smooth",
+];
+// Edit-to-paint: the first frame painted after a committing input already shows the after-state.
+export const PAINT_FRAMES = 1;
 
 /** Worst-first value per metric; undo ranks by box distance, and its byte failures are counted apart. */
 const worstValue = {
@@ -18,6 +30,7 @@ const worstValue = {
   render: (r) => r.render ?? 0,
   undo: (r) => Math.max(r.undo.box, r.undo.redoBox ?? 0),
   flash: (r) => r.flash.bad,
+  paint: (r) => r.flash.paint?.frames ?? Infinity,
   smooth: (r) => r.smooth.dropped - r.smooth.control.dropped,
 };
 
@@ -57,6 +70,7 @@ export function score(spec, r) {
     undo: r.undo.bytes && r.undo.redoBytes && Math.max(r.undo.box, r.undo.redoBox) <= LIMIT_PX,
     // A window the screencast covered under 90% is uncovered, never a pass.
     flash: !r.flash.uncovered && r.flash.bad === 0,
+    paint: !r.flash.uncovered && r.flash.paint !== null && r.flash.paint.frames <= PAINT_FRAMES,
     // Only drops beyond the blank page's, driven the same way in the same Chrome, are the edit's.
     smooth:
       smooth.dropped <= smooth.control.dropped &&
@@ -132,6 +146,11 @@ function summarize(results, seconds) {
       ),
       lowest: round(Math.min(...measured.map((r) => r.flash.coverage))),
     },
+    paint: {
+      unknown: measured.filter((r) => !r.flash.paint).length,
+      frames: medianMax(measured.filter((r) => r.flash.paint).map((r) => r.flash.paint.frames)),
+      ms: medianMax(measured.filter((r) => r.flash.paint?.ms != null).map((r) => r.flash.paint.ms)),
+    },
     smooth: smoothSummary(measured),
     seconds: Math.round(seconds),
   };
@@ -148,13 +167,14 @@ function table(summary, meta, results) {
     `Every metric counts except smoothness, which is reported against the blank-page control: ${summary.perMetric.find((m) => m.metric === "smooth").pass}/${summary.total} pass it, and ${summary.passing}/${summary.total} pass everything including it.`,
     "",
     `Studio ${meta.studio} (build ${meta.build}), bench ${meta.bench}, grid \`${meta.grid}\`, ${meta.date}, ${summary.seconds}s with ${meta.jobs} jobs, ${summary.errors} harness errors, load ${meta.load}.`,
-    `Pass: tracking, press jump, drop, reload and render ≤ ${LIMIT_PX} px; undo and redo byte-identical with the box ≤ ${LIMIT_PX} px; no more frames over ${DROPPED_FRAME_MS} ms than the blank-page control, and main-thread work ≤ ${WORK_MS} ms per frame at p95.`,
+    `Pass: tracking, press jump, drop, reload and render ≤ ${LIMIT_PX} px; undo and redo byte-identical with the box ≤ ${LIMIT_PX} px; no flash frame and the after-state in the next frame; no more frames over ${DROPPED_FRAME_MS} ms than the blank-page control, and main-thread work ≤ ${WORK_MS} ms per frame at p95.`,
     "",
     `Undo or redo left different bytes in ${summary.bytesDiffer.undo} undo and ${summary.bytesDiffer.redo} redo cases.`,
     `The preview never held still for 1 s within 15 s in ${summary.unsettled} cases; the metrics that snapshot feeds fail.`,
     `An undo or redo write never landed within 15 s in ${summary.undoTimeouts} cases; undo fails there.`,
     `The producer failed to render ${summary.renderErrors} cases; render fails there.`,
     `Flash: ${summary.flash.badCases} cases painted a frame matching neither the state before nor after (longest run ${summary.flash.longest} frames); ${summary.flash.uncovered} cases uncovered; screencast coverage median ${summary.flash.coverage}, lowest ${summary.flash.lowest}.`,
+    `Edit-to-paint (pointer-up, key, undo, redo; pass at ${PAINT_FRAMES} frame): frames to the after-state (median/max) ${summary.paint.frames}, ms ${summary.paint.ms}; ${summary.paint.unknown} cases logged no input.`,
     `Smoothness: ${summary.smooth.unknown} cases with unknown work; dropped frames per case (median/max) ${summary.smooth.dropped}, blank-page control ${summary.smooth.control}; raw rAF p95 (median/max) ${summary.smooth.p95} ms, control ${summary.smooth.controlP95} ms.`,
     "",
     "| Metric | Pass | Worst | Worst case |",
@@ -194,6 +214,7 @@ export function entry(r) {
     ...(r.renderError && { renderError: true }),
     flash: r.flash.bad,
     ...(r.flash.uncovered && { flashUncovered: true }),
+    paint: r.flash.paint?.frames ?? null,
   };
 }
 

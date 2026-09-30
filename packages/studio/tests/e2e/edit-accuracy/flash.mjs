@@ -1,7 +1,11 @@
-/** Preview flashes: every frame the screencast paints, from an action to its settle, against the frames around it. */
+/**
+ * Preview flashes and edit-to-paint: every frame the screencast paints, from an action to its settle, against the
+ * frames around it.
+ */
 
 // A 4x4 marker in the top-left corner, outside every region, repaints every rAF with the frame counter in its
 // colour, so the screencast (which only sends repainted frames) sends every frame and each one is numbered.
+// It also logs the counter at each committing input (pointer-up, a non-modifier key), in any same-origin frame.
 function markerOn() {
   const bench = window.__editBench;
   if (bench.marker) return;
@@ -9,15 +13,36 @@ function markerOn() {
   el.style.cssText =
     "position:fixed;left:0;top:0;width:4px;height:4px;z-index:2147483647;pointer-events:none";
   document.documentElement.append(el);
-  bench.marker = { el, n: 0, on: true, masks: [] };
+  const marker = { el, n: 0, on: true, masks: [], times: [], inputs: [], unlisten: [] };
+  bench.marker = marker;
+  const MODIFIERS = new Set(["Control", "Shift", "Alt", "Meta"]);
+  const log = (e) => {
+    if (e.type === "pointerup" || !MODIFIERS.has(e.key))
+      marker.inputs.push({ type: e.type, key: e.key ?? null, n: marker.n, t: performance.now() });
+  };
+  const listen = (w) => {
+    for (const type of ["pointerup", "keydown"]) {
+      w.addEventListener(type, log, true);
+      marker.unlisten.push(() => w.removeEventListener(type, log, true));
+    }
+    for (const f of w.document.querySelectorAll("iframe")) {
+      try {
+        listen(f.contentWindow);
+      } catch {
+        // A cross-origin frame cannot take an input Studio handles.
+      }
+    }
+  };
+  listen(window);
   const tick = () => {
-    if (!bench.marker?.on) return;
-    const n = ++bench.marker.n;
+    if (!marker.on) return;
+    const n = ++marker.n;
+    marker.times[n] = performance.now();
     el.style.background = `rgb(${n & 255},${(n >> 8) & 255},128)`;
     // Toasts slide in and out by design; wherever one was during the window is left out of the comparison.
     for (const t of document.querySelectorAll(".hf-toast-enter, .hf-toast-exit")) {
       const r = t.getBoundingClientRect();
-      bench.marker.masks.push([r.left, r.top, r.right, r.bottom].map(Math.round));
+      marker.masks.push([r.left, r.top, r.right, r.bottom].map(Math.round));
     }
     requestAnimationFrame(tick);
   };
@@ -28,6 +53,7 @@ function markerOff() {
   const m = window.__editBench.marker;
   if (!m) return;
   m.on = false;
+  for (const off of m.unlisten) off();
   m.el.remove();
   window.__editBench.marker = null;
 }
@@ -63,7 +89,10 @@ function paneRects() {
   );
 }
 
-/** Starts a screencast of one action window; stop() returns its PNG frames and the marker range it spans. */
+/**
+ * Starts a screencast of one action window; stop() returns its PNG frames, the marker range it spans, the rAF time
+ * of each counter and the committing inputs logged in it.
+ */
 export async function startCapture(page, { marker = true } = {}) {
   const cdp = await page.createCDPSession();
   const frames = [];
@@ -72,20 +101,23 @@ export async function startCapture(page, { marker = true } = {}) {
     cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => undefined);
   });
   if (marker) await page.evaluate(markerOn);
-  const counter = () => page.evaluate(() => window.__editBench.marker?.n ?? null);
-  const masks = () => page.evaluate(() => window.__editBench.marker?.masks ?? []);
+  const state = () =>
+    page.evaluate(() => {
+      const m = window.__editBench.marker;
+      return m ? { n: m.n, masks: m.masks, times: m.times, inputs: m.inputs } : { n: null };
+    });
   await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
   // The first frame is the state before the action.
   for (const deadline = Date.now() + 2000; !frames.length && Date.now() < deadline; )
     await new Promise((r) => setTimeout(r, 10));
-  const from = await counter();
+  const from = (await state()).n;
   return {
     async stop() {
-      const [to, mask] = [await counter(), await masks()];
+      const { n: to, masks = [], times = [], inputs = [] } = await state();
       await cdp.send("Page.stopScreencast").catch(() => undefined);
       if (marker) await page.evaluate(markerOff).catch(() => undefined);
       await cdp.detach().catch(() => undefined);
-      return { frames, from, to, masks: mask };
+      return { frames, from, to, masks, times, inputs };
     },
   };
 }
@@ -140,29 +172,42 @@ function compareFrames(frames, before, after, regions, masks, colourTol) {
   })();
 }
 
+/** Marker counters the screencast never delivered, as [first, last] runs relative to the window start. */
+// fallow-ignore-next-line complexity
+function gaps(seen, from, to) {
+  const runs = [];
+  for (let c = from; c <= to; c++)
+    if (!seen.has(c)) {
+      const last = runs.at(-1);
+      if (last && last[1] === c - from - 1) last[1] = c - from;
+      else runs.push([c - from, c - from]);
+    }
+  return runs;
+}
+
+const showsAfter = (row, tolPx) =>
+  Object.values(row.diffs).every(([, vsAfter]) => vsAfter <= tolPx);
+
 /**
- * A frame is bad when some pane differs from the before frame and from the after frame by more pixels than a
- * 0.5 px shift of the element's perimeter moves. Coverage is marker counters seen over counters in the window.
+ * Edit-to-paint: frames from the committing input until the preview shows the after-state for good, and the ms from
+ * the input to that frame's rAF. One frame is the next paint; null when the window logged no input.
  */
 // fallow-ignore-next-line complexity
-async function scoreWindow(
-  decoder,
-  { frames, from, to, before, after, masks = [] },
-  regions,
-  tolPx,
-) {
-  const b = before ?? frames[0];
-  const a = after ?? frames.at(-1);
-  if (!b || !a) return { frames: 0, coverage: 0, bad: [], longest: 0 };
-  const rows = await decoder.evaluate(
-    compareFrames,
-    frames,
-    b,
-    a,
-    regions,
-    dedupe(masks),
-    COLOUR_TOL,
-  );
+function editToPaint(rows, input, times, tolPx) {
+  if (!input) return null;
+  let lastOff = null;
+  for (const r of rows) if (r.counter > input.n && !showsAfter(r, tolPx)) lastOff = r.counter;
+  const at = lastOff === null ? input.n + 1 : lastOff + 1;
+  return { frames: at - input.n, ms: times[at] == null ? null : times[at] - input.t };
+}
+
+/**
+ * A frame is bad (a flash) when some pane differs from the before frame and from the after frame by more pixels than
+ * a 0.5 px shift of the element's perimeter moves. Coverage is marker counters seen over counters in the window.
+ * `rows` holds each frame's marker counter and per-pane [vsBefore, vsAfter] differing pixel counts.
+ */
+// fallow-ignore-next-line complexity
+export function classify(rows, { from, to, times = [], inputs = [] }, tolPx) {
   const seen = new Set(rows.map((r) => r.counter).filter((c) => c >= from && c <= to));
   const span = from === null || to === null ? null : to - from + 1;
   const bad = [];
@@ -178,12 +223,32 @@ async function scoreWindow(
     longest = Math.max(longest, run);
   });
   return {
-    frames: frames.length,
+    frames: rows.length,
     rafFrames: span,
     coverage: span ? seen.size / span : null,
+    missing: span ? gaps(seen, from, to) : null,
     bad,
     longest,
+    input: inputs[0] ?? null,
+    paint: editToPaint(rows, inputs[0], times, tolPx),
   };
+}
+
+// fallow-ignore-next-line complexity
+async function scoreWindow(decoder, win, regions, tolPx) {
+  const b = win.before ?? win.frames[0];
+  const a = win.after ?? win.frames.at(-1);
+  if (!b || !a) return { frames: 0, coverage: 0, bad: [], longest: 0, paint: null };
+  const rows = await decoder.evaluate(
+    compareFrames,
+    win.frames,
+    b,
+    a,
+    regions,
+    dedupe(win.masks ?? []),
+    COLOUR_TOL,
+  );
+  return classify(rows, win, tolPx);
 }
 
 const dedupe = (rects) =>
@@ -193,7 +258,11 @@ const dedupe = (rects) =>
 const COLOUR_TOL = 24;
 const MIN_COVERAGE = 0.9;
 
+// The inputs that commit an edit; the reload window has none and scores flashes only.
+const COMMITTING = ["release", "undo", "redo"];
+
 /** Scores every window of a case; the offending frames go to `evidence.flashFrames` as PNG. */
+// fallow-ignore-next-line complexity
 export async function scoreFlash(decoder, { regions, tolPx, windows }, evidence) {
   const out = {};
   evidence.flashFrames = [];
@@ -208,11 +277,16 @@ export async function scoreFlash(decoder, { regions, tolPx, windows }, evidence)
   }
   const all = Object.values(out);
   const coverage = Math.min(...all.map((w) => w.coverage ?? 0));
+  const paints = COMMITTING.filter((k) => out[k]).map((k) => out[k].paint);
   return {
     bad: all.reduce((n, w) => n + w.bad.length, 0),
     longest: Math.max(0, ...all.map((w) => w.longest)),
     coverage,
     uncovered: !(coverage >= MIN_COVERAGE),
+    // The slowest committing input; unknown (null) when any of them logged no input.
+    paint: paints.some((p) => !p)
+      ? null
+      : paints.reduce((a, p) => (p.frames > a.frames ? p : a), { frames: 0, ms: 0 }),
     regions,
     tolPx,
     windows: out,
