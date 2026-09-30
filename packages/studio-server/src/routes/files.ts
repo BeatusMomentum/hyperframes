@@ -1267,6 +1267,11 @@ function containsRawGsapExpression(value: unknown): boolean {
   return Object.values(value).some(containsRawGsapExpression);
 }
 
+function insertBeforeTemplateClose(html: string, markup: string): string | null {
+  const at = html.lastIndexOf("</template>");
+  return at === -1 ? null : `${html.slice(0, at)}${markup}\n${html.slice(at)}`;
+}
+
 async function prepareGsapMutationScript(
   c: RouteContext,
   res: ResolvedGsapFile,
@@ -1293,7 +1298,10 @@ async function prepareGsapMutationScript(
       `window.__timelines["${compId}"] = tl;`,
       "</script>",
     ].join("\n");
-    html = insertBeforeCloseTag(html, "body", `${bootstrap}\n`) ?? `${html}\n${bootstrap}`;
+    html =
+      insertBeforeCloseTag(html, "body", `${bootstrap}\n`) ??
+      insertBeforeTemplateClose(html, bootstrap) ??
+      `${html}\n${bootstrap}`;
     block = extractGsapScriptBlock(html);
   }
   if (
