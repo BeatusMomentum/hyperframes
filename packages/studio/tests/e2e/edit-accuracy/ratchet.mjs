@@ -17,6 +17,8 @@ export const accurate = (e) =>
   !e.error &&
   !e.unsettled &&
   !e.renderError &&
+  !(e.flash > 0) &&
+  !e.flashUncovered &&
   e.undo === true &&
   GATED_PX.every((m) => !(e[m] > LIMIT_PX));
 

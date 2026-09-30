@@ -10,6 +10,7 @@ const good = {
   undo: true,
   dropped: 0,
   controlDropped: 0,
+  flash: 0,
   work: 3,
   frameP95: 20,
 };
@@ -25,6 +26,7 @@ const run = (id, drop = 0) => ({
   checks: { undo: true },
   smooth: { p95: 20, dropped: 0, workP95: 3, control: { dropped: 0 } },
   unsettled: [],
+  flash: { bad: 0, uncovered: false },
 });
 const baseline = (cases) => ({ cases });
 
@@ -40,6 +42,8 @@ describe("accurate", () => {
     expect(accurate({ ...good, pressJump: 0.51 })).toBe(false);
     expect(accurate({ ...good, unsettled: ["committed"] })).toBe(false);
     expect(accurate({ ...good, render: null, renderError: true })).toBe(false);
+    expect(accurate({ ...good, flash: 1 })).toBe(false);
+    expect(accurate({ ...good, flash: 0, flashUncovered: true })).toBe(false);
     expect(accurate({ ...good, undo: false })).toBe(false);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);

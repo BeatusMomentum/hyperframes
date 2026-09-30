@@ -7,7 +7,7 @@ export const LIMIT_PX = 0.5;
 // A frame over 1.5 vsyncs is dropped; raw rAF p95 stays reported so a different rule re-scores without a re-run.
 const DROPPED_FRAME_MS = 25;
 const WORK_MS = 8;
-export const METRICS = ["tracking", "press", "drop", "reload", "render", "undo", "smooth"];
+export const METRICS = ["tracking", "press", "drop", "reload", "render", "undo", "flash", "smooth"];
 
 /** Worst-first value per metric; undo ranks by box distance, and its byte failures are counted apart. */
 const worstValue = {
@@ -17,6 +17,7 @@ const worstValue = {
   reload: (r) => r.reload,
   render: (r) => r.render ?? 0,
   undo: (r) => Math.max(r.undo.box, r.undo.redoBox ?? 0),
+  flash: (r) => r.flash.bad,
   smooth: (r) => r.smooth.dropped - r.smooth.control.dropped,
 };
 
@@ -54,6 +55,8 @@ export function score(spec, r) {
     reload: r.reload <= LIMIT_PX,
     render: r.render !== null && r.render <= LIMIT_PX,
     undo: r.undo.bytes && r.undo.redoBytes && Math.max(r.undo.box, r.undo.redoBox) <= LIMIT_PX,
+    // A window the screencast covered under 90% is uncovered, never a pass.
+    flash: !r.flash.uncovered && r.flash.bad === 0,
     // Only drops beyond the blank page's, driven the same way in the same Chrome, are the edit's.
     smooth:
       smooth.dropped <= smooth.control.dropped &&
@@ -117,6 +120,18 @@ function summarize(results, seconds) {
     unsettled: measured.filter((r) => r.unsettled.length).length,
     undoTimeouts: measured.filter((r) => r.undoTimeout).length,
     renderErrors: measured.filter((r) => r.renderError).length,
+    flash: {
+      uncovered: measured.filter((r) => r.flash.uncovered).length,
+      badCases: measured.filter((r) => r.flash.bad > 0).length,
+      longest: Math.max(0, ...measured.map((r) => r.flash.longest)),
+      coverage: round(
+        percentile(
+          measured.map((r) => r.flash.coverage),
+          50,
+        ),
+      ),
+      lowest: round(Math.min(...measured.map((r) => r.flash.coverage))),
+    },
     smooth: smoothSummary(measured),
     seconds: Math.round(seconds),
   };
@@ -139,6 +154,7 @@ function table(summary, meta, results) {
     `The preview never held still for 1 s within 15 s in ${summary.unsettled} cases; the metrics that snapshot feeds fail.`,
     `An undo or redo write never landed within 15 s in ${summary.undoTimeouts} cases; undo fails there.`,
     `The producer failed to render ${summary.renderErrors} cases; render fails there.`,
+    `Flash: ${summary.flash.badCases} cases painted a frame matching neither the state before nor after (longest run ${summary.flash.longest} frames); ${summary.flash.uncovered} cases uncovered; screencast coverage median ${summary.flash.coverage}, lowest ${summary.flash.lowest}.`,
     `Smoothness: ${summary.smooth.unknown} cases with unknown work; dropped frames per case (median/max) ${summary.smooth.dropped}, blank-page control ${summary.smooth.control}; raw rAF p95 (median/max) ${summary.smooth.p95} ms, control ${summary.smooth.controlP95} ms.`,
     "",
     "| Metric | Pass | Worst | Worst case |",
@@ -176,6 +192,8 @@ export function entry(r) {
     ...(r.unsettled.length && { unsettled: r.unsettled }),
     ...(r.undoTimeout && { undoTimeout: r.undoTimeout }),
     ...(r.renderError && { renderError: true }),
+    flash: r.flash.bad,
+    ...(r.flash.uncovered && { flashUncovered: true }),
   };
 }
 

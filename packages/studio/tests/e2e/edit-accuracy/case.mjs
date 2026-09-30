@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMPOSITION, PLAYHEAD } from "./grid.mjs";
+import { panes, startCapture } from "./flash.mjs";
 import {
   angleOf,
   centre,
@@ -242,7 +243,7 @@ async function settled(ctx, timeout = 15_000) {
 
 /** Ready once Studio's own seek tool reports the composition and the playhead landed. */
 // fallow-ignore-next-line complexity
-async function openStudio(ctx) {
+async function openStudio(ctx, onReady) {
   ctx.handles = null;
   await ctx.page.waitForFunction(() => window.__editBench?.has("studio_seek"), { timeout: 90_000 });
   let seek = null;
@@ -255,6 +256,7 @@ async function openStudio(ctx) {
     seek = null;
   }
   if (!seek) throw new Error("studio never reported a seekable composition");
+  await onReady?.();
   await sleep(1000);
   return settled(ctx);
 }
@@ -546,6 +548,13 @@ async function controlDrag(browser, gesture) {
   }
 }
 
+/** The element's perimeter in screen px: how many pixels a 0.5 px shift of its edges touches. */
+const perimeterPx = (m) =>
+  Math.ceil(
+    m.visible.map(m.map.toScreen).reduce((sum, p, i, q) => sum + dist(p, q[(i + 1) % 4]), 0),
+  );
+
+/** Drives the drag and returns with the button still down; the flash window starts at pointer-up. */
 async function pointerGesture(ctx, gesture, pre) {
   const press = await handlePoint(ctx, pre, gesture);
   const pressComp = pre.map.toComp(press);
@@ -571,7 +580,6 @@ async function pointerGesture(ctx, gesture, pre) {
   }
   const rec = await recording(ctx.page, false);
   const smooth = smoothness(rec);
-  await ctx.page.mouse.up();
   const lastQuad = gesture === "crop" ? last.m.outline : last.m.visible;
   return {
     errors,
@@ -634,8 +642,13 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
       spec.gesture === "nudge"
         ? await nudgeGesture(ctx, pre)
         : await pointerGesture(ctx, spec.gesture, pre);
+    // Flash windows: each action to its settle is screencast, untraced; the drag's trace has already stopped.
+    const flash = { regions: await panes(page), tolPx: perimeterPx(pre), windows: {} };
+    let capture = await startCapture(page);
+    if (spec.gesture !== "nudge") await page.mouse.up();
     await waitForFiles(ctx, { from: original, timeout: spec.gesture === "nudge" ? 6000 : 5000 });
-    await nextFrame(page, 2);
+    await settled(ctx);
+    flash.windows.release = await capture.stop();
     await blurPreview(page);
     await page.keyboard.press("Escape");
     const committed = await settled(ctx);
@@ -646,22 +659,29 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
     // Undo and redo run before any reload. Each waits up to 15 s for its own write; redo waits for undo.
     const landed = (from) =>
       saved ? waitForFiles(ctx, { from, timeout: 15_000 }) : { reached: true, files: from };
+    capture = await startCapture(page);
     await chord(page, "Control+z");
     const undo = await landed(committedFiles);
     const undone = await settled(ctx);
+    flash.windows.undo = await capture.stop();
     await shoot("undone");
     let [redo, redone] = [{ reached: false }, null];
     if (undo.reached) {
       await blurPreview(page);
+      capture = await startCapture(page);
       await chord(page, "Control+Shift+z");
       redo = await landed(undo.files);
       redone = await settled(ctx);
+      flash.windows.redo = await capture.stop();
     }
     // A late write must not land under the reload.
     await waitForFiles(ctx, { timeout: 15_000 });
 
+    // The reload window starts once Studio can seek the composition; before that Studio itself is loading.
+    const lastSettled = (flash.windows.redo ?? flash.windows.undo).frames.at(-1);
     await page.reload();
-    const reloaded = await openStudio(ctx);
+    const reloaded = await openStudio(ctx, async () => (capture = await startCapture(page)));
+    flash.windows.reload = { ...(await capture.stop()), before: lastSettled };
     await shoot("reloaded");
     const quads = Object.fromEntries(
       Object.entries({ pre, committed, undone, redone, reloaded }).filter(([, m]) => m),
@@ -687,6 +707,7 @@ export async function runCase({ browser, spec, dir, files, url, evidence }) {
       // Which write never landed within 15 s; a redo that was never sent is untested, so undo fails.
       undoTimeout: saved && !undo.reached ? "undo" : saved && !redo.reached ? "redo" : null,
       smooth: { ...drive.smooth, control },
+      flash,
       unsettled: Object.keys(quads).filter((k) => quads[k].unsettled),
       reloaded,
       diag: {
