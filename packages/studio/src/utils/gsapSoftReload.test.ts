@@ -148,6 +148,38 @@ describe("applySoftReload", () => {
       expect(doc.getElementById("orphan")!.style.left).toBe("1240px");
     });
 
+    it("leaves what a nested composition's own timeline animates alone, in the preview's inlined markup", () => {
+      // The markup the preview bundler writes for an inlined sub-composition: no data-composition-src left.
+      const doc = document.implementation.createHTMLDocument("");
+      doc.body.innerHTML =
+        `<div data-composition-id="root"><div id="plain" data-hf-id="hf-p"></div>` +
+        `<div data-composition-file="compositions/sub.html" data-hf-id="hf-host" id="scene-sub" data-composition-id="sub">` +
+        `<div style="width:1920px;height:400px" data-hf-inner-root="true" data-hf-authored-id="sub" data-hf-id="hf-in">` +
+        `<div id="nsty" data-hf-id="hf-n" style="left: 420px; background: #f0f040; transform: translate(0px, 30px)"></div>` +
+        `</div></div></div><script>${SCRIPT_TEXT}</script>`;
+      const [plain, nsty] = [doc.getElementById("plain")!, doc.getElementById("nsty")!];
+      const subTween = { targets: () => [nsty] };
+      const sub = { getChildren: () => [subTween] };
+      const own = { targets: () => [plain] };
+      const root = {
+        kill: vi.fn(),
+        getChildren: (deep: boolean) => (deep ? [sub, subTween, own] : [sub, own]),
+      };
+      const cleared: Element[] = [];
+      const { iframe } = buildMockIframe({
+        gsap: { timeline: vi.fn(), set: (targets: Element[]) => cleared.push(...targets) },
+        __timelines: { root, sub },
+      });
+      Object.assign(iframe, { contentDocument: doc });
+      applySoftReload(iframe, SCRIPT_TEXT, {
+        authoredHtml: `<html><body><div id="plain"></div></body></html>`,
+      });
+      expect(cleared).toEqual([plain]);
+      expect(nsty.getAttribute("style")).toBe(
+        "left: 420px; background: #f0f040; transform: translate(0px, 30px)",
+      );
+    });
+
     it("leaves a nested composition's element alone: its script is not re-run", () => {
       const { doc, cleared } = reloadRoot(
         `<div data-composition-id="root"><div id="host" data-composition-id="sub" data-gsap>` +
@@ -530,6 +562,38 @@ describe("applySoftReload restores each element's inline style from the file", (
     const authoredHtml = page(`<template><li id="item" style="opacity: 1"></li></template>`);
     expect(applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml })).toBe("cannot-soft-reload");
     expect(el.getAttribute("style")).toBe("opacity: 0.3");
+  });
+
+  it("a nested composition's reload keeps what the parent file and the bundler wrote", () => {
+    const doc = document.implementation.createHTMLDocument("");
+    doc.body.innerHTML =
+      `<div data-composition-id="root"><div data-composition-file="compositions/sub.html" id="host" data-hf-id="hf-host" data-composition-id="sub" style="left: 300px; transform: translateY(9px)">` +
+      `<div style="width:1920px;height:400px" data-hf-inner-root="true" data-hf-authored-id="sub" data-hf-id="hf-in">` +
+      `</div></div></div>` +
+      `<script>${SCRIPT_TEXT.replaceAll('"root"', '"sub"')}</script>`;
+    const [host, inner] = ["hf-host", "hf-in"].map(
+      (id) => doc.querySelector(`[data-hf-id="${id}"]`) as HTMLElement,
+    );
+    const { iframe } = buildMockIframe({
+      gsap: { timeline: vi.fn(), set: vi.fn() },
+      __timelines: {
+        sub: { kill: vi.fn(), getChildren: () => [{ targets: () => [host, inner] }] },
+      },
+    });
+    Object.assign(iframe, { contentDocument: doc });
+    const sub = `<template><div id="sub" data-hf-id="hf-in" data-composition-id="sub"></div></template>`;
+    applySoftReload(iframe, SCRIPT_TEXT.replaceAll('"root"', '"sub"'), { authoredHtml: sub });
+    expect([host.style.left, host.style.transform]).toEqual(["300px", ""]);
+    expect([inner.style.width, inner.style.height]).toEqual(["1920px", "400px"]);
+  });
+
+  it("keeps soft reloads for a script-made node unlike any plain template's content", () => {
+    const el = document.createElement("span");
+    el.setAttribute("style", "opacity: 0.3");
+    const { iframe } = buildIframeWithTarget(el);
+    const authoredHtml = page(`<template><li class="row"></li></template><div id="box"></div>`);
+    expect(applySoftReload(iframe, SCRIPT_TEXT, { authoredHtml })).toBe("applied");
+    expect(el.hasAttribute("style")).toBe(false);
   });
 
   it("keeps a nested composition's element's inline style, minus GSAP's transform", () => {

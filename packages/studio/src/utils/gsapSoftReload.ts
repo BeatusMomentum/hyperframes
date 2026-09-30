@@ -132,13 +132,29 @@ function verifyTimelinesPopulated(win: IframeWindow, targetKeys: string[]): bool
   return Object.keys(timelines).filter((k) => k !== "__proxied").length > 0;
 }
 
-// What a fresh load of `file` puts in the style attribute; undefined for a nested composition's element.
-function freshInlineStyle(file: Document, el: Element): string | null | undefined {
-  const source = findAuthoredElement(file, el);
-  if (source) return source.getAttribute("style");
-  if (el.parentElement?.closest("[data-composition-file], [data-composition-src]"))
-    return undefined;
-  return null;
+// The reloaded file, and which composition file it is (null for the top-level one).
+type Fresh = { file: Document; own: string | null };
+
+// What a fresh load puts in the style attribute; undefined inside an inlined composition, which the bundler rewrites.
+function freshInlineStyle({ file, own }: Fresh, el: Element): string | null | undefined {
+  if (own !== null || sourceFile(el.parentElement) !== null) return undefined;
+  return findAuthoredElement(file, el)?.getAttribute("style") ?? null;
+}
+
+// The preview marks an inlined composition with data-composition-file; the runtime loader keeps -src.
+function sourceFile(el: Element | null | undefined): string | null {
+  const host = el?.closest("[data-composition-file], [data-composition-src]");
+  return (
+    host?.getAttribute("data-composition-file") ??
+    host?.getAttribute("data-composition-src") ??
+    null
+  );
+}
+
+function compositionRoot(doc: Document, key: string): Element | undefined {
+  return [...doc.querySelectorAll("[data-composition-id]")].find(
+    (el) => el.getAttribute("data-composition-id") === key,
+  );
 }
 
 function restoreNestedInline(el: HTMLElement, css: string): void {
@@ -157,18 +173,25 @@ function restoreNestedInline(el: HTMLElement, css: string): void {
   }
 }
 
-function mayBeTemplateClone(file: Document, el: Element): boolean {
-  if (freshInlineStyle(file, el) !== null) return false;
-  return [...file.querySelectorAll("template")].some((t) => !isCompositionTemplate(t));
+// A script's clone of a plain template's element has no counterpart in the file; only a full load rebuilds it.
+function mayBeTemplateClone(fresh: Fresh, el: Element): boolean {
+  if (freshInlineStyle(fresh, el) !== null) return false;
+  return [...fresh.file.querySelectorAll("template")].some(
+    (t) =>
+      !isCompositionTemplate(t) &&
+      [...t.content.querySelectorAll("*")].some(
+        (c) => c.tagName === el.tagName && [...c.classList].every((k) => el.classList.contains(k)),
+      ),
+  );
 }
 
 type TimelineLike = {
   kill?: () => void;
   clear?: () => void;
-  getChildren?: (deep: boolean) => Array<{ targets?: () => Element[] }>;
+  getChildren?: (deep: boolean) => Array<TimelineLike & { targets?: () => Element[] }>;
 };
 
-function resetToFile(win: IframeWindow, file: Document, targets: Element[]): void {
+function resetToFile(win: IframeWindow, fresh: Fresh, targets: Element[]): void {
   if (targets.length === 0 || !win.gsap?.set) return;
   const saved = targets.map(
     (el) => [el as HTMLElement, (el as HTMLElement).style?.cssText] as const,
@@ -177,16 +200,26 @@ function resetToFile(win: IframeWindow, file: Document, targets: Element[]): voi
     win.gsap.set(targets, { clearProps: "all" });
   } catch {}
   for (const [el, css] of saved) {
-    const fresh = freshInlineStyle(file, el);
-    if (fresh === undefined) restoreNestedInline(el, css ?? "");
-    else if (fresh === null) el.removeAttribute("style");
-    else el.setAttribute("style", fresh);
+    const style = freshInlineStyle(fresh, el);
+    if (style === undefined) restoreNestedInline(el, css ?? "");
+    else if (style === null) el.removeAttribute("style");
+    else el.setAttribute("style", style);
   }
 }
 
-function timelineTargets(tl: TimelineLike | undefined): Element[] {
+// A nested composition's timeline belongs to its own script, which this re-run neither rebuilds nor resets.
+function ownTweenTargets(tl: TimelineLike | undefined, nested: Set<unknown>): Element[] {
+  return (tl?.getChildren?.(false) ?? []).flatMap((child) => {
+    if (nested.has(child)) return [];
+    return child.getChildren ? ownTweenTargets(child, nested) : (child.targets?.() ?? []);
+  });
+}
+
+function timelineTargets(win: IframeWindow, key: string): Element[] {
+  const timelines: Record<string, unknown> = win.__timelines ?? {};
+  const nested = new Set(Object.keys(timelines).flatMap((k) => (k === key ? [] : [timelines[k]])));
   try {
-    return (tl?.getChildren?.(true) ?? []).flatMap((child) => child.targets?.() ?? []);
+    return ownTweenTargets(timelines[key] as TimelineLike | undefined, nested);
   } catch {
     return [];
   }
@@ -194,22 +227,21 @@ function timelineTargets(tl: TimelineLike | undefined): Element[] {
 
 function collectTargets(win: IframeWindow, doc: Document, keys: string[]): Element[] {
   const targets = keys.flatMap((key) => [
-    ...timelineTargets(win.__timelines?.[key] as TimelineLike | undefined),
+    ...timelineTargets(win, key),
     ...gsapParsedInOwnComposition(doc, key),
   ]);
   return [...new Set(targets)];
 }
 
 function planReset(win: IframeWindow, doc: Document, keys: string[], authoredHtml: string) {
-  const file = parseSavedSource(authoredHtml);
+  const own = sourceFile(keys.map((key) => compositionRoot(doc, key)).find(Boolean));
+  const fresh: Fresh = { file: parseSavedSource(authoredHtml), own };
   const targets = collectTargets(win, doc, keys);
-  return targets.some((el) => mayBeTemplateClone(file, el)) ? null : { file, targets };
+  return targets.some((el) => mayBeTemplateClone(fresh, el)) ? null : { fresh, targets };
 }
 
 function gsapParsedInOwnComposition(doc: Document, key: string): Element[] {
-  const comp = [...doc.querySelectorAll("[data-composition-id]")].find(
-    (el) => el.getAttribute("data-composition-id") === key,
-  );
+  const comp = compositionRoot(doc, key);
   if (!comp) return [];
   return [comp, ...comp.querySelectorAll("*")].filter(
     (el) =>
@@ -387,7 +419,7 @@ export function applySoftReload(
 
   const reset = planReset(win, doc, targetKeys, authoredHtml);
   if (!reset) return "cannot-soft-reload";
-  const { file, targets } = reset;
+  const { fresh, targets } = reset;
 
   // fallow-ignore-next-line complexity
   const doReload = () => {
@@ -408,7 +440,7 @@ export function applySoftReload(
       }
     }
 
-    resetToFile(win, file, targets);
+    resetToFile(win, fresh, targets);
 
     for (const script of staleScripts) script.remove();
     if (removeScript) {
