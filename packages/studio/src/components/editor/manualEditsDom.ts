@@ -33,7 +33,7 @@ import {
   STUDIO_ROTATION_TRANSFORM_ORIGIN,
 } from "./manualEditsTypes";
 import { roundRotationAngle } from "./manualEditsParsing";
-import { gsapAnimatesProperty } from "./gsapAnimatesProperty";
+import { elementGsapWrites } from "../../hooks/gsapRuntimeKeyframes";
 import { splitTopLevelWhitespace } from "./manualEditsStyleHelpers";
 
 /* ── Gesture tracking ─────────────────────────────────────────────── */
@@ -261,7 +261,7 @@ function applyStudioPathOffsetViaGsap(
   element: HTMLElement,
   offset: { x: number; y: number },
 ): boolean {
-  if (!gsapAnimatesProperty(element, "x", "y")) return false;
+  if (!elementGsapWrites(element, ["x", "y"])) return false;
   element.style.setProperty("translate", "none");
   const win = element.ownerDocument.defaultView as
     | (Window & {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   arcPathFromMotionPathValue,
+  elementGsapWrites,
   hasNonHoldTweenForElement,
   readRuntimeKeyframes,
 } from "./gsapRuntimeKeyframes";
@@ -259,5 +260,44 @@ describe("arcPathFromMotionPathValue", () => {
     expect(arcPathFromMotionPathValue({ curviness: 2 })).toBeUndefined();
     expect(arcPathFromMotionPathValue({ path: "M0 0 L10 10" })).toBeUndefined();
     expect(arcPathFromMotionPathValue(null)).toBeUndefined();
+  });
+});
+
+describe("elementGsapWrites", () => {
+  function elementWith(...tweens: Array<{ vars: Record<string, unknown>; duration?: number }>) {
+    const el = { id: "card" } as unknown as Element;
+    const children = tweens.map((t) => ({
+      targets: () => [el],
+      vars: t.vars,
+      duration: () => t.duration ?? 1,
+    }));
+    const timelines = { a: { getChildren: () => [] }, b: { getChildren: () => children } };
+    Object.assign(el, { ownerDocument: { defaultView: { __timelines: timelines } } });
+    return el;
+  }
+
+  it("sees x/y in the keyframes object-of-arrays form", () => {
+    expect(
+      elementGsapWrites(elementWith({ vars: { keyframes: { x: [0, 80, 40] } } }), ["x", "y"]),
+    ).toBe(true);
+  });
+
+  it("sees a channel in a set, in percent keyframes and in array keyframes, on any timeline", () => {
+    expect(elementGsapWrites(elementWith({ vars: { x: 5 }, duration: 0 }), ["x"])).toBe(true);
+    expect(
+      elementGsapWrites(elementWith({ vars: { keyframes: { "50%": { y: 3 } } } }), ["y"]),
+    ).toBe(true);
+    expect(
+      elementGsapWrites(elementWith({ vars: { keyframes: [{ clipPath: "inset(0)" }] } }), [
+        "clipPath",
+      ]),
+    ).toBe(true);
+  });
+
+  it("ignores other channels, and answers any tween when no channel is asked", () => {
+    const faded = elementWith({ vars: { opacity: 0.5 } });
+    expect(elementGsapWrites(faded, ["x", "y"])).toBe(false);
+    expect(elementGsapWrites(faded)).toBe(true);
+    expect(elementGsapWrites(elementWith())).toBe(false);
   });
 });

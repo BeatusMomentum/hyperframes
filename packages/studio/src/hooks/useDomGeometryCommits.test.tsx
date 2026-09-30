@@ -25,7 +25,6 @@ function mountCommits(
   let commits: ReturnType<typeof useDomGeometryCommits> | null = null;
   function Probe() {
     commits = useDomGeometryCommits({
-      previewIframeRef: { current: null },
       showToast: vi.fn(),
       commitPositionPatchToHtml,
       readOnlyPreview,
@@ -61,7 +60,6 @@ describe("useDomGeometryCommits rollback", () => {
 
     function Probe() {
       commits = useDomGeometryCommits({
-        previewIframeRef: { current: null },
         showToast: vi.fn(),
         commitPositionPatchToHtml,
         readOnlyPreview: false,

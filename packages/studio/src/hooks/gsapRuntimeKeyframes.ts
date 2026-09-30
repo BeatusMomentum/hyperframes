@@ -405,6 +405,20 @@ export function hasNonHoldTweenForElement(
   return !!targetEl && hasNonHoldTween(timelinesOf(iframe), targetEl, channels, compositionId);
 }
 
+/** Whether any tween or set on the element's own timelines writes one of `channels` (any, when omitted). */
+export function elementGsapWrites(el: Element, channels?: string[]): boolean {
+  const win = el.ownerDocument.defaultView as {
+    __timelines?: Record<string, RuntimeTimeline>;
+  } | null;
+  const writes = (vars: GsapVars) =>
+    !channels || varsCarryChannel(vars, channels) || keyframeVarsCarryChannel(vars, channels);
+  return Object.values(win?.__timelines ?? {}).some((timeline) =>
+    (timeline?.getChildren?.(true) ?? []).some(
+      (tween) => !!tween.vars && matchesElement(tween, el) && writes(tween.vars),
+    ),
+  );
+}
+
 /** `hasNonHoldTweenForElement` for an element in hand, read from its own window's timelines. */
 export function elementHasNonHoldTween(el: Element, channels?: string[]): boolean {
   const win = el.ownerDocument.defaultView as {

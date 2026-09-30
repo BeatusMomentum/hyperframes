@@ -275,7 +275,6 @@ export function useDomEditCommits({
     handleDomRotationCommit,
     handleDomManualEditsReset,
   } = useDomGeometryCommits({
-    previewIframeRef,
     showToast,
     commitPositionPatchToHtml,
     readOnlyPreview,
