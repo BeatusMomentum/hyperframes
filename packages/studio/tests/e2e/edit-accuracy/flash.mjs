@@ -204,24 +204,28 @@ function editToPaint(rows, input, times, tolPx) {
 /**
  * A frame is bad (a flash) when some pane differs from the before frame and from the after frame by more pixels than
  * a 0.5 px shift of the element's perimeter moves. Coverage is marker counters seen over counters in the window.
- * `rows` holds each frame's marker counter and per-pane [vsBefore, vsAfter] differing pixel counts.
+ * `frames` holds each frame's marker counter and per-pane [vsBefore, vsAfter] differing pixel counts.
  */
 // fallow-ignore-next-line complexity
-export function classify(rows, { from, to, times = [], inputs = [] }, tolPx) {
+export function classify(frames, { from, to, times = [], inputs = [] }, tolPx) {
+  // The screencast can deliver one frame twice; with the marker on, each counter counts once.
+  const indexed = frames.map((r, frame) => ({ ...r, frame }));
+  const rows =
+    from === null ? indexed : indexed.filter((r, i) => r.counter !== frames[i - 1]?.counter);
   const seen = new Set(rows.map((r) => r.counter).filter((c) => c >= from && c <= to));
   const span = from === null || to === null ? null : to - from + 1;
   const bad = [];
-  rows.forEach((r, i) => {
+  for (const r of rows) {
     const panes = Object.entries(r.diffs)
       .filter(([, [vsBefore, vsAfter]]) => vsBefore > tolPx && vsAfter > tolPx)
       .map(([k, [vsBefore, vsAfter]]) => ({ pane: k, vsBefore, vsAfter }));
-    if (panes.length) bad.push({ frame: i, counter: r.counter, panes });
-  });
+    if (panes.length) bad.push({ frame: r.frame, counter: r.counter, panes });
+  }
   let [longest, run] = [0, 0];
-  rows.forEach((_, i) => {
-    run = bad.some((x) => x.frame === i) ? run + 1 : 0;
+  for (const r of rows) {
+    run = bad.some((x) => x.frame === r.frame) ? run + 1 : 0;
     longest = Math.max(longest, run);
-  });
+  }
   return {
     frames: rows.length,
     rafFrames: span,

@@ -51,6 +51,23 @@ describe("classify", () => {
     expect(w.paint.frames).toBe(3);
   });
 
+  it("counts a frame the screencast delivered twice once", () => {
+    const rows = [
+      before(1),
+      before(2),
+      neither(3),
+      neither(3),
+      after(4),
+      after(5),
+      after(6),
+      after(7),
+      after(8),
+    ];
+    const w = classify(rows, win(2), TOL);
+    expect(w.bad.map((b) => b.frame)).toEqual([2]);
+    expect(w.frames).toBe(8);
+  });
+
   it("reports missing counters and never guesses paint without a logged input", () => {
     const w = classify([before(1), after(4), after(8)], { from: 1, to: 8, times, inputs: [] }, TOL);
     expect(w.coverage).toBe(3 / 8);
