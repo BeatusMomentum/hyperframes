@@ -389,6 +389,7 @@ function runSoftReload(
   }
   const { targetKeys, staleScripts } = scope;
 
+  // fallow-ignore-next-line complexity
   const doReload = () => {
     beforeReset?.();
     const timelines = win.__timelines;

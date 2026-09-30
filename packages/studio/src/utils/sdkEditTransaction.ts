@@ -42,7 +42,6 @@ export interface CutoverDeps {
    */
   writeProjectFile: (path: string, content: string, expectedContent?: string) => Promise<void>;
   reloadPreview: () => void;
-  /** Settles once the preview shows `after`. */
   refresh?: (after: string) => void | Promise<void>;
   compositionPath?: string | null;
   readProjectFile?: (path: string) => Promise<string>;
