@@ -1,4 +1,6 @@
 /** Drag paths and edit sequences: several steps with no settle between, then the usual commit, undo and reload. */
+import { watch } from "node:fs";
+import { dirname, join } from "node:path";
 import { COMPOSITION } from "./grid.mjs";
 import { centre, dist, percentile, quadDistance } from "./geometry.mjs";
 import {
@@ -93,16 +95,17 @@ async function visibleCanvas(page, m) {
   return { ...v, edge: v.x1 };
 }
 
-/** Every distinct saved state in order; a state counts once two reads 20 ms apart agree. */
-function watchVersions(dir, files) {
+/** Every distinct saved state in order, read on each file event; Studio replaces files atomically, so no read is torn. */
+export function watchVersions(dir, files) {
   const versions = [readFiles(dir, files)];
-  let seen = null;
-  const timer = setInterval(() => {
+  const record = () => {
     const now = readFiles(dir, files);
-    if (seen && sameFiles(now, seen) && !sameFiles(now, versions.at(-1))) versions.push(now);
-    seen = now;
-  }, 20);
-  return { versions, stop: () => clearInterval(timer) };
+    if (!sameFiles(now, versions.at(-1))) versions.push(now);
+  };
+  const watchers = [...new Set(files.map((f) => dirname(join(dir, f))))].map((d) =>
+    watch(d, record),
+  );
+  return { versions, stop: () => watchers.forEach((w) => w.close()) };
 }
 
 function mergeSmooth(parts) {
