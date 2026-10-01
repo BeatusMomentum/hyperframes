@@ -10,8 +10,7 @@ import {
   quadToLocal,
   visibleQuad,
 } from "./geometry.mjs";
-
-const LIMIT_PX = 0.5;
+import { LIMIT_PX } from "./report.mjs";
 
 /**
  * Page script for the top frame: after each paint, the pointer and the element's quad, all in top-frame px.
@@ -107,7 +106,8 @@ export function frameSampler() {
       const r = fe.getBoundingClientRect();
       if (!best || r.width * r.height > best.area) best = { el, area: r.width * r.height };
     }
-    return best?.el ?? null;
+    // A page with no preview (the blank-page control) holds its element itself.
+    return best?.el ?? document.querySelector(selector);
   };
   const read = () => {
     const el = findElement(rec.selector);
@@ -117,13 +117,12 @@ export function frameSampler() {
       t: performance.now(),
       pointer: rec.pointer,
       down: rec.down,
-      ...(el &&
-        root && {
-          root: quadOf(root),
-          quad: quadOf(el),
-          size: [el.offsetWidth, el.offsetHeight],
-          clip: el.ownerDocument.defaultView.getComputedStyle(el).clipPath,
-        }),
+      ...(root && { root: quadOf(root) }),
+      ...(el && {
+        quad: quadOf(el),
+        size: [el.offsetWidth, el.offsetHeight],
+        clip: el.ownerDocument.defaultView.getComputedStyle(el).clipPath,
+      }),
       ...(outline && { outline: quadOf(outline) }),
     });
   };
@@ -144,18 +143,24 @@ export function frameSampler() {
   requestAnimationFrame(loop);
 }
 
+/** Starts recording, or marks the next drag in one already running, so the gap between drags is sampled. */
 export const startFrames = (page, selector) =>
   page.evaluate((sel) => {
     const rec = window.__editBenchFrames;
-    Object.assign(rec, { on: true, selector: sel, samples: [] });
+    if (!rec.on) Object.assign(rec, { on: true, samples: [], marks: [] });
+    rec.selector = sel;
+    rec.marks.push(rec.samples.length);
   }, selector);
 
-export const stopFrames = (page) =>
-  page.evaluate(() => {
+/** Stops recording: one window of frames per drag, each running until the next drag's mark. */
+export async function stopFrames(page) {
+  const { samples, marks } = await page.evaluate(() => {
     const rec = window.__editBenchFrames;
     rec.on = false;
-    return rec.samples;
+    return { samples: rec.samples, marks: rec.marks ?? [] };
   });
+  return marks.map((m, i) => samples.slice(m, marks[i + 1] ?? samples.length));
+}
 
 const boxOf = (s, map) => {
   const quad = s.quad.map(map.toComp);
@@ -164,10 +169,8 @@ const boxOf = (s, map) => {
 };
 
 /**
- * The points a gesture moves, per frame, each with where the pointer puts it. Move and rotate drag the
- * pressed point itself (for rotate, the handle: its angle at the handle radius, plus any shift of the box).
- * Resize drags the corner. Crop drags the outline's edge while selected, then the clipped edge, and the
- * element under it must hold still.
+ * Each point a gesture moves, with where the pointer puts it: the pressed point (move; rotate's handle),
+ * the corner (resize), or the outline's edge (crop, whose element must also hold still).
  */
 // fallow-ignore-next-line complexity
 function trackers(gesture, first, p0) {
@@ -218,7 +221,7 @@ const round = (v) => Math.round(v * 100) / 100;
 // fallow-ignore-next-line complexity
 export function scoreTeleport(gesture, samples) {
   const frames = samples
-    .filter((s) => s.quad && s.pointer)
+    .filter((s) => s.quad && s.root && s.pointer)
     .map((s) => ({ ...s, map: compositionMapper(s.root, COMPOSITION) }));
   if (frames.length < 2) {
     const count = (f) => samples.filter(f).length;
@@ -246,8 +249,10 @@ export function scoreTeleport(gesture, samples) {
       if (!released) t.allowed.push(want);
       const places = released ? [t.allowed.at(-1)] : t.allowed;
       const off = Math.min(...places.map((a) => dist(g, a)));
-      const jump = t.prev ? dist(g, t.prev.g) - dist(want, t.prev.want) : 0;
-      t.prev = { g, want };
+      const step = t.prev ? dist(want, t.prev.want) : 0;
+      // One frame late is lag, not a jump: a box a frame behind moves by the pointer's previous step.
+      const jump = t.prev ? dist(g, t.prev.g) - Math.max(step, t.prev.step) : 0;
+      t.prev = { g, want, step };
       if (jump > worst.max) worst = { max: jump, frame: i, kind: "jump", point: k };
       if (off > worst.max) worst = { max: off, frame: i, kind: "off", point: k };
       return { box: g.map(round), pointer: want.map(round), jump: round(jump), off: round(off) };

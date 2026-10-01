@@ -1,5 +1,5 @@
-// Drag-path and sequence cases (gsap none): a path is one long move, a sequence is several edits with no settle between.
-// Ids keep the grid's scheme with one letters-only gesture token, so `^[a-z]+-none-` selects them.
+// Drag paths (one long move) and sequences (several edits, no settle between), gsap none.
+// Ids keep the grid's scheme with a letters-only gesture token, so `^[a-z]+-none-` selects them.
 
 const MOVE = { do: "drag", gesture: "move", by: [90, 60] };
 const BACK = { do: "drag", gesture: "move", by: [-70, 50] };

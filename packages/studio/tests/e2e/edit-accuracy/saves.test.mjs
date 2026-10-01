@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { saveFault } from "./case.mjs";
+import { saveFault, timedWrite } from "./case.mjs";
 import { slowest } from "./sequences.mjs";
 import { score, UNDO_WRITE_MAX_MS } from "./report.mjs";
 
@@ -37,6 +40,19 @@ describe("undo and redo saves", () => {
     expect(score({}, measured(null)).checks.undo).toBe(true);
     expect(score({}, measured(null, UNDO_WRITE_MAX_MS + 1)).checks.undo).toBe(false);
     expect(score({}, measured("redo lost")).checks.undo).toBe(false);
+  });
+
+  it("times a write from its key, and fails undo past the limit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "edit-bench-save-"));
+    writeFileSync(join(dir, "index.html"), "after");
+    const ctx = { dir, files: ["index.html"] };
+    const from = { "index.html": "before" };
+    const undoIn = async (ago) => {
+      const w = await timedWrite(ctx, from, Date.now() - ago);
+      return score({}, measured(null, w.ms)).checks.undo;
+    };
+    expect(await undoIn(UNDO_WRITE_MAX_MS - 1000)).toBe(true);
+    expect(await undoIn(UNDO_WRITE_MAX_MS + 1000)).toBe(false);
   });
 
   it("judges a sequence's undo walk by its slowest write", () => {

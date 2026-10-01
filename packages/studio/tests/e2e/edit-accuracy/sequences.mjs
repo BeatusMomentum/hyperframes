@@ -24,7 +24,8 @@ import {
 } from "./case.mjs";
 import { scoreTeleport, stopFrames } from "./teleport.mjs";
 
-const STEP_PX = 14;
+// The frame sampler sees every painted frame, so a path needs few pointer steps (each costs a CDP read).
+const STEP_PX = 28;
 const STRAIGHT_STEPS = 20;
 
 /** `n` evenly spaced points from `a` (excluded) to `b` (included). */
@@ -53,16 +54,16 @@ const ROUTES = {
     ),
   circle: (p, v) => {
     const r = 0.3 * Math.min(v.x1 - v.x0, v.y1 - v.y0);
-    const ring = Array.from({ length: 90 }, (_, i) => {
-      const a = (2 * Math.PI * (i + 1)) / 90;
+    const ring = Array.from({ length: 45 }, (_, i) => {
+      const a = (2 * Math.PI * (i + 1)) / 45;
       return [p[0] - r + r * Math.cos(a), p[1] + r * Math.sin(a)];
     });
     return [...ring, ...leg(p, [p[0] + 0.08 * (v.x1 - v.x0), p[1] + 0.08 * (v.y1 - v.y0)])];
   },
   flick: (p, v) => legN(p, at(v, [0.75, 0.7]), 4),
   pause: (p) => {
-    const half = legN(p, [p[0] + 90, p[1] + 45], 30);
-    return [...half, { pause: 1000 }, ...legN(half.at(-1), [p[0] + 180, p[1] + 90], 30)];
+    const half = legN(p, [p[0] + 90, p[1] + 45], 20);
+    return [...half, { pause: 1000 }, ...legN(half.at(-1), [p[0] + 180, p[1] + 90], 20)];
   },
   edge: (p, v) => {
     const out = [Math.min(v.edge + 60, VIEWPORT.width - 2), p[1]];
@@ -291,19 +292,25 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
     text: null,
   };
   const steps = [];
-  // A drag's frames run until the next step starts, so they cover the moments right after release.
+  // Back-to-back drags share one recording, so a drag's frames run up to the next press: a jump in
+  // the gap fails the earlier drag, whose box must stay where it was let go. Other steps end it.
   const collect = async () => {
-    const open = steps.at(-1);
-    if (open?.do === "drag") open.teleport = scoreTeleport(open.gesture, await stopFrames(page));
+    const open = steps.filter((s) => s.do === "drag" && !s.teleport);
+    const windows = open.length ? await stopFrames(page) : [];
+    open.forEach((s, i) => (s.teleport = scoreTeleport(s.gesture, windows[i] ?? [])));
   };
   for (const step of spec.steps) {
-    await collect();
+    if (step.do !== "drag") await collect();
     steps.push(await driveStep(ctx, step, state));
   }
-  // Every step but a seek saves once; wait for all of them before the commit snapshot.
+  // Every step but a seek saves once (a nudge burst saves once); wait for all of them. An undo may
+  // cancel the save it follows, so a sequence ending on one stops waiting once the file is back.
   const owed = spec.steps.filter((s) => s.do !== "seek").length;
-  for (const deadline = Date.now() + 10_000; Date.now() < deadline; await sleep(50))
+  const endsUndone = spec.steps.at(-1).do === "undo" && state.depth === 0;
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; await sleep(50)) {
     if (watcher.versions.length - 1 >= owed) break;
+    if (endsUndone && sameFiles(readFiles(dir, files), watcher.versions[0])) break;
+  }
   await waitForFiles(ctx.A, { timeout: 5000 });
   watcher.stop();
   const versions = watcher.versions;
