@@ -2,6 +2,7 @@
 
 import React, { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { DomEditSelection } from "./domEditing";
 import { DomEditGroupChrome, DomEditSelectionChrome } from "./DomEditSelectionChrome";
@@ -327,74 +328,68 @@ describe("DomEditSelectionChrome rect variables", () => {
   const rectA = { left: 40, top: 30, width: 200, height: 100, editScaleX: 1, editScaleY: 1 };
   const rectB = { left: 75.5, top: 12, width: 120, height: 64, editScaleX: 1, editScaleY: 1 };
 
+  // Server markup keeps each style verbatim; happy-dom's parser drops var() in `left`/`top`.
   function renderAt(rect: typeof rectA) {
     const element = document.createElement("div");
-    document.body.append(element);
-    const { selection, host, root } = selectionFixture(element, "#el", true);
-    act(() => {
-      root.render(
-        <DomEditSelectionChrome
-          selection={selection}
-          overlayRect={rect}
-          allowCanvasMovement
-          allowBodyDrag
-          boxRef={createRef()}
-          boxChromeClass=""
-          boxClipPath={undefined}
-          selectionKey="el"
-          groupSelectionCount={0}
-          gestures={{ startGesture: vi.fn() } as never}
-          onStyleCommit={vi.fn()}
-          onBoxClick={vi.fn()}
-        />,
-      );
-    });
-    const wrapper = host.firstElementChild as HTMLElement;
+    const { selection, host } = selectionFixture(element, "#el", true);
+    host.innerHTML = renderToStaticMarkup(
+      <DomEditSelectionChrome
+        selection={selection}
+        overlayRect={rect}
+        allowCanvasMovement
+        allowBodyDrag
+        boxRef={createRef()}
+        boxChromeClass=""
+        boxClipPath={undefined}
+        selectionKey="el"
+        groupSelectionCount={0}
+        gestures={{ startGesture: vi.fn() } as never}
+        onStyleCommit={vi.fn()}
+        onBoxClick={vi.fn()}
+      />,
+    );
+    const styleOf = (el: Element) =>
+      Object.fromEntries(
+        (el.getAttribute("style") ?? "").split(";").map((d) => {
+          const at = d.indexOf(":");
+          return [d.slice(0, at).trim(), d.slice(at + 1).trim()];
+        }),
+      ) as Record<string, string>;
+    const vars = styleOf(host.firstElementChild!);
     const handles = [
-      ...host.querySelectorAll<HTMLElement>('[aria-label="Rotate selection"], .h-4.w-4'),
-      host.querySelector<HTMLElement>("[data-dom-edit-crop-frame]")!,
-    ];
-    // Resolves a handle's position against the wrapper's variables, as the browser does.
+      ...host.querySelectorAll('[aria-label="Rotate selection"], .h-4.w-4'),
+      host.querySelector("[data-dom-edit-crop-frame]")!,
+    ].map((el) => {
+      const { left, top } = styleOf(el);
+      return { left, top };
+    });
+    // Resolves a position against the wrapper's variables, as the browser does.
     const at = (value: string) => {
       const expr = value
-        .replace(/var\((--[\w-]+)\)/g, (_, name) => wrapper.style.getPropertyValue(name))
+        .replace(/var\((--[\w-]+)\)/g, (_, name: string) => vars[name] ?? "NaN")
         .replace(/max\(/g, "Math.max(")
         .replace(/calc\(/g, "(")
         .replace(/px/g, "");
       return Number(new Function(`return ${expr}`)());
     };
-    const done = () => {
-      act(() => root.unmount());
-      host.remove();
-    };
-    return { handles, at, done };
+    host.remove();
+    return { handles, places: handles.map((h) => [at(h.left), at(h.top)]) };
   }
 
   it("moves every handle with the rect while their own styles stay the same", () => {
     const a = renderAt(rectA);
     const b = renderAt(rectB);
-    try {
-      expect(a.handles).toHaveLength(6);
-      const styleOf = (el: HTMLElement) => [el.style.left, el.style.top];
-      expect(b.handles.map(styleOf)).toEqual(a.handles.map(styleOf));
-      const places = (r: ReturnType<typeof renderAt>) =>
-        r.handles.map((el) => [r.at(el.style.left), r.at(el.style.top)]);
-      const dots = (r: typeof rectA) => [
-        [r.left - 8, r.top - 8],
-        [r.left + r.width - 8, r.top - 8],
-        [r.left - 8, r.top + r.height - 8],
-        [r.left + r.width - 8, r.top + r.height - 8],
-      ];
-      const expected = (r: typeof rectA) => [
-        [r.left + r.width / 2, r.top + r.height + 12],
-        ...dots(r),
-        [r.left, r.top],
-      ];
-      expect(places(a)).toEqual(expected(rectA));
-      expect(places(b)).toEqual(expected(rectB));
-    } finally {
-      a.done();
-      b.done();
-    }
+    expect(a.handles).toHaveLength(6);
+    expect(b.handles).toEqual(a.handles);
+    const expected = (r: typeof rectA) => [
+      [r.left + r.width / 2, r.top + r.height + 12],
+      [r.left - 8, r.top - 8],
+      [r.left + r.width - 8, r.top - 8],
+      [r.left - 8, r.top + r.height - 8],
+      [r.left + r.width - 8, r.top + r.height - 8],
+      [r.left, r.top],
+    ];
+    expect(a.places).toEqual(expected(rectA));
+    expect(b.places).toEqual(expected(rectB));
   });
 });
