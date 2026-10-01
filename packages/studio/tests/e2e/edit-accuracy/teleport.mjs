@@ -289,10 +289,11 @@ export function scoreTeleport(gesture, samples) {
       if (!released) t.allowed.push(want);
       const places = released ? [t.allowed.at(-1)] : t.allowed;
       const off = Math.min(...places.map((a) => dist(g, a)));
-      const step = t.prev ? dist(want, t.prev.want) : 0;
-      // One frame late is lag, not a jump: a box a frame behind moves by the pointer's previous step.
-      const jump = t.prev ? dist(g, t.prev.g) - Math.max(step, t.prev.step) : 0;
-      t.prev = { g, want, step };
+      // Lag is not a jump: a box that catches up after lagging frames may move all the pointer travel it owes.
+      const owed = (t.prev?.owed ?? 0) + (t.prev ? dist(want, t.prev.want) : 0);
+      const moved = t.prev ? dist(g, t.prev.g) : 0;
+      const jump = moved - owed;
+      t.prev = { g, want, owed: Math.max(0, owed - moved) };
       if (jump > worst.max) worst = { max: jump, frame: i, kind: "jump", point: k };
       if (off > worst.max) worst = { max: off, frame: i, kind: "off", point: k };
       return { box: g.map(round), pointer: want.map(round), jump: round(jump), off: round(off) };

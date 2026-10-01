@@ -44,6 +44,16 @@ describe("scoreTeleport", () => {
     expect(scoreTeleport("move", [...late, frame(50, false)]).pass).toBe(true);
   });
 
+  it("passes a box that holds two frames, then catches up in one", () => {
+    const caught = drag.map((f, i) => (i === 3 ? frame(f.t, true, drag[2].t) : f));
+    expect(scoreTeleport("move", caught)).toMatchObject({ max: 0, pass: true });
+  });
+
+  it("still catches a one-frame 37 px jump while the pointer moves 10 px a frame", () => {
+    const jumped = drag.map((f, i) => (i === 4 ? frame(f.t, true, f.t + 37) : f));
+    expect(scoreTeleport("move", jumped)).toMatchObject({ pass: false, frame: 4 });
+  });
+
   it("catches a mid-drag snap back to where the drag started, on the pointer's own path", () => {
     const snapped = drag.map((f, i) => (i === 4 ? frame(30, true, 0) : f));
     const r = scoreTeleport("move", snapped);
