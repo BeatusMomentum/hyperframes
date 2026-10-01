@@ -18,7 +18,7 @@ import {
   toPoints,
   visibleQuad,
 } from "./geometry.mjs";
-import { frameSampler, scoreTeleport, startFrames, stopFrames } from "./teleport.mjs";
+import { frameSamplerScript, scoreTeleport, startFrames, stopFrames } from "./teleport.mjs";
 
 export const VIEWPORT = { width: 1600, height: 900 };
 const STEPS = 20;
@@ -536,7 +536,7 @@ export async function controlDrag(browser, gesture) {
     await page.setViewport(VIEWPORT);
     await page.evaluateOnNewDocument(instrumentPage);
     // The real drags run the frame sampler, so the control pays its cost too.
-    await page.evaluateOnNewDocument(frameSampler);
+    await page.evaluateOnNewDocument(frameSamplerScript);
     await page.goto(CONTROL_PAGE);
     const box = await page.$("#box");
     const ctx = { page, handles: { target: box, root: box } };
@@ -654,7 +654,7 @@ export async function inStudio({ browser, spec, dir, files, url, evidence }, dri
   try {
     await page.setViewport(VIEWPORT);
     await page.evaluateOnNewDocument(instrumentPage);
-    await page.evaluateOnNewDocument(frameSampler);
+    await page.evaluateOnNewDocument(frameSamplerScript);
     await page.goto(url);
     let pre = await openStudio(ctx);
     await disableSnap(page);

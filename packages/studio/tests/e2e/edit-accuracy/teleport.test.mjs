@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreTeleport } from "./teleport.mjs";
+import { quadOf, scoreTeleport } from "./teleport.mjs";
 import { entry, score } from "./report.mjs";
 
 // The composition root drawn 1:1 at the origin, and a 100 px box whose centre the pointer holds.
@@ -102,5 +102,49 @@ describe("scoreTeleport", () => {
     expect(score({}, r).checks.teleport).toBe(false);
     // baseline.json holds the verdict under `teleport` and the number apart, so the key never means a size.
     expect(entry(score({ id: "move-x" }, r))).toMatchObject({ teleport: false, teleportPx: null });
+  });
+});
+
+describe("quadOf", () => {
+  // A top-level element 120.375 px wide: offsetWidth rounds to 120, so the edge must come from computed style.
+  const element = (style) => {
+    const view = { getComputedStyle: (n) => n.style };
+    view.top = view;
+    return {
+      ownerDocument: { defaultView: view },
+      parentElement: null,
+      getRootNode: () => ({}),
+      offsetWidth: 120,
+      offsetHeight: 80,
+      getBoundingClientRect: () => ({ left: 100, top: 0, width: 120.375, height: 80 }),
+      style: { transform: "none", rotate: "none", scale: "none", ...style },
+    };
+  };
+
+  it("puts the right edge at the fractional width", () => {
+    const quad = quadOf(element({ boxSizing: "border-box", width: "120.375px", height: "80px" }));
+    expect(quad[1][0]).toBeCloseTo(220.375, 6);
+  });
+
+  it("adds padding and border to a content-box size", () => {
+    const style = { boxSizing: "content-box", width: "100.375px", height: "60px" };
+    const sides = {
+      paddingLeft: "8px",
+      paddingRight: "8px",
+      borderLeftWidth: "2px",
+      borderRightWidth: "2px",
+    };
+    const quad = quadOf(
+      element({
+        ...style,
+        ...sides,
+        paddingTop: "9px",
+        paddingBottom: "9px",
+        borderTopWidth: "1px",
+        borderBottomWidth: "1px",
+      }),
+    );
+    expect(quad[1][0]).toBeCloseTo(220.375, 6);
+    expect(quad[2][1]).toBeCloseTo(80, 6);
   });
 });

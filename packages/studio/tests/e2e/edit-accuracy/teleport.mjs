@@ -12,11 +12,94 @@ import {
 } from "./geometry.mjs";
 import { LIMIT_PX } from "./report.mjs";
 
+// Geometry the page script uses, kept outside it so it can be tested; frameSamplerScript ships them together.
+function mul(a, b) {
+  return [
+    a[0] * b[0] + a[2] * b[1],
+    a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3],
+    a[1] * b[2] + a[3] * b[3],
+  ];
+}
+
+function apply(m, [x, y]) {
+  return [m[0] * x + m[2] * y, m[1] * x + m[3] * y];
+}
+
+function rotation(value) {
+  const parts = value === "none" ? [] : value.trim().split(/\s+/);
+  const deg = parts.length
+    ? Number.parseFloat(parts.at(-1)) * Math.sign(Number(parts.at(-2) ?? 1))
+    : 0;
+  const r = (deg * Math.PI) / 180;
+  return [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r)];
+}
+
+// CSS applies translate, rotate, scale, then transform; only the linear part matters around the centre.
+function ownLinear(node) {
+  const s = node.ownerDocument.defaultView.getComputedStyle(node);
+  const [sx, sy = sx] = s.scale === "none" ? [1] : s.scale.split(/\s+/).map(Number);
+  const t = s.transform === "none" ? null : new DOMMatrix(s.transform);
+  return mul(mul(rotation(s.rotate), [sx, 0, 0, sy]), t ? [t.a, t.b, t.c, t.d] : [1, 0, 0, 1]);
+}
+
+function parentOf(node) {
+  return node.parentElement ?? node.getRootNode().host ?? null;
+}
+
+function linear(node) {
+  let m = [1, 0, 0, 1];
+  for (let n = node; n; n = parentOf(n)) m = mul(ownLinear(n), m);
+  return m;
+}
+
+/** Border-box size in CSS px: offsetWidth rounds to whole px, and a bounding rect grows with rotation. */
+// fallow-ignore-next-line complexity
+function boxSize(el) {
+  const s = el.ownerDocument.defaultView.getComputedStyle(el);
+  const px = (v) => Number.parseFloat(v) || 0;
+  const edges = (a, b) =>
+    s.boxSizing === "border-box"
+      ? 0
+      : px(s[`padding${a}`]) +
+        px(s[`padding${b}`]) +
+        px(s[`border${a}Width`]) +
+        px(s[`border${b}Width`]);
+  return [px(s.width) + edges("Left", "Right"), px(s.height) + edges("Top", "Bottom")];
+}
+
+/** The element's quad in top-frame px, crossing each iframe through its element's own transform. */
+export function quadOf(el, top = el.ownerDocument.defaultView.top) {
+  const r = el.getBoundingClientRect();
+  let c = [r.left + r.width / 2, r.top + r.height / 2];
+  let m = linear(el);
+  for (let win = el.ownerDocument.defaultView; win !== top; win = win.parent) {
+    const f = win.frameElement;
+    const fr = f.getBoundingClientRect();
+    const fm = linear(f);
+    const fs = f.ownerDocument.defaultView.getComputedStyle(f);
+    const [fw, fh] = boxSize(f);
+    const inset = [
+      f.clientLeft + parseFloat(fs.paddingLeft),
+      f.clientTop + parseFloat(fs.paddingTop),
+    ];
+    const d = apply(fm, [c[0] + inset[0] - fw / 2, c[1] + inset[1] - fh / 2]);
+    c = [fr.left + fr.width / 2 + d[0], fr.top + fr.height / 2 + d[1]];
+    m = mul(fm, m);
+  }
+  const [w, h] = boxSize(el);
+  const corner = (u, v) => {
+    const d = apply(m, [u * w, v * h]);
+    return [c[0] + d[0], c[1] + d[1]];
+  };
+  return [corner(-0.5, -0.5), corner(0.5, -0.5), corner(0.5, 0.5), corner(-0.5, 0.5)];
+}
+
 /**
  * Page script for the top frame: after each paint, the pointer and the element's quad, all in top-frame px.
  * A quad is the box's centre plus its composed 2D linear transform, which DOM rects alone cannot give.
  */
-export function frameSampler() {
+function frameSampler() {
   if (window.top !== window) return;
   const rec = { on: false, selector: null, pointer: null, down: false, samples: [] };
   window.__editBenchFrames = rec;
@@ -29,60 +112,6 @@ export function frameSampler() {
       },
       true,
     );
-  const mul = (a, b) => [
-    a[0] * b[0] + a[2] * b[1],
-    a[1] * b[0] + a[3] * b[1],
-    a[0] * b[2] + a[2] * b[3],
-    a[1] * b[2] + a[3] * b[3],
-  ];
-  const apply = (m, [x, y]) => [m[0] * x + m[2] * y, m[1] * x + m[3] * y];
-  const rotation = (value) => {
-    const parts = value === "none" ? [] : value.trim().split(/\s+/);
-    const deg = parts.length
-      ? Number.parseFloat(parts.at(-1)) * Math.sign(Number(parts.at(-2) ?? 1))
-      : 0;
-    const r = (deg * Math.PI) / 180;
-    return [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r)];
-  };
-  // CSS applies translate, rotate, scale, then transform; only the linear part matters around the centre.
-  const ownLinear = (node) => {
-    const s = node.ownerDocument.defaultView.getComputedStyle(node);
-    const [sx, sy = sx] = s.scale === "none" ? [1] : s.scale.split(/\s+/).map(Number);
-    const t = s.transform === "none" ? null : new DOMMatrix(s.transform);
-    return mul(mul(rotation(s.rotate), [sx, 0, 0, sy]), t ? [t.a, t.b, t.c, t.d] : [1, 0, 0, 1]);
-  };
-  const parentOf = (node) => node.parentElement ?? node.getRootNode().host ?? null;
-  const linear = (node) => {
-    let m = [1, 0, 0, 1];
-    for (let n = node; n; n = parentOf(n)) m = mul(ownLinear(n), m);
-    return m;
-  };
-  /** The element's quad in top-frame px, crossing each iframe through its element's own transform. */
-  const quadOf = (el) => {
-    const r = el.getBoundingClientRect();
-    let c = [r.left + r.width / 2, r.top + r.height / 2];
-    let m = linear(el);
-    for (let win = el.ownerDocument.defaultView; win !== window; win = win.parent) {
-      const f = win.frameElement;
-      const fr = f.getBoundingClientRect();
-      const fm = linear(f);
-      const fs = getComputedStyle(f);
-      const inset = [
-        f.clientLeft + parseFloat(fs.paddingLeft),
-        f.clientTop + parseFloat(fs.paddingTop),
-      ];
-      const local = [c[0] + inset[0] - f.offsetWidth / 2, c[1] + inset[1] - f.offsetHeight / 2];
-      const d = apply(fm, local);
-      c = [fr.left + fr.width / 2 + d[0], fr.top + fr.height / 2 + d[1]];
-      m = mul(fm, m);
-    }
-    const [w, h] = [el.offsetWidth, el.offsetHeight];
-    const corner = (u, v) => {
-      const d = apply(m, [u * w, v * h]);
-      return [c[0] + d[0], c[1] + d[1]];
-    };
-    return [corner(-0.5, -0.5), corner(0.5, -0.5), corner(0.5, 0.5), corner(-0.5, 0.5)];
-  };
   // Studio's previews sit in <hyperframes-player> shadow roots, which window.frames does not list.
   const previewWindows = () =>
     Array.from(document.querySelectorAll("iframe, hyperframes-player"))
@@ -120,7 +149,7 @@ export function frameSampler() {
       ...(root && { root: quadOf(root) }),
       ...(el && {
         quad: quadOf(el),
-        size: [el.offsetWidth, el.offsetHeight],
+        size: boxSize(el),
         clip: el.ownerDocument.defaultView.getComputedStyle(el).clipPath,
       }),
       ...(outline && { outline: quadOf(outline) }),
@@ -142,6 +171,21 @@ export function frameSampler() {
   };
   requestAnimationFrame(loop);
 }
+
+/** The page script with the geometry it calls, for evaluateOnNewDocument. */
+export const frameSamplerScript = [
+  mul,
+  apply,
+  rotation,
+  ownLinear,
+  parentOf,
+  linear,
+  boxSize,
+  quadOf,
+]
+  .map(String)
+  .concat(`(${frameSampler})();`)
+  .join("\n");
 
 /** Starts recording, or marks the next drag in one already running, so the gap between drags is sampled. */
 export const startFrames = (page, selector) =>
