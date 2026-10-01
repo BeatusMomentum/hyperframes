@@ -82,7 +82,6 @@ type TimedLinked = LinkedElement & Pick<TimelineElement, "start" | "duration">;
 const edgeTime = (el: Pick<TimelineElement, "start" | "duration">, edge: "start" | "end") =>
   edge === "start" ? el.start : el.start + el.duration;
 
-/** A trim drags a link partner along only when its edge sits at the grabbed clip's edge time. */
 export function dropMisalignedTrimPartners(
   keys: ReadonlySet<string>,
   grabbed: TimedLinked,
@@ -92,7 +91,7 @@ export function dropMisalignedTrimPartners(
   const kept = new Set(keys);
   if (!isLinked(grabbed)) return kept;
   for (const el of elements) {
-    if (el.link !== grabbed.link || keyOf(el) === keyOf(grabbed)) continue;
+    if (!sharesLinkGroup(el, grabbed) || keyOf(el) === keyOf(grabbed)) continue;
     if (Math.abs(edgeTime(el, edge) - edgeTime(grabbed, edge)) > 1e-3) kept.delete(keyOf(el));
   }
   return kept;
@@ -109,6 +108,7 @@ type BoundedElement = Pick<
   | "syncOrigin"
   | "playbackStart"
   | "playbackRate"
+  | "sourceFile"
 >;
 
 const tagOf = (el: Pick<TimelineElement, "tag">) => el.tag.trim().toLowerCase();
@@ -119,7 +119,7 @@ function partnerVideoBounds(
 ): { videoKey: string; start: number; end: number } | null {
   if (tagOf(audio) !== "audio") return null;
   const linkedVideo = isLinked(audio)
-    ? elements.find((el) => el.link === audio.link && tagOf(el) === "video")
+    ? elements.find((el) => sharesLinkGroup(el, audio) && tagOf(el) === "video")
     : undefined;
   const video = linkedVideo ?? syncPartnerOf(audio, elements);
   return video
@@ -127,13 +127,21 @@ function partnerVideoBounds(
     : null;
 }
 
-/** `start` moved so a clip of `duration` sits inside `bounds`; a clip longer than them pins to their start. */
-export function clampStartIntoBounds(
-  start: number,
-  duration: number,
-  bounds: { start: number; end: number },
-): number {
-  return Math.max(bounds.start, Math.min(start, bounds.end - duration));
+export function heldAudioShiftRange(
+  movers: readonly BoundedElement[],
+  elements: readonly BoundedElement[],
+  moving: ReadonlySet<string>,
+): { min: number; max: number } {
+  let min = Number.NEGATIVE_INFINITY;
+  let max = Number.POSITIVE_INFINITY;
+  for (const mover of movers) {
+    const bounds = heldPartnerVideoBounds(mover, elements, moving);
+    if (!bounds) continue;
+    const low = bounds.start - mover.start;
+    min = Math.max(min, low);
+    max = Math.min(max, Math.max(low, bounds.end - mover.duration - mover.start));
+  }
+  return { min, max };
 }
 
 export function heldPartnerVideoBounds(
