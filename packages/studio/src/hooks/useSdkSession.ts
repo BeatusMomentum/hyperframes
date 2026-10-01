@@ -6,6 +6,7 @@ import { trackStudioEvent } from "../utils/studioTelemetry";
 import type { PublishSdkSession } from "../utils/sdkCutover";
 import { addExternalFileReloadListener } from "./externalFileReloadBus";
 import { whenPreviewBooted } from "../player/store/playerStore";
+import { useAbsentReadRecoveryTelemetry } from "./useAbsentReadRecoveryTelemetry";
 
 /**
  * Why an optional project-file read produced no usable content. `stage: "read"`
@@ -376,22 +377,8 @@ export function useSdkSession(
   reloadTokenRef.current = reloadToken;
   const [unreachableProject, setUnreachableProject] = useState<string | null>(null);
   const [compositionMissing, setCompositionMissing] = useState(false);
-  // Keyed `${projectId}:${path}` so a refresh that doesn't fix it (the file
-  // really is gone) can't loop, and so it fires again for a genuinely
-  // different path or project.
-  const refreshedAbsentPathsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    refreshedAbsentPathsRef.current.clear();
-  }, [projectId]);
-  // Start time of each outstanding tree-refresh-on-absent fallback, keyed the
-  // same way. Telemetry-only: proves whether `onAbsentRead` actually resolves
-  // the stale tree (the prior acceptance metric, absent-reads-per-tab, turned
-  // out to never move with or without the fix — it was dominated by agent-
-  // driven sessions where >1 absent read per tab was already the norm, not a
-  // sign of the loop this fallback targets). This measures the one thing that
-  // metric couldn't: did a given absent read get followed by a successful one
-  // for the same path, and how long did that take.
-  const pendingAbsentRecoveryRef = useRef<Map<string, number>>(new Map());
+  // Keyed by path alone: cleared below on every `projectId` change, so only
+  const absentReadRecovery = useAbsentReadRecoveryTelemetry(projectId, fileTree, fileTreeLoaded);
 
   /**
    * Update `unreachableProject`/`compositionMissing` for one failed read, and
@@ -408,24 +395,7 @@ export function useSdkSession(
     setUnreachableProject(reportReadFailure(read, forProjectId, pathInTree));
     setCompositionMissing(read.reason === "absent");
     if (read.reason !== "absent") return;
-    const key = `${forProjectId}:${forPath}`;
-    if (refreshedAbsentPathsRef.current.has(key)) return;
-    refreshedAbsentPathsRef.current.add(key);
-    pendingAbsentRecoveryRef.current.set(key, Date.now());
-    trackStudioEvent("sdk_absent_read_recovery", { stage: "triggered" });
-    onAbsentRead?.(forPath);
-  }
-
-  /** The other half of `sdk_absent_read_recovery`: a read that just succeeded. */
-  function reportAbsentRecoveryIfPending(forProjectId: string, forPath: string): void {
-    const key = `${forProjectId}:${forPath}`;
-    const startedAt = pendingAbsentRecoveryRef.current.get(key);
-    if (startedAt === undefined) return;
-    pendingAbsentRecoveryRef.current.delete(key);
-    trackStudioEvent("sdk_absent_read_recovery", {
-      stage: "recovered",
-      elapsed_ms: Date.now() - startedAt,
-    });
+    absentReadRecovery.triggerOnce(forPath, onAbsentRead);
   }
 
   useEffect(
@@ -477,7 +447,6 @@ export function useSdkSession(
         }
         setUnreachableProject(null);
         setCompositionMissing(false);
-        reportAbsentRecoveryIfPending(projectId, activeCompPath);
         const content = read.content;
         // No persist queue: Studio's writeProjectFile (via sdkCutover's
         // persistSdkSerialize) is the SINGLE writer. Wiring the SDK persist

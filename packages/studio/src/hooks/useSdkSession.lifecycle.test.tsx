@@ -625,15 +625,22 @@ describe("useSdkSession unavailable telemetry", () => {
       projectId,
       path,
       onAbsentRead,
+      fileTree = [],
+      fileTreeLoaded = false,
     }: {
       projectId: string;
       path: string;
       onAbsentRead?: (path: string) => void;
+      fileTree?: readonly string[];
+      fileTreeLoaded?: boolean;
     }) {
-      captured.handle = useSdkSession(projectId, path, [], false, onAbsentRead);
+      captured.handle = useSdkSession(projectId, path, fileTree, fileTreeLoaded, onAbsentRead);
       return null;
     }
     const captured: { handle: SdkSessionHandle | null } = { handle: null };
+    const absentRead = vi.fn(
+      async () => ({ ok: true, json: async () => ({ content: "", missing: true }) }) as Response,
+    );
 
     it("sets compositionMissing and calls onAbsentRead once for an absent read", async () => {
       vi.stubGlobal(
@@ -749,29 +756,204 @@ describe("useSdkSession unavailable telemetry", () => {
       await act(async () => root.unmount());
     });
 
-    it("emits sdk_absent_read_recovery 'recovered' with elapsed_ms once a later read succeeds", async () => {
-      const fetchMock = vi.fn(
-        async () => ({ ok: true, json: async () => ({ content: "", missing: true }) }) as Response,
-      );
-      vi.stubGlobal("fetch", fetchMock);
-      openComposition.mockResolvedValue(fakeSession());
+    // Recovery is measured on the TREE, not on a same-path read succeeding —
+    // see the comment on `pendingTreeCorrectionRef` in useSdkSession.ts.
+    // Reviewed on #4843 (Somu): the original design measured "a later read of
+    // the same path succeeded", which the fallback does not control (it only
+    // calls `refreshFileTree`, which starts no read) and which the fallback's
+    // OWN target scenario never satisfies (the file stays gone; the tree just
+    // stops listing it). That would have scored a working fix as "never
+    // recovers". These tests exercise the corrected design.
+    it("emits tree_corrected with a positive elapsed_ms once the path drops out of the tree", async () => {
+      // Not mocking `performance.now()`: other code (React, jsdom) calls it
+      // too, so a queued mock value can be consumed by one of those instead
+      // of by this effect. A real (small) delay between trigger and
+      // resolution is what actually defeats a hardcoded `elapsed_ms: 0`.
+      vi.stubGlobal("fetch", absentRead);
       const root = createRoot(document.createElement("div"));
-      await act(async () => root.render(<HandleProbe projectId="project-a" path="index.html" />));
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={["index.html"]}
+            onAbsentRead={vi.fn()}
+          />,
+        ),
+      );
       await flushAsyncEffects();
-      expect(trackMock).toHaveBeenCalledWith("sdk_absent_read_recovery", {
-        stage: "triggered",
-      });
+      expect(trackMock).toHaveBeenCalledWith("sdk_absent_read_recovery", { stage: "triggered" });
       trackMock.mockClear();
 
-      fetchMock.mockImplementation(async () => response("PROJECT_A"));
       await act(async () => {
-        captured.handle?.forceReload();
+        await new Promise((resolve) => setTimeout(resolve, 5));
       });
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={[]}
+            fileTreeLoaded={true}
+            onAbsentRead={vi.fn()}
+          />,
+        ),
+      );
       await flushAsyncEffects();
 
       expect(trackMock).toHaveBeenCalledWith(
         "sdk_absent_read_recovery",
-        expect.objectContaining({ stage: "recovered", elapsed_ms: expect.any(Number) }),
+        expect.objectContaining({ stage: "tree_corrected", elapsed_ms: expect.any(Number) }),
+      );
+      const call = trackMock.mock.calls.find(
+        ([event, props]) =>
+          event === "sdk_absent_read_recovery" && props?.stage === "tree_corrected",
+      );
+      expect(call?.[1]?.elapsed_ms).toBeGreaterThan(0);
+      await act(async () => root.unmount());
+    });
+
+    it("does not emit tree_corrected while the path is still listed", async () => {
+      vi.stubGlobal("fetch", absentRead);
+      const root = createRoot(document.createElement("div"));
+      await act(async () =>
+        root.render(<HandleProbe projectId="project-a" path="index.html" onAbsentRead={vi.fn()} />),
+      );
+      await flushAsyncEffects();
+      trackMock.mockClear();
+
+      // fileTreeLoaded flips true, but the path is STILL in the tree — must stay silent.
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={["index.html", "other.html"]}
+            fileTreeLoaded={true}
+            onAbsentRead={vi.fn()}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "tree_corrected" }),
+      );
+      await act(async () => root.unmount());
+    });
+
+    it("does not re-emit tree_corrected on a later unrelated tree update", async () => {
+      vi.stubGlobal("fetch", absentRead);
+      const root = createRoot(document.createElement("div"));
+      // First render lists the path (the realistic stale-tree shape — the
+      // tree update that resolves it always happens on a LATER render); this
+      // populates the pending map before the tree ever says it's gone.
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={["index.html"]}
+            onAbsentRead={vi.fn()}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+      trackMock.mockClear();
+
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={[]}
+            fileTreeLoaded={true}
+            onAbsentRead={vi.fn()}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+      expect(trackMock).toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "tree_corrected" }),
+      );
+      trackMock.mockClear();
+
+      // A new fileTree reference, still not containing the path: the pending
+      // entry must already be gone, not re-matched.
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="index.html"
+            fileTree={["unrelated.html"]}
+            fileTreeLoaded={true}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "tree_corrected" }),
+      );
+      await act(async () => root.unmount());
+    });
+
+    it("resolves only the path that actually left the tree, not any pending path", async () => {
+      // One hook instance, two paths over time — the master-view-rotation
+      // shape: `masterCompPath` moves to the next composition after a
+      // refresh, so the hook can be actively reading path B while path A's
+      // pending entry (from before the rotation) is still unresolved.
+      vi.stubGlobal("fetch", absentRead);
+      const onAbsentRead = vi.fn();
+      const root = createRoot(document.createElement("div"));
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="a.html"
+            fileTree={["a.html", "b.html"]}
+            fileTreeLoaded={true}
+            onAbsentRead={onAbsentRead}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="b.html"
+            fileTree={["a.html", "b.html"]}
+            fileTreeLoaded={true}
+            onAbsentRead={onAbsentRead}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+      expect(onAbsentRead).toHaveBeenCalledTimes(2);
+      trackMock.mockClear();
+
+      // Only b.html leaves the tree — a.html's pending entry must stay open.
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-a"
+            path="b.html"
+            fileTree={["a.html"]}
+            fileTreeLoaded={true}
+            onAbsentRead={onAbsentRead}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+
+      expect(trackMock).toHaveBeenCalledTimes(1);
+      expect(trackMock).toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "tree_corrected" }),
       );
       await act(async () => root.unmount());
     });
@@ -790,19 +972,91 @@ describe("useSdkSession unavailable telemetry", () => {
       await act(async () => root.unmount());
     });
 
-    it("does not throw when onAbsentRead is not supplied", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(
-          async () =>
-            ({ ok: true, json: async () => ({ content: "", missing: true }) }) as Response,
-        ),
-      );
+    it("does not throw, and does not emit triggered, when onAbsentRead is not supplied", async () => {
+      vi.stubGlobal("fetch", absentRead);
       const root = createRoot(document.createElement("div"));
       await act(async () => root.render(<HandleProbe projectId="project-a" path="index.html" />));
       await flushAsyncEffects();
 
       expect(captured.handle?.compositionMissing).toBe(true);
+      expect(trackMock).not.toHaveBeenCalledWith("sdk_absent_read_recovery", expect.anything());
+      await act(async () => root.unmount());
+    });
+
+    // Reviewed on #4843 (Somu): DesignPanelPromoteProvider opens a second,
+    // callback-less `useSdkSession` targeting the SAME path as the primary
+    // session whenever nothing is selected — without the `onAbsentRead` guard,
+    // one absent file fired `triggered` twice, with no way for PostHog to
+    // tell the two hook instances apart.
+    it("does not double-count triggered when a second, callback-less session reads the same absent path", async () => {
+      vi.stubGlobal("fetch", absentRead);
+      const onAbsentRead = vi.fn();
+      function TwoSessions() {
+        useSdkSession("project-a", "index.html", [], false, onAbsentRead);
+        useSdkSession("project-a", "index.html");
+        return null;
+      }
+      const root = createRoot(document.createElement("div"));
+      await act(async () => root.render(<TwoSessions />));
+      await flushAsyncEffects();
+
+      expect(onAbsentRead).toHaveBeenCalledOnce();
+      expect(
+        trackMock.mock.calls.filter(([event]) => event === "sdk_absent_read_recovery"),
+      ).toHaveLength(1);
+      await act(async () => root.unmount());
+    });
+
+    // Reviewed on #4843 (Somu): `pendingTreeCorrectionRef` wasn't cleared on
+    // project change — a stale entry from a prior project could (a) have its
+    // elapsed time inflated by however long was spent on the other project,
+    // and (b) collide if a different project later used the same path.
+    it("clears the pending entry on project change, so a later project can't wrongly resolve it", async () => {
+      vi.stubGlobal("fetch", absentRead);
+      const root = createRoot(document.createElement("div"));
+      await act(async () =>
+        root.render(<HandleProbe projectId="project-a" path="index.html" onAbsentRead={vi.fn()} />),
+      );
+      await flushAsyncEffects();
+      expect(trackMock).toHaveBeenCalledWith("sdk_absent_read_recovery", { stage: "triggered" });
+
+      // Switch to a DIFFERENT project using the SAME path, with a read that
+      // succeeds (no trigger of its own) — isolates whatever project-b's tree
+      // update does from project-a's now-orphaned pending entry for the same
+      // key. Keys are path-only (see the comment on `refreshedAbsentPathsRef`),
+      // so without the clear, this is exactly the collision the key shape
+      // depends on the clear to avoid.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => response("PROJECT_B")),
+      );
+      openComposition.mockResolvedValue(fakeSession());
+      await act(async () => {
+        usePlayerStore.getState().beginTimelineSession("project-b");
+        usePlayerStore.getState().markPreviewBooted();
+        root.render(<HandleProbe projectId="project-b" path="index.html" />);
+      });
+      await flushAsyncEffects();
+      trackMock.mockClear();
+
+      // project-b's tree not listing "index.html" must not resolve project-a's
+      // orphaned entry for that same path.
+      await act(async () =>
+        root.render(
+          <HandleProbe
+            projectId="project-b"
+            path="index.html"
+            fileTree={[]}
+            fileTreeLoaded={true}
+          />,
+        ),
+      );
+      await flushAsyncEffects();
+
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "tree_corrected" }),
+      );
       await act(async () => root.unmount());
     });
   });
