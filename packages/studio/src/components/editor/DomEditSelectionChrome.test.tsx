@@ -326,7 +326,8 @@ describe("DomEditSelectionChrome with body drag off", () => {
 
 describe("DomEditSelectionChrome rect variables", () => {
   const rectA = { left: 40, top: 30, width: 200, height: 100, editScaleX: 1, editScaleY: 1 };
-  const rectB = { left: 75.5, top: 12, width: 120, height: 64, editScaleX: 1, editScaleY: 1 };
+  const rectB = { ...rectA, left: 75.5, top: 12 };
+  const rectC = { left: 10, top: 4, width: 120, height: 64, editScaleX: 1, editScaleY: 1 };
 
   // Server markup keeps each style verbatim; happy-dom's parser drops var() in `left`/`top`.
   function renderAt(rect: typeof rectA) {
@@ -379,6 +380,7 @@ describe("DomEditSelectionChrome rect variables", () => {
   it("moves every handle with the rect while their own styles stay the same", () => {
     const a = renderAt(rectA);
     const b = renderAt(rectB);
+    const c = renderAt(rectC);
     expect(a.handles).toHaveLength(6);
     expect(b.handles).toEqual(a.handles);
     const expected = (r: typeof rectA) => [
@@ -391,5 +393,6 @@ describe("DomEditSelectionChrome rect variables", () => {
     ];
     expect(a.places).toEqual(expected(rectA));
     expect(b.places).toEqual(expected(rectB));
+    expect(c.places).toEqual(expected(rectC));
   });
 });
