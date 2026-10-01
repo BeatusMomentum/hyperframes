@@ -1,8 +1,9 @@
 import { useCallback } from "react";
 import { setStudioTheme, useShownStudioTheme } from "../utils/studioTheme";
+import { IconButton, Tooltip } from "./ui";
 
-// hyperframes.dev's theme toggle: the same sun and moon button, revealing the new theme in a circle
-// from the click. A page that paints no frame aborts the transition; the theme is applied by then.
+// hyperframes.dev's theme toggle: the same sun and moon, revealing the new theme in a circle from
+// the button. A page that paints no frame aborts the transition; the theme is applied by then.
 function reveal(transition: ViewTransition, at: string, radiusPct: number) {
   void transition.ready.then(
     () => {
@@ -15,69 +16,80 @@ function reveal(transition: ViewTransition, at: string, radiusPct: number) {
   );
 }
 
+function origin(e: React.MouseEvent<HTMLButtonElement>): [number, number] {
+  if (e.detail > 0) return [e.clientX, e.clientY];
+  const box = e.currentTarget.getBoundingClientRect();
+  return [box.left + box.width / 2, box.top + box.height / 2];
+}
+
+const still = () =>
+  !document.startViewTransition || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
 export function ThemeToggle() {
   const isDark = useShownStudioTheme() === "dark";
+  const label = `Switch to ${isDark ? "light" : "dark"} theme`;
 
   const toggle = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       const apply = () => setStudioTheme(isDark ? "light" : "dark");
-      if (!document.startViewTransition) return apply();
-      // The switch stays synchronous inside the callback: rendering is paused during it.
-      const { clientX: x, clientY: y } = e;
+      if (still()) return apply();
+      const [x, y] = origin(e);
       const w = window.innerWidth;
       const h = window.innerHeight;
       const maxRadius = Math.hypot(Math.max(x, w - x), Math.max(y, h - y));
       const at = `at ${(x / w) * 100}% ${(y / h) * 100}%`;
       const radiusPct = (maxRadius / (Math.hypot(w, h) / Math.SQRT2)) * 100;
+      // The switch stays synchronous inside the callback: rendering is paused during it.
       reveal(document.startViewTransition(apply), at, radiusPct);
     },
     [isDark],
   );
 
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      className="inline-flex min-h-7 min-w-7 items-center justify-center rounded-full text-text-2 transition-all duration-hover hover:bg-hover hover:text-text-0 active:scale-[0.95]"
-      aria-label={`Switch to ${isDark ? "light" : "dark"} theme`}
-    >
-      {isDark ? (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" />
-          <line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" />
-          <line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-        </svg>
-      ) : (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-        </svg>
-      )}
-    </button>
+    <Tooltip label={label} side="bottom">
+      <IconButton
+        onClick={toggle}
+        aria-label={label}
+        icon={
+          isDark ? (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+          ) : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )
+        }
+      />
+    </Tooltip>
   );
 }

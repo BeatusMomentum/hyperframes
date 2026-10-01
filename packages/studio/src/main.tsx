@@ -128,7 +128,7 @@ createRoot(document.getElementById("root")!).render(
         Icons that pass their own size or weight still win. */}
     <IconContext.Provider value={readIconTokens()}>
       <StudioErrorBoundary>
-        <StudioApp />
+        <StudioApp themeToggle />
       </StudioErrorBoundary>
     </IconContext.Provider>
   </StrictMode>,

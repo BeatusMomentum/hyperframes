@@ -61,7 +61,9 @@ afterEach(() => {
   host.remove();
 });
 
-function mount(props: { inspectorButtonActive?: boolean } = {}): HTMLElement {
+function mount(
+  props: { inspectorButtonActive?: boolean; themeToggle?: boolean } = {},
+): HTMLElement {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -75,6 +77,7 @@ function mount(props: { inspectorButtonActive?: boolean } = {}): HTMLElement {
         refreshCaptureFrameTime={vi.fn()}
         inspectorButtonActive={props.inspectorButtonActive ?? false}
         inspectorPanelActive={false}
+        themeToggle={props.themeToggle}
       />,
     ),
   );
@@ -178,4 +181,16 @@ it("classifies the new header controls for the hotkey filters as the old ones we
     expect(isTypingTarget(el), el.getAttribute("aria-label") ?? el.tagName).toBe(false);
     expect(shouldIgnorePlaybackShortcutTarget(el), el.tagName).toBe(true);
   }
+});
+
+it("shows no theme toggle and leaves the host's data-theme alone when embedded", () => {
+  document.documentElement.dataset.theme = "host";
+  const host = mount();
+  expect(host.querySelector('[aria-label^="Switch to"]')).toBeNull();
+  expect(document.documentElement.dataset.theme).toBe("host");
+  delete document.documentElement.dataset.theme;
+});
+
+it("shows the theme toggle in Studio's own app", () => {
+  expect(mount({ themeToggle: true }).querySelector('[aria-label^="Switch to"]')).not.toBeNull();
 });

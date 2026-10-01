@@ -71,10 +71,15 @@ export interface StudioAppProps {
   readOnlyPreview?: boolean;
   /** Short text shown on disabled hand-edit controls while `readOnlyPreview` is set. */
   readOnlyPreviewReason?: string;
+  themeToggle?: boolean;
 }
 
 // fallow-ignore-next-line complexity
-export function StudioApp({ readOnlyPreview = false, readOnlyPreviewReason }: StudioAppProps = {}) {
+export function StudioApp({
+  readOnlyPreview = false,
+  readOnlyPreviewReason,
+  themeToggle = false,
+}: StudioAppProps = {}) {
   const { projectId, resolving, waitingForServer } = useServerConnection();
   const initialUrlStateRef = useRef(readStudioUrlStateFromWindow());
   useStudioSessionStart(projectId, resolving, waitingForServer);
@@ -465,6 +470,7 @@ export function StudioApp({ readOnlyPreview = false, readOnlyPreviewReason }: St
                 onDrop={fileDrop.onDrop}
               >
                 <StudioHeader
+                  themeToggle={themeToggle}
                   captureFrameHref={frameCapture.captureFrameHref}
                   captureFrameFilename={frameCapture.captureFrameFilename}
                   handleCaptureFrameClick={frameCapture.handleCaptureFrameClick}

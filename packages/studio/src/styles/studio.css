@@ -16,6 +16,12 @@
   }
 }
 
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
 body {
   margin: 0;
   padding: 0;

@@ -18,6 +18,7 @@ export interface StudioHeaderProps {
   inspectorButtonActive: boolean;
   inspectorPanelActive: boolean;
   onExport?: () => void;
+  themeToggle?: boolean;
 }
 
 /**
@@ -36,6 +37,7 @@ export function shouldOpenInspector(
 
 // fallow-ignore-next-line complexity
 export function StudioHeader({
+  themeToggle = false,
   captureFrameHref,
   captureFrameFilename,
   handleCaptureFrameClick,
@@ -148,7 +150,7 @@ export function StudioHeader({
             </Button>
           </Tooltip>
         </div>
-        <ThemeToggle />
+        {themeToggle && <ThemeToggle />}
         <Dock.WindowMenu />
         <Tooltip
           label={

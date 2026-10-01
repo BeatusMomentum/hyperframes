@@ -5,7 +5,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { cleanupMounted, mountHost } from "../components/ui/mountHost.testHelpers";
-import { shownStudioTheme } from "./studioTheme";
+import { savedStudioTheme } from "./studioTheme";
 
 const KEY = "hf-studio-ui-preferences";
 const html = readFileSync(path.join(__dirname, "../../index.html"), "utf8");
@@ -13,6 +13,11 @@ const boot = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
 
 function store(theme: unknown) {
   localStorage.setItem(KEY, JSON.stringify({ theme }));
+}
+
+function boots(): "light" | "dark" {
+  new Function(boot)();
+  return document.documentElement.dataset.theme === "paper" ? "light" : "dark";
 }
 
 afterEach(() => {
@@ -23,20 +28,21 @@ afterEach(() => {
 
 describe("Studio's theme", () => {
   it.each([["light"], ["dark"], [undefined], ["neon"]])(
-    "boots to the theme the owner shows (saved %s)",
+    "boots to the theme the owner picks (saved %s)",
     (saved) => {
       store(saved);
-      new Function(boot)();
-      expect(document.documentElement.dataset.theme === "paper").toBe(
-        shownStudioTheme() === "light",
-      );
+      expect(boots()).toBe(savedStudioTheme());
     },
   );
 
+  it.each([["null"], ["{not json"], ['"dark"']])("boots to the owner's pick from %s", (raw) => {
+    localStorage.setItem(KEY, raw);
+    expect(boots()).toBe(savedStudioTheme());
+  });
+
   it("opens light the first time", () => {
-    new Function(boot)();
-    expect(document.documentElement.dataset.theme).toBe("paper");
-    expect(shownStudioTheme()).toBe("light");
+    expect(boots()).toBe("light");
+    expect(savedStudioTheme()).toBe("light");
   });
 
   it("runs the boot script before the app's module", () => {
@@ -44,19 +50,29 @@ describe("Studio's theme", () => {
     expect(html.indexOf("<script>")).toBeLessThan(html.indexOf('type="module"'));
   });
 
-  it("flips the document between light and dark and keeps the choice", () => {
+  it("flips the document between light and dark and keeps the choice", async () => {
     store("dark");
     const host = mountHost(<ThemeToggle />);
     const button = () => host.querySelector("button")!;
     expect(button().getAttribute("aria-label")).toBe("Switch to light theme");
 
-    act(() => button().click());
+    await act(async () => button().click());
     expect(document.documentElement.dataset.theme).toBe("paper");
     expect(JSON.parse(localStorage.getItem(KEY)!).theme).toBe("light");
     expect(button().getAttribute("aria-label")).toBe("Switch to dark theme");
 
-    act(() => button().click());
+    await act(async () => button().click());
     expect(document.documentElement.dataset.theme).toBeUndefined();
     expect(JSON.parse(localStorage.getItem(KEY)!).theme).toBe("dark");
+  });
+
+  it("follows the theme on screen, not only its own clicks", async () => {
+    store("light");
+    const host = mountHost(<ThemeToggle />);
+    expect(host.querySelector("button")!.getAttribute("aria-label")).toBe("Switch to light theme");
+    await act(async () => {
+      document.documentElement.dataset.theme = "paper";
+    });
+    expect(host.querySelector("button")!.getAttribute("aria-label")).toBe("Switch to dark theme");
   });
 });
