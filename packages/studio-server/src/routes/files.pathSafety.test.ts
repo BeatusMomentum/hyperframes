@@ -649,3 +649,30 @@ describe("upload collision races", () => {
     await expectProjectGone(await upload(app), project);
   });
 });
+
+describe("rename reference updates", () => {
+  // Root reads every folder; the rename then never meets an unreadable one.
+  it.skipIf(process.getuid?.() === 0)(
+    "a rename past an unreadable folder or file still answers ok and updates what it can read",
+    async () => {
+      const { app, project } = fixture();
+      writeFileSync(join(project, "index.html"), '<img src="inside.txt">');
+      mkdirSync(join(project, "private"));
+      writeFileSync(join(project, "locked.html"), '<img src="inside.txt">');
+      chmodSync(join(project, "private"), 0o000);
+      chmodSync(join(project, "locked.html"), 0o000);
+      try {
+        const rename = await app.request(fileUrl("inside.txt"), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newPath: "moved.txt" }),
+        });
+        expect(rename.status).toBe(200);
+        expect(readFileSync(join(project, "index.html"), "utf8")).toBe('<img src="moved.txt">');
+      } finally {
+        chmodSync(join(project, "private"), 0o755);
+        chmodSync(join(project, "locked.html"), 0o644);
+      }
+    },
+  );
+});

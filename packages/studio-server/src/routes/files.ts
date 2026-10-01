@@ -17,6 +17,7 @@ import {
   fstatSync,
   renameSync,
   readdirSync,
+  type Dirent,
 } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import type { StudioApiAdapter } from "../types.js";
@@ -620,7 +621,7 @@ function generateCopyPath(projectDir: string, originalPath: string): string {
  */
 function walkFiles(dir: string, filter: (name: string) => boolean): string[] {
   const results: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of readableEntries(dir)) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (
@@ -638,6 +639,24 @@ function walkFiles(dir: string, filter: (name: string) => boolean): string[] {
   return results;
 }
 
+/** A folder's entries, or none when it cannot be read: a rename has already moved the files by then. */
+function readableEntries(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+/** A text file's content, or null when it cannot be read: its references stay as they are. */
+function readableText(file: string): string | null {
+  try {
+    return readFileSync(file, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * After a rename, update all references to the old path in project files.
  * Scans HTML, CSS, JS, and JSON files for the old filename/path and replaces.
@@ -650,7 +669,8 @@ function updateReferences(projectDir: string, oldPath: string, newPath: string):
   let updatedCount = 0;
   for (const file of textFiles) {
     if (!isSafePath(projectDir, file)) continue;
-    const content = readFileSync(file, "utf-8");
+    const content = readableText(file);
+    if (content === null) continue;
 
     // Only replace full relative paths — never bare filenames, which can
     // corrupt unrelated content (e.g. "logo.png" inside "my-logo.png").
