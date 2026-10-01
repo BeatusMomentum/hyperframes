@@ -18,6 +18,8 @@ export const accurate = (e) =>
   !e.unsettled &&
   !e.renderError &&
   e.undo === true &&
+  // A pass/fail value, so an unmeasured drag fails; base entries from before the metric hold none.
+  e.teleport !== false &&
   GATED_PX.every((m) => !(e[m] > LIMIT_PX));
 
 /** Cases whose verdict here differs from the base branch, either way: each is re-run twice before the gate. */
@@ -25,7 +27,9 @@ export const flipped = (base, results) =>
   results.filter((r) => accurate(base.cases[r.id]) !== accurate(entry(r))).map((r) => r.id);
 
 const summary = (e) =>
-  e.error ? "error" : `${GATED_PX.map((m) => `${m} ${e[m] ?? "-"}`).join(", ")}, undo ${e.undo}`;
+  e.error
+    ? "error"
+    : `${GATED_PX.map((m) => `${m} ${e[m] ?? "-"}`).join(", ")}, undo ${e.undo}, teleport ${e.teleport ?? "-"}`;
 
 /** The gate's verdict on one case's runs: it passes when fewer than half fail. */
 const passes = (entries) => entries.filter((e) => !accurate(e)).length * 2 < entries.length;

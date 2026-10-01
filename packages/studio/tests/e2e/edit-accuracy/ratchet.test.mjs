@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accurate, bankable, flipped, gate } from "./ratchet.mjs";
-import { entry } from "./report.mjs";
+import { entry, score } from "./report.mjs";
+import { scoreTeleport } from "./teleport.mjs";
 
 const good = {
   tracking: 0.1,
@@ -42,6 +43,8 @@ describe("accurate", () => {
     expect(accurate({ ...good, unsettled: ["committed"] })).toBe(false);
     expect(accurate({ ...good, render: null, renderError: true })).toBe(false);
     expect(accurate({ ...good, undo: false })).toBe(false);
+    expect(accurate({ ...good, teleport: false, teleportPx: null })).toBe(false);
+    expect(accurate({ ...good, teleport: true })).toBe(true);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);
   });
@@ -112,5 +115,24 @@ describe("gate", () => {
     const g = gate(base, base, [run("a")]);
     expect(g.missing).toEqual(["b"]);
     expect(g.reasons.join()).toContain("fell from 2 to 1");
+  });
+});
+
+describe("teleport in the gate", () => {
+  it("rejects a drag whose frames could not be measured, from scoring to the baseline entry", () => {
+    const r = {
+      tracking: { max: 0 },
+      pressJump: 0,
+      teleport: scoreTeleport("move", [{ t: 0, pointer: null, down: true }]),
+      drop: 0,
+      reload: 0,
+      render: 0,
+      undo: { bytes: true, redoBytes: true, box: 0, redoBox: 0 },
+      undoTimeout: null,
+      smooth: { intervals: [16], work: [2], control: { intervals: [16], work: [2] } },
+      unsettled: [],
+    };
+    expect(accurate(entry(score({ id: "move-x" }, r)))).toBe(false);
+    expect(accurate(entry(score({ id: "nudge-x" }, { ...r, teleport: null })))).toBe(true);
   });
 });
