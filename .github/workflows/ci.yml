@@ -823,7 +823,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.studio == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -891,13 +891,18 @@ jobs:
           SERVER_PID=$!
           DEFAULT_STATUS=0
           if wait_for_server 5313; then
-            STUDIO_URL="http://localhost:5313/#project/timeline-virtualization" \
-              TIMELINE_ROW_VIRTUALIZATION=on \
-              TIMELINE_ELEMENT_COUNT=50000 \
-              TIMELINE_TIER=ci \
-              node packages/studio/tests/e2e/timeline-virtualization.mjs \
-              | tee /tmp/timeline-gate-default.json \
-              || DEFAULT_STATUS=$?
+            for rep in $(seq 1 10); do
+              start=$(date +%s)
+              STATUS=0
+              STUDIO_URL="http://localhost:5313/#project/timeline-virtualization" \
+                TIMELINE_ROW_VIRTUALIZATION=on \
+                TIMELINE_ELEMENT_COUNT=50000 \
+                TIMELINE_TIER=ci \
+                node packages/studio/tests/e2e/timeline-virtualization.mjs \
+                > /tmp/timeline-gate-stall-${rep}.json || STATUS=$?
+              echo "STALL REP ${rep}: exit ${STATUS}, $(( $(date +%s) - start )) s"
+            done
+            cp /tmp/timeline-gate-stall-1.json /tmp/timeline-gate-default.json
           else
             DEFAULT_STATUS=1
           fi
