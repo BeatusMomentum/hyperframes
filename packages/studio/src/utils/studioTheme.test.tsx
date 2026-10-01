@@ -81,12 +81,15 @@ describe("the reveal", () => {
   function stubTransition() {
     const animate = vi.fn();
     Object.assign(document.documentElement, { animate });
+    const markers: (string | undefined)[] = [];
+    const finish: (() => void)[] = [];
     const start = vi.fn((update: () => void) => {
+      markers.push(document.documentElement.dataset.themeReveal);
       update();
-      return { ready: Promise.resolve(), finished: Promise.resolve() };
+      return { ready: Promise.resolve(), finished: new Promise<void>((done) => finish.push(done)) };
     });
     Object.assign(document, { startViewTransition: start });
-    return { animate, start };
+    return { animate, start, markers, finish };
   }
 
   afterEach(() => {
@@ -95,8 +98,8 @@ describe("the reveal", () => {
     vi.unstubAllGlobals();
   });
 
-  it("grows from the button's centre when the keyboard presses it, then clears its marker", async () => {
-    const { animate } = stubTransition();
+  it("grows from the button's centre when the keyboard presses it, marked while it runs", async () => {
+    const { animate, markers, finish } = stubTransition();
     vi.stubGlobal("innerWidth", 1000);
     vi.stubGlobal("innerHeight", 500);
     const button = mountHost(<ThemeToggle />).querySelector("button")!;
@@ -104,7 +107,20 @@ describe("the reveal", () => {
     await act(async () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
     });
-    expect(animate.mock.calls[0]![0].clipPath[1]).toContain("at 90% 4%");
+    expect(markers).toEqual([""]);
+    expect(animate.mock.calls[0]![0].clipPath[1]).toMatch(/^circle\(129\.0\d*% at 90% 4%\)$/);
+    await act(async () => finish[0]!());
+    expect(document.documentElement.dataset.themeReveal).toBeUndefined();
+  });
+
+  it("keeps the marker for a second reveal that starts before the first ends", async () => {
+    const { finish } = stubTransition();
+    const button = mountHost(<ThemeToggle />).querySelector("button")!;
+    await act(async () => button.click());
+    await act(async () => button.click());
+    await act(async () => finish[0]!());
+    expect(document.documentElement.dataset.themeReveal).toBe("");
+    await act(async () => finish[1]!());
     expect(document.documentElement.dataset.themeReveal).toBeUndefined();
   });
 

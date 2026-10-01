@@ -4,8 +4,13 @@ import { IconButton, Tooltip } from "./ui";
 
 // hyperframes.dev's theme toggle: the same sun and moon, revealing the new theme in a circle from
 // the button. A page that paints no frame aborts the transition; the theme is applied by then.
+let latest: ViewTransition | null = null;
+
 function reveal(transition: ViewTransition, at: string, radiusPct: number) {
-  const done = () => delete document.documentElement.dataset.themeReveal;
+  latest = transition;
+  const done = () => {
+    if (latest === transition) delete document.documentElement.dataset.themeReveal;
+  };
   void transition.finished.then(done, done);
   void transition.ready.then(
     () => {
