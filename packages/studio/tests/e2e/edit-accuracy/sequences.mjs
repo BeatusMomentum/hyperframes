@@ -27,6 +27,7 @@ import { scoreTeleport, stopFrames } from "./teleport.mjs";
 // The frame sampler sees every painted frame, so a path needs few pointer steps (each costs a CDP read).
 const STEP_PX = 28;
 const STRAIGHT_STEPS = 20;
+const UNDONE_QUIET_MS = 3000;
 
 /** `n` evenly spaced points from `a` (excluded) to `b` (included). */
 const legN = (a, b, n) =>
@@ -304,12 +305,15 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
     steps.push(await driveStep(ctx, step, state));
   }
   // Every step but a seek saves once (a nudge burst saves once); wait for all of them. An undo may
-  // cancel the save it follows, so a sequence ending on one stops waiting once the file is back.
+  // cancel the save it follows, so one ending undone stops once the file has stayed original for 3 s.
   const owed = spec.steps.filter((s) => s.do !== "seek").length;
   const endsUndone = spec.steps.at(-1).do === "undo" && state.depth === 0;
+  let backSince = null;
   for (const deadline = Date.now() + 10_000; Date.now() < deadline; await sleep(50)) {
     if (watcher.versions.length - 1 >= owed) break;
-    if (endsUndone && sameFiles(readFiles(dir, files), watcher.versions[0])) break;
+    const back = endsUndone && sameFiles(readFiles(dir, files), watcher.versions[0]);
+    backSince = back ? (backSince ?? Date.now()) : null;
+    if (backSince !== null && Date.now() - backSince >= UNDONE_QUIET_MS) break;
   }
   await waitForFiles(ctx.A, { timeout: 5000 });
   watcher.stop();
