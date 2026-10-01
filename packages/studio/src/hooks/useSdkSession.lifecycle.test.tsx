@@ -655,6 +655,9 @@ describe("useSdkSession unavailable telemetry", () => {
       expect(captured.handle?.compositionMissing).toBe(true);
       expect(onAbsentRead).toHaveBeenCalledOnce();
       expect(onAbsentRead).toHaveBeenCalledWith("index.html");
+      expect(trackMock).toHaveBeenCalledWith("sdk_absent_read_recovery", {
+        stage: "triggered",
+      });
 
       // A second absent read for the SAME path must not refresh again — the
       // refresh already ran and didn't fix it (the file really is gone).
@@ -743,6 +746,47 @@ describe("useSdkSession unavailable telemetry", () => {
       await flushAsyncEffects();
 
       expect(captured.handle?.compositionMissing).toBe(false);
+      await act(async () => root.unmount());
+    });
+
+    it("emits sdk_absent_read_recovery 'recovered' with elapsed_ms once a later read succeeds", async () => {
+      const fetchMock = vi.fn(
+        async () => ({ ok: true, json: async () => ({ content: "", missing: true }) }) as Response,
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      openComposition.mockResolvedValue(fakeSession());
+      const root = createRoot(document.createElement("div"));
+      await act(async () => root.render(<HandleProbe projectId="project-a" path="index.html" />));
+      await flushAsyncEffects();
+      expect(trackMock).toHaveBeenCalledWith("sdk_absent_read_recovery", {
+        stage: "triggered",
+      });
+      trackMock.mockClear();
+
+      fetchMock.mockImplementation(async () => response("PROJECT_A"));
+      await act(async () => {
+        captured.handle?.forceReload();
+      });
+      await flushAsyncEffects();
+
+      expect(trackMock).toHaveBeenCalledWith(
+        "sdk_absent_read_recovery",
+        expect.objectContaining({ stage: "recovered", elapsed_ms: expect.any(Number) }),
+      );
+      await act(async () => root.unmount());
+    });
+
+    it("does not report a recovery for a read that never went absent", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => response("PROJECT_A")),
+      );
+      openComposition.mockResolvedValue(fakeSession());
+      const root = createRoot(document.createElement("div"));
+      await act(async () => root.render(<HandleProbe projectId="project-a" path="index.html" />));
+      await flushAsyncEffects();
+
+      expect(trackMock).not.toHaveBeenCalledWith("sdk_absent_read_recovery", expect.anything());
       await act(async () => root.unmount());
     });
 

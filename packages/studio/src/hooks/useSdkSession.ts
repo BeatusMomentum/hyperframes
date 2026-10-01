@@ -383,6 +383,15 @@ export function useSdkSession(
   useEffect(() => {
     refreshedAbsentPathsRef.current.clear();
   }, [projectId]);
+  // Start time of each outstanding tree-refresh-on-absent fallback, keyed the
+  // same way. Telemetry-only: proves whether `onAbsentRead` actually resolves
+  // the stale tree (the prior acceptance metric, absent-reads-per-tab, turned
+  // out to never move with or without the fix — it was dominated by agent-
+  // driven sessions where >1 absent read per tab was already the norm, not a
+  // sign of the loop this fallback targets). This measures the one thing that
+  // metric couldn't: did a given absent read get followed by a successful one
+  // for the same path, and how long did that take.
+  const pendingAbsentRecoveryRef = useRef<Map<string, number>>(new Map());
 
   /**
    * Update `unreachableProject`/`compositionMissing` for one failed read, and
@@ -402,7 +411,21 @@ export function useSdkSession(
     const key = `${forProjectId}:${forPath}`;
     if (refreshedAbsentPathsRef.current.has(key)) return;
     refreshedAbsentPathsRef.current.add(key);
+    pendingAbsentRecoveryRef.current.set(key, Date.now());
+    trackStudioEvent("sdk_absent_read_recovery", { stage: "triggered" });
     onAbsentRead?.(forPath);
+  }
+
+  /** The other half of `sdk_absent_read_recovery`: a read that just succeeded. */
+  function reportAbsentRecoveryIfPending(forProjectId: string, forPath: string): void {
+    const key = `${forProjectId}:${forPath}`;
+    const startedAt = pendingAbsentRecoveryRef.current.get(key);
+    if (startedAt === undefined) return;
+    pendingAbsentRecoveryRef.current.delete(key);
+    trackStudioEvent("sdk_absent_read_recovery", {
+      stage: "recovered",
+      elapsed_ms: Date.now() - startedAt,
+    });
   }
 
   useEffect(
@@ -454,6 +477,7 @@ export function useSdkSession(
         }
         setUnreachableProject(null);
         setCompositionMissing(false);
+        reportAbsentRecoveryIfPending(projectId, activeCompPath);
         const content = read.content;
         // No persist queue: Studio's writeProjectFile (via sdkCutover's
         // persistSdkSerialize) is the SINGLE writer. Wiring the SDK persist
