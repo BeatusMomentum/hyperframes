@@ -54,6 +54,30 @@ describe("scoreTeleport", () => {
     expect(scoreTeleport("move", jumped)).toMatchObject({ pass: false, frame: 4 });
   });
 
+  // The next element's selection click: its press painted before any frame showed this drag's pointer-up.
+  const clickElsewhere = (bx) => [
+    { ...frame(240, true, bx), ups: 1 },
+    { ...frame(240, false, bx), ups: 2 },
+    { ...frame(260, false, bx), ups: 2 },
+  ];
+  const held = drag.slice(0, -1).map((f) => ({ ...f, ups: 0 }));
+
+  it("ends a drag at its pointer-up, so the pointer travelling on to the next element fails nothing", () => {
+    expect(scoreTeleport("move", [...held, ...clickElsewhere(50)])).toMatchObject({
+      max: 0,
+      pass: true,
+    });
+  });
+
+  it("still catches the box jumping after that pointer-up", () => {
+    const r = scoreTeleport("move", [
+      ...held,
+      ...clickElsewhere(50).slice(0, 1),
+      ...clickElsewhere(150).slice(1),
+    ]);
+    expect(r).toMatchObject({ pass: false, max: 100 });
+  });
+
   it("catches a mid-drag snap back to where the drag started, on the pointer's own path", () => {
     const snapped = drag.map((f, i) => (i === 4 ? frame(30, true, 0) : f));
     const r = scoreTeleport("move", snapped);
@@ -161,6 +185,28 @@ describe("quadOf", () => {
 });
 
 describe("frameSamplerScript", () => {
+  it("counts the pointer as down only while its button is held, and counts each release", () => {
+    const on = {};
+    const window = { addEventListener: (type, f) => (on[type] = f) };
+    window.top = window;
+    const page = {
+      window,
+      document: { createElement: () => ({ style: {} }) },
+      ResizeObserver: class {
+        observe() {}
+      },
+      requestAnimationFrame: () => 0,
+    };
+    runInNewContext(frameSamplerScript, page);
+    const rec = window.__editBenchFrames;
+    on.pointerdown({ clientX: 1, clientY: 1, buttons: 1 });
+    on.pointermove({ clientX: 2, clientY: 1, buttons: 1 });
+    expect(rec).toMatchObject({ down: true, ups: 0 });
+    on.pointerup({ clientX: 2, clientY: 1, buttons: 0 });
+    on.pointermove({ clientX: 90, clientY: 1, buttons: 0 });
+    expect(rec).toMatchObject({ down: false, ups: 1, pointer: [90, 1] });
+  });
+
   it("runs beside a page script that declares the same names, and leaves them alone", () => {
     const page = { window: {} };
     page.window.top = {};
