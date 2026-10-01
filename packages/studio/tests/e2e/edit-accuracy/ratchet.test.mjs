@@ -45,6 +45,8 @@ describe("accurate", () => {
     expect(accurate({ ...good, undo: false })).toBe(false);
     expect(accurate({ ...good, teleport: false, teleportPx: null })).toBe(false);
     expect(accurate({ ...good, teleport: true })).toBe(true);
+    expect(accurate({ ...good, text: false })).toBe(false);
+    expect(accurate({ ...good, text: true })).toBe(true);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);
   });

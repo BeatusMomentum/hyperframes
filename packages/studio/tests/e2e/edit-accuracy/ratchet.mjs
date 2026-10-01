@@ -20,6 +20,8 @@ export const accurate = (e) =>
   e.undo === true &&
   // A pass/fail value, so an unmeasured drag fails; base entries from before the metric hold none.
   e.teleport !== false &&
+  // A text case's edit opened, and its word saved and shown (and a word selected, for select).
+  e.text !== false &&
   GATED_PX.every((m) => !(e[m] > LIMIT_PX));
 
 /** Cases whose verdict here differs from the base branch, either way: each is re-run twice before the gate. */
