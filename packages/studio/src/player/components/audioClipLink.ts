@@ -37,7 +37,6 @@ export function audioPillFlags(
   return { muted: audio.hidden === true || audio.audioGroupHidden === true };
 }
 
-/** `linked: false` is Linked Selection off: every clip stands alone. */
 export function linkedMembersOf<T extends LinkedElement>(
   element: T,
   elements: readonly T[],
