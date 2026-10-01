@@ -639,21 +639,30 @@ function walkFiles(dir: string, filter: (name: string) => boolean): string[] {
   return results;
 }
 
-/** A folder's entries, or none when it cannot be read: a rename has already moved the files by then. */
+/** A folder or file the walk may meet and pass: one it may not read, or one gone since it was listed. */
+const SKIPPED_ENTRY = new Set(["EACCES", "EPERM", "ENOENT"]);
+
+function skippable(error: unknown): boolean {
+  return error instanceof Error && SKIPPED_ENTRY.has((error as NodeJS.ErrnoException).code ?? "");
+}
+
+/** A folder's entries, or none when it may not be read: a rename has already moved the files by then. */
 function readableEntries(dir: string): Dirent[] {
   try {
     return readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (error) {
+    if (skippable(error)) return [];
+    throw error;
   }
 }
 
-/** A text file's content, or null when it cannot be read: its references stay as they are. */
+/** A text file's content, or null when it may not be read: its references stay as they are. */
 function readableText(file: string): string | null {
   try {
     return readFileSync(file, "utf-8");
-  } catch {
-    return null;
+  } catch (error) {
+    if (skippable(error)) return null;
+    throw error;
   }
 }
 
