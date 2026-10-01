@@ -15,7 +15,8 @@ const GSAP_CDN = "https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js";
 // Studio has corner handles only (ResizeHandle is nw|ne|sw|se); its edge strips crop, so there is no edge resize.
 const GESTURES = ["move", "resize", "rotate", "crop", "nudge"];
 const AXES = {
-  gsap: ["none", "tween", "hold"],
+  // idle: GSAP loaded and a paused timeline tweens another element; the target itself is plain CSS.
+  gsap: ["none", "idle", "tween", "hold"],
   placement: ["px", "pct", "center", "xpercent"],
   rotation: [0, 30],
   nesting: ["root", "nested"],
@@ -32,11 +33,14 @@ const caseId = (c) =>
 
 /** `pr` is a smaller slice for CI; its final size is still an open decision. */
 export function buildGrid(kind = "full") {
-  return product({ ...AXES, gesture: GESTURES })
-    .filter((c) => c.placement !== "xpercent" || c.gsap !== "none") // xPercent only exists through GSAP
-    .map((c) => ({ id: caseId(c), ...c }))
-    .concat(dragCases())
-    .filter((c) => kind !== "pr" || (c.zoom === 100 && c.nesting === "root"));
+  return (
+    product({ ...AXES, gesture: GESTURES })
+      // xPercent only exists through GSAP on the target itself.
+      .filter((c) => c.placement !== "xpercent" || !["none", "idle"].includes(c.gsap))
+      .map((c) => ({ id: caseId(c), ...c, other: c.gsap === "idle" }))
+      .concat(dragCases())
+      .filter((c) => kind !== "pr" || (c.zoom === 100 && c.nesting === "root"))
+  );
 }
 
 const PLACEMENT_CSS = {
@@ -70,8 +74,7 @@ function targetCss(spec) {
 
 // fallow-ignore-next-line complexity
 function gsapLines(spec) {
-  // GSAP on the page animating another element; the target itself is untouched.
-  if (spec.gsap === "page") return [`tl.to("#other", { x: 120, duration: 4, ease: "none" }, 0);`];
+  if (spec.gsap === "idle") return [`tl.to("#other", { x: 120, duration: 4, ease: "none" }, 0);`];
   const percent = spec.placement === "xpercent" ? ", xPercent: -50, yPercent: -50" : "";
   if (spec.gsap === "hold") return [`gsap.set("#target", { x: 40, y: 20${percent} });`];
   const lines = [`tl.to("#target", { x: 120, y: 60, duration: 4, ease: "none" }, 0);`];

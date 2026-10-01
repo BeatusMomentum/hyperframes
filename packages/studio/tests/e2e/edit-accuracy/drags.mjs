@@ -71,19 +71,5 @@ export function dragCases() {
       other: false,
     })),
   );
-  // A page that loads GSAP and tweens a different element: the target is still a plain CSS element.
-  const page = ["move", "nudge", "resize", "rotate"].flatMap((gesture) =>
-    ["px", "center"].flatMap((placement) =>
-      ["root", "nested"].map((nesting) => ({
-        id: [gesture, "page", placement, "r0", nesting, "z100"].join("-"),
-        gesture,
-        gsap: "page",
-        ...base,
-        placement,
-        nesting,
-        other: true,
-      })),
-    ),
-  );
-  return [...paths, ...sequences, ...texts, ...centred, ...page];
+  return [...paths, ...sequences, ...texts, ...centred];
 }
