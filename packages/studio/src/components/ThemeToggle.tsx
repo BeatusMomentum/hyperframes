@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { setStudioTheme, useShownStudioTheme } from "../utils/studioTheme";
 import { IconButton, Tooltip } from "./ui";
 
@@ -29,29 +28,42 @@ function origin(e: React.MouseEvent<HTMLButtonElement>): [number, number] {
   return [box.left + box.width / 2, box.top + box.height / 2];
 }
 
-const still = () =>
-  !document.startViewTransition || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+function cannotReveal(): boolean {
+  return (
+    !document.startViewTransition ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
+const iconProps = {
+  width: "14",
+  height: "14",
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+} as const;
 
 export function ThemeToggle() {
   const isDark = useShownStudioTheme() === "dark";
   const label = `Switch to ${isDark ? "light" : "dark"} theme`;
 
-  const toggle = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
-      const apply = () => setStudioTheme(isDark ? "light" : "dark");
-      if (still()) return apply();
-      const [x, y] = origin(e);
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const maxRadius = Math.hypot(Math.max(x, w - x), Math.max(y, h - y));
-      const at = `at ${(x / w) * 100}% ${(y / h) * 100}%`;
-      const radiusPct = (maxRadius / (Math.hypot(w, h) / Math.SQRT2)) * 100;
-      // The switch stays synchronous inside the callback: rendering is paused during it.
-      document.documentElement.dataset.themeReveal = "";
-      reveal(document.startViewTransition(apply), at, radiusPct);
-    },
-    [isDark],
-  );
+  function toggle(e: React.MouseEvent<HTMLButtonElement>) {
+    const apply = () => setStudioTheme(isDark ? "light" : "dark");
+    if (cannotReveal()) return apply();
+    const [x, y] = origin(e);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const maxRadius = Math.hypot(Math.max(x, w - x), Math.max(y, h - y));
+    const at = `at ${(x / w) * 100}% ${(y / h) * 100}%`;
+    const radiusPct = (maxRadius / (Math.hypot(w, h) / Math.SQRT2)) * 100;
+    // The switch stays synchronous inside the callback: rendering is paused during it.
+    document.documentElement.dataset.themeReveal = "";
+    reveal(document.startViewTransition(apply), at, radiusPct);
+  }
 
   return (
     <Tooltip label={label} side="bottom">
@@ -60,17 +72,7 @@ export function ThemeToggle() {
         aria-label={label}
         icon={
           isDark ? (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
+            <svg {...iconProps}>
               <circle cx="12" cy="12" r="5" />
               <line x1="12" y1="1" x2="12" y2="3" />
               <line x1="12" y1="21" x2="12" y2="23" />
@@ -82,17 +84,7 @@ export function ThemeToggle() {
               <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
             </svg>
           ) : (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
+            <svg {...iconProps}>
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
           )

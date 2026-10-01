@@ -5,7 +5,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { cleanupMounted, mountHost } from "../components/ui/mountHost.testHelpers";
-import { savedStudioTheme } from "./studioTheme";
+import { savedStudioTheme, shownStudioTheme } from "./studioTheme";
 
 const KEY = "hf-studio-ui-preferences";
 const html = readFileSync(path.join(__dirname, "../../index.html"), "utf8");
@@ -17,7 +17,7 @@ function store(theme: unknown) {
 
 function boots(): "light" | "dark" {
   new Function(boot)();
-  return document.documentElement.dataset.theme === "paper" ? "light" : "dark";
+  return shownStudioTheme();
 }
 
 afterEach(() => {

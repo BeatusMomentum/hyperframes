@@ -29,5 +29,6 @@ function subscribe(listener: () => void): () => void {
   return () => observer.disconnect();
 }
 
-export const useShownStudioTheme = (): StudioTheme =>
-  useSyncExternalStore(subscribe, shownStudioTheme);
+export function useShownStudioTheme(): StudioTheme {
+  return useSyncExternalStore(subscribe, shownStudioTheme);
+}
