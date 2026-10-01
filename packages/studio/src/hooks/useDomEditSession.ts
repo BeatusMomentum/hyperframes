@@ -171,11 +171,9 @@ export function useDomEditSession({
     refreshDomEditSelectionFromPreview,
   });
   // ── GSAP cache (hoisted so both useGsapScriptCommits and useDomEditWiring share the same instance) ──
-
   const { version: gsapCacheVersion, bump: bumpGsapCache } = useGsapCacheVersion();
 
   // ── GSAP script commits ──
-
   const {
     commitMutation: gsapCommitMutation,
     updateGsapProperty,
@@ -213,7 +211,6 @@ export function useDomEditSession({
   });
 
   // ── DOM commit handlers ──
-
   const {
     resolveImportedFontAsset,
     handleDomStyleCommit,
@@ -310,7 +307,6 @@ export function useDomEditSession({
   });
 
   // ── Element groups (wrap selected elements in a data-hf-group div) ──
-
   const { groupSelection, ungroupSelection } = useGroupCommits({
     activeCompPath,
     showToast,
@@ -385,7 +381,6 @@ export function useDomEditSession({
   }, [domEditSelectionRef, ungroupSelection, setActiveGroupElement, showToast]);
 
   // ── Wiring: selection sync, GSAP cache, preview sync, selection handlers ──
-
   const {
     onClickToSource,
     selectedGsapAnimations,
