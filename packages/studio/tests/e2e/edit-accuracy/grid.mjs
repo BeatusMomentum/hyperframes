@@ -68,7 +68,10 @@ function targetCss(spec) {
   return `#target { position: absolute; ${PLACEMENT_CSS[spec.placement]} width: ${TARGET.width}px; height: ${TARGET.height}px; background: ${TARGET.color};${rotate}${text} }${other}`;
 }
 
+// fallow-ignore-next-line complexity
 function gsapLines(spec) {
+  // GSAP on the page animating another element; the target itself is untouched.
+  if (spec.gsap === "page") return [`tl.to("#other", { x: 120, duration: 4, ease: "none" }, 0);`];
   const percent = spec.placement === "xpercent" ? ", xPercent: -50, yPercent: -50" : "";
   if (spec.gsap === "hold") return [`gsap.set("#target", { x: 40, y: 20${percent} });`];
   const lines = [`tl.to("#target", { x: 120, y: 60, duration: 4, ease: "none" }, 0);`];
