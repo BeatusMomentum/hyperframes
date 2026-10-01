@@ -96,7 +96,7 @@ export function quadOf(el, top = el.ownerDocument.defaultView.top) {
 }
 
 /**
- * Page script for the top frame: after each paint, the pointer and the element's quad, all in top-frame px.
+ * Page script for the top frame: as each frame paints, the pointer and the element's quad, all in top-frame px.
  * A quad is the box's centre plus its composed 2D linear transform, which DOM rects alone cannot give.
  */
 function frameSampler() {
@@ -155,18 +155,23 @@ function frameSampler() {
       ...(outline && { outline: quadOf(outline) }),
     });
   };
-  // A message posted from rAF runs after that frame's paint, so it reads what the frame showed.
-  const channel = new MessageChannel();
-  channel.port1.onmessage = () => {
+  // ResizeObserver runs after every document's rAF callbacks and layout, just before paint, so it reads
+  // what the frame shows. A task after paint can see a state no frame painted.
+  const tick = document.createElement("div");
+  tick.style.cssText = "position: fixed; height: 1px; opacity: 0; pointer-events: none";
+  new ResizeObserver(() => {
     if (!rec.on) return;
     try {
       read();
     } catch (error) {
       rec.samples.push({ t: performance.now(), error: String(error) });
     }
-  };
+  }).observe(tick);
   const loop = () => {
-    if (rec.on) channel.port2.postMessage(null);
+    if (rec.on) {
+      if (!tick.isConnected) document.documentElement.append(tick);
+      tick.style.width = tick.style.width === "1px" ? "2px" : "1px";
+    }
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
