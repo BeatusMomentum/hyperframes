@@ -16,8 +16,8 @@
   }
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
+[data-theme-reveal]::view-transition-old(root),
+[data-theme-reveal]::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
 }

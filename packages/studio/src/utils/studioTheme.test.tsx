@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { act } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { cleanupMounted, mountHost } from "../components/ui/mountHost.testHelpers";
 import { savedStudioTheme } from "./studioTheme";
@@ -74,5 +74,46 @@ describe("Studio's theme", () => {
       document.documentElement.dataset.theme = "paper";
     });
     expect(host.querySelector("button")!.getAttribute("aria-label")).toBe("Switch to dark theme");
+  });
+});
+
+describe("the reveal", () => {
+  function stubTransition() {
+    const animate = vi.fn();
+    Object.assign(document.documentElement, { animate });
+    const start = vi.fn((update: () => void) => {
+      update();
+      return { ready: Promise.resolve(), finished: Promise.resolve() };
+    });
+    Object.assign(document, { startViewTransition: start });
+    return { animate, start };
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, "startViewTransition");
+    Reflect.deleteProperty(document.documentElement, "animate");
+    vi.unstubAllGlobals();
+  });
+
+  it("grows from the button's centre when the keyboard presses it, then clears its marker", async () => {
+    const { animate } = stubTransition();
+    vi.stubGlobal("innerWidth", 1000);
+    vi.stubGlobal("innerHeight", 500);
+    const button = mountHost(<ThemeToggle />).querySelector("button")!;
+    button.getBoundingClientRect = () => ({ left: 890, top: 10, width: 20, height: 20 }) as DOMRect;
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+    });
+    expect(animate.mock.calls[0]![0].clipPath[1]).toContain("at 90% 4%");
+    expect(document.documentElement.dataset.themeReveal).toBeUndefined();
+  });
+
+  it("switches without the reveal under reduced motion", async () => {
+    const { start } = stubTransition();
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") }));
+    const button = mountHost(<ThemeToggle />).querySelector("button")!;
+    await act(async () => button.click());
+    expect(start).not.toHaveBeenCalled();
+    expect(document.documentElement.dataset.theme).toBe("paper");
   });
 });

@@ -78,7 +78,7 @@ export interface StudioAppProps {
 export function StudioApp({
   readOnlyPreview = false,
   readOnlyPreviewReason,
-  themeToggle = false,
+  themeToggle,
 }: StudioAppProps = {}) {
   const { projectId, resolving, waitingForServer } = useServerConnection();
   const initialUrlStateRef = useRef(readStudioUrlStateFromWindow());

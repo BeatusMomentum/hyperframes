@@ -5,6 +5,8 @@ import { IconButton, Tooltip } from "./ui";
 // hyperframes.dev's theme toggle: the same sun and moon, revealing the new theme in a circle from
 // the button. A page that paints no frame aborts the transition; the theme is applied by then.
 function reveal(transition: ViewTransition, at: string, radiusPct: number) {
+  const done = () => delete document.documentElement.dataset.themeReveal;
+  void transition.finished.then(done, done);
   void transition.ready.then(
     () => {
       document.documentElement.animate(
@@ -40,6 +42,7 @@ export function ThemeToggle() {
       const at = `at ${(x / w) * 100}% ${(y / h) * 100}%`;
       const radiusPct = (maxRadius / (Math.hypot(w, h) / Math.SQRT2)) * 100;
       // The switch stays synchronous inside the callback: rendering is paused during it.
+      document.documentElement.dataset.themeReveal = "";
       reveal(document.startViewTransition(apply), at, radiusPct);
     },
     [isDark],

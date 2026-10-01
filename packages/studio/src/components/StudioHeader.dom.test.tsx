@@ -54,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete document.documentElement.dataset.theme;
   if (!mounted) return;
   const { root, host } = mounted;
   mounted = null;
@@ -188,7 +189,6 @@ it("shows no theme toggle and leaves the host's data-theme alone when embedded",
   const host = mount();
   expect(host.querySelector('[aria-label^="Switch to"]')).toBeNull();
   expect(document.documentElement.dataset.theme).toBe("host");
-  delete document.documentElement.dataset.theme;
 });
 
 it("shows the theme toggle in Studio's own app", () => {
