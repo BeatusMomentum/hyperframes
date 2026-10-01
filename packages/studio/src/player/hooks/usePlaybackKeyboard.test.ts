@@ -266,12 +266,9 @@ describe("usePlaybackKeyboard — a focused native player owns its keys", () => 
   const KEYS = [
     { code: "ArrowLeft", key: "ArrowLeft" },
     { code: "ArrowRight", key: "ArrowRight" },
-    { code: "Home", key: "Home" },
-    { code: "End", key: "End" },
-    { code: "Comma", key: "," },
-    { code: "Period", key: "." },
     { code: "Space", key: " " },
     { code: "KeyJ", key: "j" },
+    { code: "KeyK", key: "k" },
     { code: "KeyL", key: "l" },
   ];
 

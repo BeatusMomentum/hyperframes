@@ -233,19 +233,25 @@ describe("useDomEditNudge — a focused native player owns the arrow keys", () =
     vi.useFakeTimers();
     __resetForTests();
   });
-  afterEach(() => vi.useRealTimers());
+  let root: ReturnType<typeof createRoot> | null = null;
+  afterEach(() => {
+    act(() => root?.unmount());
+    root = null;
+    document.body.innerHTML = "";
+    vi.useRealTimers();
+  });
 
   it.each(["video", "audio"])(
     "does not nudge the selection while a <%s controls> has focus",
     (tag) => {
-      const root = createRoot(document.body.appendChild(document.createElement("div")));
+      root = createRoot(document.body.appendChild(document.createElement("div")));
       const element = document.body.appendChild(document.createElement("div"));
       element.id = "dot";
       const player = document.body.appendChild(document.createElement(tag));
       player.setAttribute("controls", "");
       const commit = vi.fn();
       act(() => {
-        root.render(
+        root?.render(
           React.createElement(Harness, {
             selection: makeSelection("Dot", element),
             onPathOffsetCommit: commit,
@@ -263,8 +269,6 @@ describe("useDomEditNudge — a focused native player owns the arrow keys", () =
       });
       expect(event.defaultPrevented).toBe(false);
       expect(commit).not.toHaveBeenCalled();
-      act(() => root.unmount());
-      document.body.innerHTML = "";
     },
   );
 });
