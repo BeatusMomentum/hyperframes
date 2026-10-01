@@ -559,9 +559,11 @@ function hostOutputRefFixture(chainA: string, chainB: string, bCanvasAttrs = "")
     <canvas layoutsubtree class="hf-vfx-src"><div class="hf-vfx-in"><div style="position:absolute;left:0;top:0;width:${HOST_W}px;height:${HOST_H}px;background:#ffffff"></div></div></canvas>
     <canvas class="hf-vfx-out"></canvas>
   </div>
-  <div id="b" class="h clip" data-start="0" data-duration="4" data-vfx-chain='${chainB}'>
+  <div id="wb">
+  <div id="b" class="h clip" data-start="0" data-duration="1" data-vfx-chain='${chainB}'>
     <canvas layoutsubtree class="hf-vfx-src"${bCanvasAttrs}><div class="hf-vfx-in"><div style="position:absolute;left:0;top:0;width:${HOST_W}px;height:${HOST_H}px;background:#ffffff"></div></div></canvas>
     <canvas class="hf-vfx-out"></canvas>
+  </div>
   </div>
   <div id="m">
     <canvas layoutsubtree class="hf-vfx-src"><div class="hf-vfx-in">${alphaMatteStrips()}</div></canvas>
@@ -1520,6 +1522,16 @@ describe("data-vfx-chain in the browser", () => {
      * `beforeSeek` runs once the runtime is booted and before the seek, so a case
      * can change what the preview path does.
      */
+    async function readAlphasOfA(page: Page): Promise<number[]> {
+      return page.evaluate((pts: [number, number][]) => {
+        const out = document.querySelector("#a canvas.hf-vfx-out") as HTMLCanvasElement;
+        const gl = out.getContext("webgl2")!;
+        const buf = new Uint8Array(out.width * out.height * 4);
+        gl.readPixels(0, 0, out.width, out.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        return pts.map(([x, y]) => buf[(y * out.width + x) * 4 + 3]!);
+      }, points);
+    }
+
     async function alphasOfA(
       html: string,
       beforeSeek?: (page: Page) => Promise<void>,
@@ -1528,13 +1540,7 @@ describe("data-vfx-chain in the browser", () => {
       try {
         await beforeSeek?.(page);
         expect(await seekAndResolve(page, 0)).toBe(true);
-        const alphas = await page.evaluate((pts: [number, number][]) => {
-          const out = document.querySelector("#a canvas.hf-vfx-out") as HTMLCanvasElement;
-          const gl = out.getContext("webgl2")!;
-          const buf = new Uint8Array(out.width * out.height * 4);
-          gl.readPixels(0, 0, out.width, out.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-          return pts.map(([x, y]) => buf[(y * out.width + x) * 4 + 3]!);
-        }, points);
+        const alphas = await readAlphasOfA(page);
         return { alphas, errors: pageErrors.get(page) ?? [] };
       } finally {
         await page.close();
@@ -1583,5 +1589,49 @@ describe("data-vfx-chain in the browser", () => {
       // The held-back preview path eventually times out; that is this case's setup.
       expect(errors.filter((e) => !e.includes("no paint arrived"))).toEqual([]);
     }, 60_000);
+    describe.each([
+      ["engine resolve", (page: Page, t: number) => seekAndResolve(page, t).then(() => undefined)],
+      [
+        "preview barrier",
+        async (page: Page, t: number) => {
+          await seekAndDrainBarrier(page, t);
+          await settleRace(page);
+        },
+      ],
+    ] as const)("a referenced host that goes hidden (%s)", (_name, seek) => {
+      // `self` is the control: the clip runtime forces a `.clip` visible inside its
+      // window, so #b (1 s long) is hidden by seeking past its own window instead.
+      const hideB = (page: Page, how: "ancestor" | "self"): Promise<void> =>
+        page.evaluate((mode: "ancestor" | "self") => {
+          if (mode === "ancestor") document.getElementById("wb")!.style.display = "none";
+        }, how);
+
+      it.each(["ancestor", "self"] as const)(
+        "reads as empty once its %s is hidden, after reading it live",
+        async (how) => {
+          const page = await open(hostOutputRefFixture(chainA, chainB), {
+            width: HOST_W,
+            height: 520,
+          });
+          try {
+            await seek(page, 0);
+            const live = await readAlphasOfA(page);
+            await hideB(page, how);
+            await seek(page, how === "self" ? 2 : 0.5);
+            const hidden = await readAlphasOfA(page);
+
+            strips.forEach((expected, i) => {
+              expect(Math.abs(live[i]! - expected)).toBeLessThanOrEqual(6);
+            });
+            // A stale read would leave the strips (alpha 255 at the last point).
+            expect(hidden).toEqual([0, 0, 0, 0]);
+            expect(pageErrors.get(page)).toEqual([]);
+          } finally {
+            await page.close();
+          }
+        },
+        60_000,
+      );
+    });
   });
 });

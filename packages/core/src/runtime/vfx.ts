@@ -366,17 +366,15 @@ function resolveEmptyRefParam(
 }
 
 /**
- * A `ref` naming some OTHER element. A vfx host (`data-vfx-chain`) is read
- * through its finished `.hf-vfx-out`; any other element through the capture
- * wrapper it contains.
+ * A `ref` naming some OTHER element: a vfx host (`data-vfx-chain`) is read
+ * through its finished `.hf-vfx-out`, anything else through the capture wrapper
+ * it contains.
  *
- * Reading a host's output is automatic, and it is a change for a ref that used
- * to name a host: that ref read the host's own `.hf-vfx-src` (its layer before
- * its effects). A host's output is what After Effects' "Effects & Masks" layer
- * source gives, and it is the only reading that works for a host that captures
- * itself without nesting a second `layoutsubtree` canvas around it.
- * `data-vfx-ref-visible` therefore means nothing on a host: the host already
- * paints itself, there is no separate bitmap to keep on screen.
+ * A ref that names a host used to read the host's own `.hf-vfx-src` (the layer
+ * before its effects). The output is what After Effects' "Effects & Masks" gives,
+ * and the only reading that avoids a second `layoutsubtree` canvas around a host
+ * that captures itself. `data-vfx-ref-visible` means nothing on a host: it
+ * already paints itself.
  */
 function resolveOtherElementRef(
   host: HTMLElement,
@@ -385,9 +383,8 @@ function resolveOtherElementRef(
   gl: WebGL2RenderingContext,
   cache: Map<HTMLElement, VfxCaptureSource>,
 ): RefResolution {
-  // A ref naming a vfx host that opted in reads that host's OUTPUT, never a
-  // second capture of it: wrapping a host that already runs a self-capture kernel
-  // in a second `layoutsubtree` canvas is the nest that hangs `drawElementImage`.
+  // Never a second capture of a host: a second `layoutsubtree` canvas around a
+  // self-capturing host is the nest that hangs `drawElementImage`.
   if (target.hasAttribute(HF_VFX_ATTR)) {
     return { kind: "host", ref: { host: target, texture: createCaptureTexture(gl) } };
   }
@@ -670,10 +667,24 @@ function isPaintableHost(host: HTMLElement): boolean {
  */
 function isPaintableSource(src: VfxCaptureSource): boolean {
   if (getComputedStyle(src.inner).visibility === "hidden") return false;
-  for (let el: HTMLElement | null = src.inner; el; el = el.parentElement) {
-    if (getComputedStyle(el).display === "none") return false;
+  return isDisplayed(src.inner);
+}
+
+/** `display` does not inherit, so a `display:none` ANCESTOR needs the walk. */
+function isDisplayed(el: HTMLElement): boolean {
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    if (getComputedStyle(node).display === "none") return false;
   }
   return true;
+}
+
+/**
+ * Whether a referenced host is on screen right now. An ancestor's `display:none`
+ * leaves the host's own style `block`, but it has no box and never repaints, while
+ * its preserved `.hf-vfx-out` still holds the last frame.
+ */
+function isHostOnScreen(host: HTMLElement): boolean {
+  return isPaintableHost(host) && deviceSize(host) !== null && isDisplayed(host);
 }
 
 function describeHost(host: HTMLElement): string {
@@ -762,16 +773,14 @@ function dropEntry(entry: VfxEntry, reason: string): void {
 /**
  * Resolve every host `ref` to its registered entry and order the registry so a
  * host comes after every host it reads. `paintVfx` and `resolveVfxCapture` walk
- * the registry in order, so this one sort is what makes "the referenced host
- * painted its output for THIS frame before the referencing host samples it"
- * true on the engine path; the preview path waits on the same edges
- * (`capturePreviewThenPaint`).
+ * the registry in order, so this sort makes the referenced host paint this
+ * frame before the referencing host samples it; the preview path waits on the
+ * same edges (`capturePreviewThenPaint`).
  *
- * A ref to a host that did not register, and any ref cycle (A reads B reads A),
- * drop the referencing entry loudly — a cycle has no paint order, and painting
- * it anyway would sample a previous frame. Never a loop: the sort only places an
- * entry once all its dependencies are placed, so a cycle (and whatever waits on
- * it) is simply never placed.
+ * A ref to a host that did not register, and any ref cycle, drop the referencing
+ * entry loudly: a cycle has no paint order and would sample a previous frame.
+ * The sort only places an entry once its dependencies are placed, so a cycle
+ * (and whatever waits on it) is never placed and nothing loops.
  */
 function linkHostRefs(entries: VfxEntry[]): VfxEntry[] {
   let live = entries;
@@ -986,17 +995,16 @@ function bindSampler(
 
 /**
  * Read the referenced host's finished `.hf-vfx-out` into this entry's texture.
- * `.hf-vfx-out` keeps its drawing buffer (`preserveDrawingBuffer`), so what it
- * holds is the referenced host's last paint — the registry order (and, in
- * preview, `capturePreviewThenPaint`) makes that this frame's. A referenced host
- * that is not painting (outside its clip window) reads as EMPTY, the same rule a
- * hidden capture source follows: under Alpha the layer it mattes disappears.
+ * The canvas keeps its drawing buffer, so it holds that host's last paint; the
+ * registry order (and `capturePreviewThenPaint`) makes that this frame's. A host
+ * that is not on screen reads as EMPTY, as a hidden capture source does: under
+ * Alpha the layer it mattes disappears.
  */
 function uploadHostRef(gl: WebGL2RenderingContext, ref: VfxHostRef): void {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, ref.texture);
   const out = ref.entry?.out;
-  if (out && out.width > 0 && out.height > 0 && isPaintableHost(ref.host)) {
+  if (out && out.width > 0 && out.height > 0 && isHostOnScreen(ref.host)) {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, out);

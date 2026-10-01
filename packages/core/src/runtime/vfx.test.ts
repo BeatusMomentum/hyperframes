@@ -1439,6 +1439,65 @@ describe("vfx runtime — a ref that names another host's output", () => {
       expect(gl!.calls).not.toContain("hostref");
     });
 
+    /** `#b` inside a wrapper, so a test can hide it through an ANCESTOR. */
+    function wrapB(b: HTMLElement): HTMLElement {
+      const wrap = document.createElement("div");
+      document.body.appendChild(wrap);
+      wrap.appendChild(b);
+      return wrap;
+    }
+
+    const isEmptyUpload = (args: unknown[]): boolean => args[3] === 1 && args[4] === 1;
+
+    it("reads a referenced host hidden by an ancestor as empty (engine path)", () => {
+      makeCaptureHost(createMockCtx2d(), "a", chain("b"));
+      const wrap = wrapB(makeOutputHost(createMockCtx2d()));
+      const uploads = recordUploads();
+      initVfx(document.body, 30);
+
+      paintVfx(0, { engineMode: true });
+      compositeWindow().__hf_page_composite_resolve!();
+      const liveRead = gl!.calls.includes("hostref");
+
+      // The ancestor's display:none leaves #b's own style at `block`.
+      wrap.style.display = "none";
+      gl!.calls.length = 0;
+      uploads.length = 0;
+      paintVfx(0, { engineMode: true });
+      compositeWindow().__hf_page_composite_resolve!();
+
+      expect(liveRead).toBe(true);
+      expect(gl!.calls).not.toContain("hostref");
+      expect(uploads.some(isEmptyUpload)).toBe(true);
+    });
+
+    it("reads a referenced host hidden by an ancestor as empty (preview path)", async () => {
+      vi.stubGlobal("requestAnimationFrame", () => 1);
+      const a = makeCaptureHost(createMockCtx2d(), "a", chain("b"));
+      const b = makeOutputHost(createMockCtx2d());
+      const wrap = wrapB(b);
+      const uploads = recordUploads();
+      initVfx(document.body, 30);
+      const paintBoth = async (t: number): Promise<void> => {
+        paintVfx(t);
+        for (const host of [a, b]) {
+          host.querySelector("canvas.hf-vfx-src")!.dispatchEvent(new Event("paint"));
+        }
+        await flushTasks();
+      };
+
+      await paintBoth(0.5);
+      const liveRead = gl!.calls.includes("hostref");
+      wrap.style.display = "none";
+      gl!.calls.length = 0;
+      uploads.length = 0;
+      await paintBoth(1);
+
+      expect(liveRead).toBe(true);
+      expect(gl!.calls).not.toContain("hostref");
+      expect(uploads.some(isEmptyUpload)).toBe(true);
+    });
+
     it("drops both hosts of a ref cycle loudly instead of looping", () => {
       makeOutputHost(createMockCtx2d(), "a", "b");
       makeOutputHost(createMockCtx2d(), "b", "a");
