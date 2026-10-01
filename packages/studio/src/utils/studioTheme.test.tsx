@@ -8,8 +8,12 @@ import { cleanupMounted, mountHost } from "../components/ui/mountHost.testHelper
 import { savedStudioTheme, shownStudioTheme } from "./studioTheme";
 
 const KEY = "hf-studio-ui-preferences";
-const html = readFileSync(path.join(__dirname, "../../index.html"), "utf8");
-const boot = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+const page = new DOMParser().parseFromString(
+  readFileSync(path.join(__dirname, "../../index.html"), "utf8"),
+  "text/html",
+);
+const scripts = [...page.querySelectorAll("script")];
+const boot = scripts.find((script) => !script.type)?.textContent ?? "";
 
 function store(theme: unknown) {
   localStorage.setItem(KEY, JSON.stringify({ theme }));
@@ -47,7 +51,9 @@ describe("Studio's theme", () => {
 
   it("runs the boot script before the app's module", () => {
     expect(boot).toContain(`"${KEY}"`);
-    expect(html.indexOf("<script>")).toBeLessThan(html.indexOf('type="module"'));
+    expect(scripts.findIndex((script) => !script.type)).toBeLessThan(
+      scripts.findIndex((script) => script.type === "module"),
+    );
   });
 
   it("flips the document between light and dark and keeps the choice", async () => {

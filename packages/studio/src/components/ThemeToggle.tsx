@@ -1,3 +1,4 @@
+import { createContext } from "react";
 import { setStudioTheme, useShownStudioTheme } from "../utils/studioTheme";
 import { IconButton, Tooltip } from "./ui";
 
@@ -27,6 +28,9 @@ function origin(e: React.MouseEvent<HTMLButtonElement>): [number, number] {
   const box = e.currentTarget.getBoundingClientRect();
   return [box.left + box.width / 2, box.top + box.height / 2];
 }
+
+/** On only in Studio's own app; a host that embeds Studio owns its theme. */
+export const ShowThemeToggle = createContext(false);
 
 function cannotReveal(): boolean {
   return (

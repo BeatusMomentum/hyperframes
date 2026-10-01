@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { IconContext } from "@phosphor-icons/react";
 import { StudioApp } from "./App";
+import { ShowThemeToggle } from "./components/ThemeToggle";
 import { StudioErrorBoundary } from "./components/StudioErrorBoundary";
 import { readIconTokens } from "./styles/iconTokens";
 import { trackStudioEvent } from "./utils/studioTelemetry";
@@ -128,7 +129,9 @@ createRoot(document.getElementById("root")!).render(
         Icons that pass their own size or weight still win. */}
     <IconContext.Provider value={readIconTokens()}>
       <StudioErrorBoundary>
-        <StudioApp themeToggle />
+        <ShowThemeToggle.Provider value>
+          <StudioApp />
+        </ShowThemeToggle.Provider>
       </StudioErrorBoundary>
     </IconContext.Provider>
   </StrictMode>,

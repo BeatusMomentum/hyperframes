@@ -42,6 +42,7 @@ vi.mock("../contexts/PanelLayoutContext", () => ({
 vi.mock("../utils/studioTelemetry", () => ({ trackStudioEvent: vi.fn() }));
 
 const { StudioHeader } = await import("./StudioHeader");
+const { ShowThemeToggle } = await import("./ThemeToggle");
 
 let mounted: { root: Root; host: HTMLElement } | null = null;
 
@@ -69,17 +70,23 @@ function mount(
   document.body.append(host);
   const root = createRoot(host);
   mounted = { root, host };
+  const header = (
+    <StudioHeader
+      captureFrameHref="blob:frame"
+      captureFrameFilename="frame.png"
+      handleCaptureFrameClick={vi.fn()}
+      refreshCaptureFrameTime={vi.fn()}
+      inspectorButtonActive={props.inspectorButtonActive ?? false}
+      inspectorPanelActive={false}
+    />
+  );
   act(() =>
     root.render(
-      <StudioHeader
-        captureFrameHref="blob:frame"
-        captureFrameFilename="frame.png"
-        handleCaptureFrameClick={vi.fn()}
-        refreshCaptureFrameTime={vi.fn()}
-        inspectorButtonActive={props.inspectorButtonActive ?? false}
-        inspectorPanelActive={false}
-        themeToggle={props.themeToggle}
-      />,
+      props.themeToggle ? (
+        <ShowThemeToggle.Provider value>{header}</ShowThemeToggle.Provider>
+      ) : (
+        header
+      ),
     ),
   );
   return host;
