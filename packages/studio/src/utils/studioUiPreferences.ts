@@ -2,6 +2,7 @@ import type { SerializedDockview } from "dockview-react";
 import { parseDockLayout } from "../components/dock/dockLayoutSchema";
 
 export type TimelineTimeDisplayMode = "time" | "frame";
+export type StudioTheme = "light" | "dark";
 
 export interface StudioUiPreferences {
   timelineVisible?: boolean;
@@ -41,6 +42,8 @@ export interface StudioUiPreferences {
    * intentionally scoped to one mount.
    */
   agentToolsEnabled?: boolean;
+  /** The theme the toggle picked; absent follows the system. */
+  theme?: StudioTheme;
   /** The dock's serialized panel tree; parsed by `parseDockLayout` on read. */
   dockLayout?: SerializedDockview;
 }
@@ -128,6 +131,7 @@ function readStorage(storage: Storage | null, key: string): StudioUiPreferences 
     if (typeof parsed.rippleEditEnabled === "boolean") {
       preferences.rippleEditEnabled = parsed.rippleEditEnabled;
     }
+    if (parsed.theme === "light" || parsed.theme === "dark") preferences.theme = parsed.theme;
     if (parsed.timeDisplayMode === "time" || parsed.timeDisplayMode === "frame") {
       preferences.timeDisplayMode = parsed.timeDisplayMode;
     }

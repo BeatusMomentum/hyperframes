@@ -7,6 +7,7 @@ import { Button, buttonBase, buttonSizes, buttonVariants, cn, Tooltip } from "./
 import { Dock } from "./dock/Dock";
 import { InspectorIcon } from "./icons/InspectorIcon";
 import { HyperframesLogo } from "./ui/HyperframesLogo";
+import { ThemeToggle } from "./ThemeToggle";
 
 export interface StudioHeaderProps {
   captureFrameHref: string;
@@ -147,6 +148,7 @@ export function StudioHeader({
             </Button>
           </Tooltip>
         </div>
+        <ThemeToggle />
         <Dock.WindowMenu />
         <Tooltip
           label={
