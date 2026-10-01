@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { accurate, flipped, gate } from "./ratchet.mjs";
+import { accurate, bankable, flipped, gate } from "./ratchet.mjs";
+import { entry } from "./report.mjs";
 
 const good = {
   tracking: 0.1,
@@ -48,6 +49,20 @@ describe("accurate", () => {
 
 describe("gate", () => {
   const base = baseline({ a: good, b: good });
+
+  it("banks for each case a run that agrees with its 2 of 3 verdict, not its first run", () => {
+    const runs = [run("a", 9), run("b"), run("a"), run("b", 9), run("a"), run("b", 9)];
+    const banked = bankable(runs);
+    const g = gate(base, baseline({}), runs);
+    expect(banked.map((r) => [r.id, accurate(entry(r))])).toEqual([
+      ["a", true],
+      ["b", false],
+    ]);
+    const head = baseline(Object.fromEntries(banked.map((r) => [r.id, entry(r)])));
+    const again = gate(base, head, runs);
+    expect([again.unbanked, again.overclaimed]).toEqual([[], []]);
+    expect(g.regressed).toEqual(["b"]);
+  });
 
   it("re-runs every case whose verdict differs from the base branch, in either direction", () => {
     const mixed = baseline({ a: good, b: good, d: { ...good, drop: 9 } });

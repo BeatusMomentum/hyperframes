@@ -27,17 +27,28 @@ export const flipped = (base, results) =>
 const summary = (e) =>
   e.error ? "error" : `${GATED_PX.map((m) => `${m} ${e[m] ?? "-"}`).join(", ")}, undo ${e.undo}`;
 
+/** The gate's verdict on one case's runs: it passes when fewer than half fail. */
+const passes = (entries) => entries.filter((e) => !accurate(e)).length * 2 < entries.length;
+
+/** One run per case that agrees with the gate's verdict, so a banked baseline.json matches the gate. */
+export function bankable(runs) {
+  const byId = Map.groupBy(runs, (r) => r.id);
+  return [...byId.values()].map((rs) => {
+    const verdict = passes(rs.map(entry));
+    return rs.find((r) => accurate(entry(r)) === verdict);
+  });
+}
+
 /** Every run of every case: each shard's run plus the re-runs of the cases it flipped. */
 // fallow-ignore-next-line complexity
 export function gate(base, head, runs) {
   const seen = new Map();
   for (const r of runs) seen.set(r.id, [...(seen.get(r.id) ?? []), entry(r)]);
   const cases = [...seen].map(([id, entries]) => {
-    const fails = entries.filter((e) => !accurate(e)).length;
     return {
       id,
       entries,
-      passed: fails * 2 < entries.length,
+      passed: passes(entries),
       basePassed: accurate(base.cases[id]),
     };
   });
@@ -121,9 +132,13 @@ function main([command, basePath, ...rest]) {
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, "comment.md"), comment(g));
   writeFileSync(join(out, "gate.json"), JSON.stringify(g, null, 1));
-  // The first run of every shard, as a baseline.json to commit when cases newly pass.
-  const firsts = runs.filter((r) => !r.meta.rerun).flatMap((r) => r.cases);
-  writeReport(out, { ...runs[0].meta, grid: "full (CI)" }, firsts, 0);
+  // A baseline.json to commit when cases newly pass.
+  writeReport(
+    out,
+    { ...runs[0].meta, grid: "full (CI)" },
+    bankable(runs.flatMap((r) => r.cases)),
+    0,
+  );
   console.log(comment(g));
   return g.ok ? 0 : 1;
 }
