@@ -35,13 +35,25 @@ import {
 import { gsapAnimatesProperty } from "./gsapAnimatesProperty";
 import { splitTopLevelWhitespace } from "./manualEditsStyleHelpers";
 import { roundTo3, roundToLayoutPx } from "../../utils/rounding";
+import { BOX_SIZE_STYLE_PROPS } from "./manualEditsDomPatches";
 
 /* ── Gesture tracking ─────────────────────────────────────────────── */
 let studioManualEditGestureId = 0;
 
-export function beginStudioManualEditGesture(element: HTMLElement): string {
+export type StudioGestureDraws = "move" | "resize" | "rotate";
+const MOVE_DRAWS = ["translate", STUDIO_OFFSET_X_PROP, STUDIO_OFFSET_Y_PROP];
+const GESTURE_DRAWS: Record<StudioGestureDraws, readonly string[]> = {
+  move: MOVE_DRAWS,
+  resize: [...MOVE_DRAWS, STUDIO_WIDTH_PROP, STUDIO_HEIGHT_PROP, ...BOX_SIZE_STYLE_PROPS],
+  rotate: ["rotate", "transform", "transform-origin", "display", STUDIO_ROTATION_PROP],
+};
+
+export function beginStudioManualEditGesture(
+  element: HTMLElement,
+  draws: StudioGestureDraws = "move",
+): string {
   studioManualEditGestureId += 1;
-  const token = `gesture-${studioManualEditGestureId}`;
+  const token = `gesture-${studioManualEditGestureId}:${draws}`;
   element.setAttribute(STUDIO_MANUAL_EDIT_GESTURE_ATTR, token);
   return token;
 }
@@ -49,6 +61,12 @@ export function beginStudioManualEditGesture(element: HTMLElement): string {
 export function endStudioManualEditGesture(element: HTMLElement, token?: string): void {
   if (token && element.getAttribute(STUDIO_MANUAL_EDIT_GESTURE_ATTR) !== token) return;
   element.removeAttribute(STUDIO_MANUAL_EDIT_GESTURE_ATTR);
+}
+
+export function studioGestureDraws(element: Element): readonly string[] | null {
+  const token = element.getAttribute(STUDIO_MANUAL_EDIT_GESTURE_ATTR);
+  if (token === null) return null;
+  return GESTURE_DRAWS[token.split(":")[1] as StudioGestureDraws] ?? [];
 }
 
 function isStudioManualEditGestureActive(element: HTMLElement): boolean {
