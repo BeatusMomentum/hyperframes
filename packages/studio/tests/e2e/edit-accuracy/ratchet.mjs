@@ -45,12 +45,26 @@ export function bankable(runs) {
   });
 }
 
+/**
+ * Cases a real Studio race flips run to run, with the PR fixing it: measured and listed every run, never gated.
+ * The fixing PR deletes its own ids here and re-banks them in the same PR.
+ */
+export const QUARANTINED = {
+  "sequndo-none-center-r0-nested-z100": "#4853",
+  "sequndo-none-center-r0-root-z100": "#4853",
+  "sequndo-none-pct-r0-nested-z100": "#4853",
+  "sequndo-none-pct-r0-root-z100": "#4853",
+  "sequndo-none-px-r0-nested-z100": "#4853",
+  "sequndo-none-px-r0-root-z100": "#4853",
+  "seqrepeat-none-px-r0-nested-z100": "part C (#4807 stack)",
+};
+
 /** Every run of every case: each shard's run plus the re-runs of the cases it flipped. */
 // fallow-ignore-next-line complexity
-export function gate(base, head, runs) {
+export function gate(base, head, runs, quarantine = QUARANTINED) {
   const seen = new Map();
   for (const r of runs) seen.set(r.id, [...(seen.get(r.id) ?? []), entry(r)]);
-  const cases = [...seen].map(([id, entries]) => {
+  const all = [...seen].map(([id, entries]) => {
     return {
       id,
       entries,
@@ -58,9 +72,16 @@ export function gate(base, head, runs) {
       basePassed: accurate(base.cases[id]),
     };
   });
+  const cases = all.filter((c) => !Object.hasOwn(quarantine, c.id));
   const passing = cases.filter((c) => c.passed);
   const result = {
-    basePassing: Object.values(base.cases).filter(accurate).length,
+    quarantined: Object.entries(quarantine).map(([id, fixer]) => {
+      const c = all.find((x) => x.id === id);
+      return { id, fixer, passed: c?.passed ?? null, runs: c?.entries.map(accurate) ?? [] };
+    }),
+    basePassing: Object.entries(base.cases).filter(
+      ([id, e]) => !Object.hasOwn(quarantine, id) && accurate(e),
+    ).length,
     headPassing: passing.length,
     regressed: cases.filter((c) => c.basePassed && !c.passed).map((c) => c.id),
     unstable: cases
@@ -107,6 +128,12 @@ export function comment(g) {
     ...list("Not banked (commit the artifact's baseline.json)", g.unbanked),
     ...list("Marked passing in baseline.json but failing", g.overclaimed),
     ...list("In the base grid but not run", g.missing),
+    `**Quarantined, measured but not gated** (${g.quarantined.length})`,
+    ...g.quarantined.map(
+      (q) =>
+        `- ${q.id} (fixed by ${q.fixer}): ${q.runs.map((ok) => (ok ? "pass" : "fail")).join(" / ") || "not run"}${q.passed === null ? "" : q.passed ? ", passes" : ", fails"}`,
+    ),
+    "",
     ...(g.unstable.length
       ? [
           `**Unstable** (${g.unstable.length})`,

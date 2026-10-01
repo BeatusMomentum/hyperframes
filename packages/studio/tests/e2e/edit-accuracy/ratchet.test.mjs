@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accurate, bankable, flipped, gate } from "./ratchet.mjs";
+import { accurate, bankable, comment, flipped, gate, QUARANTINED } from "./ratchet.mjs";
 import { entry, score } from "./report.mjs";
 import { scoreTeleport } from "./teleport.mjs";
 
@@ -49,6 +49,35 @@ describe("accurate", () => {
     expect(accurate({ ...good, text: true })).toBe(true);
     expect(accurate({ pass: false, error: true })).toBe(false);
     expect(accurate(undefined)).toBe(false);
+  });
+});
+
+describe("quarantine", () => {
+  const base = baseline({ a: good, b: good });
+  const q = { a: "#1234" };
+
+  it("measures a quarantined case but never fails the gate on it, while any other case still can", () => {
+    const failing = [run("a", 9), run("a", 9), run("a", 9), run("b")];
+    expect(gate(base, base, failing, q)).toMatchObject({ regressed: [], ok: true });
+    expect(gate(base, base, failing, {})).toMatchObject({ regressed: ["a"], ok: false });
+    const fresh = baseline({});
+    expect(gate(fresh, fresh, [run("a"), run("b")], q)).toMatchObject({
+      unbanked: ["b"],
+      ok: false,
+    });
+    expect(
+      gate(base, baseline({ a: good, b: good }), [run("a", 9), run("b")], q).overclaimed,
+    ).toEqual([]);
+  });
+
+  it("lists every quarantined case with its fixer and each run's verdict, on every run", () => {
+    const text = comment(gate(base, base, [run("a", 9), run("a"), run("a", 9), run("b")], q));
+    expect(text).toContain("- a (fixed by #1234): fail / pass / fail, fails");
+    expect(comment(gate(base, base, [run("b")], q))).toContain("- a (fixed by #1234): not run");
+  });
+
+  it("names a fixing PR for every quarantined id", () => {
+    for (const fixer of Object.values(QUARANTINED)) expect(fixer).toMatch(/#\d+/);
   });
 });
 
