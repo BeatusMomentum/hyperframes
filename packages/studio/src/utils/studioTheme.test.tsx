@@ -11,10 +11,6 @@ const KEY = "hf-studio-ui-preferences";
 const html = readFileSync(path.join(__dirname, "../../index.html"), "utf8");
 const boot = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
 
-function systemIs(dark: boolean) {
-  window.matchMedia = ((query: string) => ({ matches: dark && query.includes("dark") })) as never;
-}
-
 function store(theme: unknown) {
   localStorage.setItem(KEY, JSON.stringify({ theme }));
 }
@@ -26,17 +22,21 @@ afterEach(() => {
 });
 
 describe("Studio's theme", () => {
-  it.each([
-    ["light", true],
-    ["dark", false],
-    [undefined, true],
-    [undefined, false],
-    ["neon", false],
-  ])("boots to the theme the owner shows (saved %s, system dark %s)", (saved, dark) => {
-    systemIs(dark);
-    store(saved);
+  it.each([["light"], ["dark"], [undefined], ["neon"]])(
+    "boots to the theme the owner shows (saved %s)",
+    (saved) => {
+      store(saved);
+      new Function(boot)();
+      expect(document.documentElement.dataset.theme === "paper").toBe(
+        shownStudioTheme() === "light",
+      );
+    },
+  );
+
+  it("opens light the first time", () => {
     new Function(boot)();
-    expect(document.documentElement.dataset.theme === "paper").toBe(shownStudioTheme() === "light");
+    expect(document.documentElement.dataset.theme).toBe("paper");
+    expect(shownStudioTheme()).toBe("light");
   });
 
   it("runs the boot script before the app's module", () => {
@@ -44,8 +44,8 @@ describe("Studio's theme", () => {
     expect(html.indexOf("<script>")).toBeLessThan(html.indexOf('type="module"'));
   });
 
-  it("flips the document between dark and light and keeps the choice", () => {
-    systemIs(true);
+  it("flips the document between light and dark and keeps the choice", () => {
+    store("dark");
     const host = mountHost(<ThemeToggle />);
     const button = () => host.querySelector("button")!;
     expect(button().getAttribute("aria-label")).toBe("Switch to light theme");

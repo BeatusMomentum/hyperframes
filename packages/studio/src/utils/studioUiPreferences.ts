@@ -42,7 +42,7 @@ export interface StudioUiPreferences {
    * intentionally scoped to one mount.
    */
   agentToolsEnabled?: boolean;
-  /** The theme the toggle picked; absent follows the system. */
+  /** The theme the toggle picked; absent is light. */
   theme?: StudioTheme;
   /** The dock's serialized panel tree; parsed by `parseDockLayout` on read. */
   dockLayout?: SerializedDockview;
