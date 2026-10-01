@@ -15,6 +15,7 @@ import {
 } from "./domEditOverlayCrop";
 import { buildInsetClipPathSides, type ClipPathInsetSides } from "./clipPathHelpers";
 import { readCropFollowingResize } from "./cropResize";
+import { CHROME_HEIGHT, CHROME_LEFT, CHROME_TOP, CHROME_WIDTH } from "./domEditChromeRect";
 
 interface CropGestureState {
   edge: CropEdge | "move";
@@ -243,8 +244,8 @@ export function DomEditCropHandles({
       data-dom-edit-crop-frame="true"
       className="pointer-events-none absolute"
       style={{
-        left: frame.left,
-        top: frame.top,
+        left: `calc(${CHROME_LEFT} + ${CHROME_WIDTH} / 2 - ${frame.width / 2}px)`,
+        top: `calc(${CHROME_TOP} + ${CHROME_HEIGHT} / 2 - ${frame.height / 2}px)`,
         width: frame.width,
         height: frame.height,
         transform: frame.angleDeg !== 0 ? `rotate(${frame.angleDeg}deg)` : undefined,

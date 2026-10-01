@@ -11,6 +11,13 @@ import { DomEditCropHandles } from "./DomEditCropHandles";
 import { DomEditRotateHandle } from "./DomEditRotateHandle";
 import { resolveRotatedResizeCursor } from "./domEditResizeLocal";
 import { usePreviewReadOnly } from "./previewReadOnlyContext";
+import {
+  CHROME_HEIGHT,
+  CHROME_LEFT,
+  CHROME_TOP,
+  CHROME_WIDTH,
+  chromeRectVars,
+} from "./domEditChromeRect";
 
 // Corner resize handles, Canva-style: one per corner, diagonal cursors.
 // Corners scale about the element center; the translate keeps the center
@@ -32,7 +39,6 @@ const NO_CROP_INSET: CropInset = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function resizeHandleStyle(
   def: (typeof RESIZE_HANDLE_DEFS)[number],
-  overlayRect: { left: number; top: number; width: number; height: number },
   cropInset?: CropInset,
 ): React.CSSProperties {
   const half = RESIZE_HANDLE_HIT_PX / 2;
@@ -44,12 +50,12 @@ function resizeHandleStyle(
   // overlap the dot circle at the corner.
   style.left =
     def.x === "left"
-      ? overlayRect.left + inset.left - half
-      : overlayRect.left + overlayRect.width - inset.right - half;
+      ? `calc(${CHROME_LEFT} + ${inset.left - half}px)`
+      : `calc(${CHROME_LEFT} + ${CHROME_WIDTH} - ${inset.right + half}px)`;
   style.top =
     def.y === "top"
-      ? overlayRect.top + inset.top - half
-      : overlayRect.top + overlayRect.height - inset.bottom - half;
+      ? `calc(${CHROME_TOP} + ${inset.top - half}px)`
+      : `calc(${CHROME_TOP} + ${CHROME_HEIGHT} - ${inset.bottom + half}px)`;
   return style;
 }
 
@@ -167,17 +173,16 @@ export function DomEditSelectionChrome({
   const canManipulate = allowCanvasMovement && !readOnly;
 
   return (
-    <>
+    <div className="contents" style={chromeRectVars(overlayRect)}>
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          transformOrigin: `${overlayRect.left + overlayRect.width / 2}px ${overlayRect.top + overlayRect.height / 2}px`,
+          transformOrigin: `calc(${CHROME_LEFT} + ${CHROME_WIDTH} / 2) calc(${CHROME_TOP} + ${CHROME_HEIGHT} / 2)`,
           transform: overlayRect.angle ? `rotate(${overlayRect.angle}deg)` : undefined,
         }}
       >
         {canManipulate && !editing && selection.capabilities.canApplyManualRotation && (
           <DomEditRotateHandle
-            overlayRect={overlayRect}
             cropOutlineInsetPx={cropOutlineInsetPx}
             onStartRotate={(e) => {
               e.stopPropagation();
@@ -247,7 +252,7 @@ export function DomEditSelectionChrome({
                 key={def.handle}
                 className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
                 style={{
-                  ...resizeHandleStyle(def, overlayRect, cropOutlineInsetPx ?? undefined),
+                  ...resizeHandleStyle(def, cropOutlineInsetPx ?? undefined),
                   // Cursor rotates with the object: bucket the corner's base
                   // diagonal + element rotation into the 8 CSS resize cursors.
                   cursor: resolveRotatedResizeCursor(def.handle, overlayRect.angle ?? 0),
@@ -271,6 +276,6 @@ export function DomEditSelectionChrome({
           onStyleCommit={onStyleCommit}
         />
       )}
-    </>
+    </div>
   );
 }
