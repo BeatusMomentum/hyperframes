@@ -10,6 +10,7 @@ import {
   pickDetachedAudioTrack,
   removeElementInSource,
   setLinkInSource,
+  sharesSourceFile,
 } from "./mediaLinkEdits";
 
 const automation = JSON.stringify({
@@ -278,13 +279,13 @@ describe("predicates compare the whole asset path", () => {
     const v = el("v", "video", { muted: true, ...one });
     const a = el("a", "audio", two);
     expect(findMergePair(v, [v, a])).toBeNull();
-    expect(canLinkPair([el("v", "video", one), el("a", "audio", two)])).toBe(false);
+    expect(sharesSourceFile([el("v", "video", one), el("a", "audio", two)])).toBe(false);
   });
 
   it("resolves each src against its own source file", () => {
     const v = el("v", "video", { src: "../assets/talk.mp4", sourceFile: "scenes/a.html" });
     const a = el("a", "audio", { src: "./assets/talk.mp4", sourceFile: "index.html" });
-    expect(canLinkPair([v, a])).toBe(true);
+    expect(sharesSourceFile([v, a])).toBe(true);
   });
 
   it("does not take a same-id link from another source file as the merge partner", () => {
