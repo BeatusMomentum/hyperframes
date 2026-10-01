@@ -652,6 +652,13 @@ describe("upload collision races", () => {
 });
 
 describe("rename reference updates", () => {
+  const renameInside = (app: Hono) =>
+    app.request(fileUrl("inside.txt"), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPath: "moved.txt" }),
+    });
+
   // Windows and root read every folder, so the rename never meets one it may not read there.
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "a rename past an unreadable folder or file still answers ok and updates what it can read",
@@ -664,11 +671,7 @@ describe("rename reference updates", () => {
       chmodSync(join(project, "locked.html"), 0o000);
       try {
         expect(() => readdirSync(join(project, "private"))).toThrow(/EACCES|EPERM/);
-        const rename = await app.request(fileUrl("inside.txt"), {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ newPath: "moved.txt" }),
-        });
+        const rename = await renameInside(app);
         expect(rename.status).toBe(200);
         expect(existsSync(join(project, "inside.txt"))).toBe(false);
         expect(readFileSync(join(project, "moved.txt"), "utf8")).toBe("inside");
@@ -687,11 +690,7 @@ describe("rename reference updates", () => {
       // A link named like a text file that leads to a folder: reading it fails, and not for want of permission.
       mkdirSync(join(project, "folder"));
       symlinkSync(join(project, "folder"), join(project, "link.html"), "dir");
-      const rename = await app.request(fileUrl("inside.txt"), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newPath: "moved.txt" }),
-      });
+      const rename = await renameInside(app);
       expect(rename.status).toBe(500);
     },
   );
