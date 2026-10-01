@@ -216,6 +216,20 @@ describe("useAutomationSelectionKeyboard", () => {
     input.remove();
   });
 
+  it("is inert while a picker that owns typing has focus", () => {
+    usePlayerStore
+      .getState()
+      .setAutomationSelection(wholeAxis({ elementKey: "bgm", target: "volume", t0: 1, t1: 3 }));
+    const { onCommit } = setup({});
+    const picker = document.createElement("button");
+    picker.setAttribute("role", "combobox");
+    document.body.append(picker);
+    picker.focus();
+    key("Delete");
+    expect(onCommit).not.toHaveBeenCalled();
+    picker.remove();
+  });
+
   it("Cmd+C copies the active selection", () => {
     clearAutomationClipboard();
     usePlayerStore.setState({ elements: [bgmElement], selectedElementId: "bgm" });

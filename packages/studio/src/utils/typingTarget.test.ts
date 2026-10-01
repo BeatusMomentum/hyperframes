@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { isTypingTarget } from "./typingTarget";
+import { isTypingTarget, ownsNavigationKeys } from "./typingTarget";
 import { isEditableTarget } from "./timelineDiscovery";
 
 afterEach(() => {
@@ -50,5 +50,18 @@ describe("isTypingTarget", () => {
   it("says no to nothing at all", () => {
     expect(isTypingTarget(null)).toBe(false);
     expect(isTypingTarget({} as EventTarget)).toBe(false);
+  });
+});
+
+describe("ownsNavigationKeys", () => {
+  it("is true for a native player with controls and for anything typing claims", () => {
+    expect(ownsNavigationKeys(mount("<video controls></video>"))).toBe(true);
+    expect(ownsNavigationKeys(mount("<audio controls></audio>"))).toBe(true);
+    expect(ownsNavigationKeys(mount("<input />"))).toBe(true);
+  });
+
+  it("is false for a player without controls and for plain elements", () => {
+    expect(ownsNavigationKeys(mount("<video></video>"))).toBe(false);
+    expect(ownsNavigationKeys(mount("<div></div>"))).toBe(false);
   });
 });

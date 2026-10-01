@@ -86,6 +86,18 @@ describe("keyframe shortcuts", () => {
     window.removeEventListener("keydown", playback);
   });
 
+  it("leaves K to a focused picker that owns typing, like a font combobox", () => {
+    const onAddKeyframe = mountKeyframeKeyboard(true);
+    const picker = document.createElement("button");
+    picker.setAttribute("role", "combobox");
+    document.body.append(picker);
+    picker.focus();
+
+    expect(press("k").defaultPrevented).toBe(false);
+    expect(onAddKeyframe).not.toHaveBeenCalled();
+    picker.remove();
+  });
+
   it("K stays playback's stop key when no keyframeable element is selected", () => {
     const playback = vi.fn();
     window.addEventListener("keydown", playback);

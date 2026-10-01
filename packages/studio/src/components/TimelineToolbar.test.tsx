@@ -211,6 +211,27 @@ describe("TimelineToolbar — keyframes on audio tracks", () => {
   });
 });
 
+describe("TimelineToolbar snap key", () => {
+  it("N toggles snapping, but not while a picker that owns typing has focus", () => {
+    const { root } = renderToolbar();
+    const pressN = (target: EventTarget) =>
+      act(() => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
+      });
+    const before = usePlayerStore.getState().timelineSnapEnabled;
+    const picker = document.createElement("button");
+    picker.setAttribute("role", "combobox");
+    document.body.append(picker);
+
+    pressN(picker);
+    expect(usePlayerStore.getState().timelineSnapEnabled).toBe(before);
+    pressN(document.body);
+    expect(usePlayerStore.getState().timelineSnapEnabled).toBe(!before);
+    act(() => root.unmount());
+    usePlayerStore.getState().setTimelineSnapEnabled(before);
+  });
+});
+
 describe("TimelineToolbar Fit", () => {
   it("shows Fit as a named icon and says whether fit is on", () => {
     const { host, root } = renderToolbar();

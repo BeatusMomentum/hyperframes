@@ -40,6 +40,15 @@ const TYPING_SELECTOR = [
   ".cm-editor",
 ].join(",");
 
+// A native player's controls seek, play and step with these keys themselves.
+const MEDIA_CONTROLS_SELECTOR = "video[controls],audio[controls]";
+
+/** Whether the focused element moves or seeks with the arrow, Home, End and Space keys itself. */
+export function ownsNavigationKeys(target: EventTarget | null): boolean {
+  if (isTypingTarget(target)) return true;
+  return asElement(target)?.closest(MEDIA_CONTROLS_SELECTOR) != null;
+}
+
 function asElement(target: EventTarget | null): HTMLElement | null {
   if (!target || typeof target !== "object") return null;
   const candidate = target as { closest?: unknown; isContentEditable?: unknown };
