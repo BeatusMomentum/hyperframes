@@ -1,5 +1,6 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { quadOf, scoreTeleport } from "./teleport.mjs";
+import { frameSamplerScript, quadOf, scoreTeleport } from "./teleport.mjs";
 import { entry, score } from "./report.mjs";
 
 // The composition root drawn 1:1 at the origin, and a 100 px box whose centre the pointer holds.
@@ -146,5 +147,15 @@ describe("quadOf", () => {
     );
     expect(quad[1][0]).toBeCloseTo(220.375, 6);
     expect(quad[2][1]).toBeCloseTo(80, 6);
+  });
+});
+
+describe("frameSamplerScript", () => {
+  it("runs beside a page script that declares the same names, and leaves them alone", () => {
+    const page = { window: {} };
+    page.window.top = {};
+    runInNewContext("const linear = 1; let quadOf = 2;", page);
+    expect(() => runInNewContext(frameSamplerScript, page)).not.toThrow();
+    expect(runInNewContext("[linear, quadOf]", page)).toEqual([1, 2]);
   });
 });

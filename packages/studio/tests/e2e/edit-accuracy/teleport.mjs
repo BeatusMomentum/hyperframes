@@ -177,20 +177,11 @@ function frameSampler() {
   requestAnimationFrame(loop);
 }
 
-/** The page script with the geometry it calls, for evaluateOnNewDocument. */
-export const frameSamplerScript = [
-  mul,
-  apply,
-  rotation,
-  ownLinear,
-  parentOf,
-  linear,
-  boxSize,
-  quadOf,
-]
-  .map(String)
-  .concat(`(${frameSampler})();`)
-  .join("\n");
+/** The page script with the geometry it calls, for evaluateOnNewDocument; scoped so no page global clashes. */
+export const frameSamplerScript = `(() => {
+${[mul, apply, rotation, ownLinear, parentOf, linear, boxSize, quadOf].map(String).join("\n")}
+(${frameSampler})();
+})();`;
 
 /** Starts recording, or marks the next drag in one already running, so the gap between drags is sampled. */
 export const startFrames = (page, selector) =>
