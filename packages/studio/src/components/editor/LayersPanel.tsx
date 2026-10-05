@@ -8,7 +8,12 @@ import {
   resolveDomEditSelection,
   type DomEditLayerItem,
 } from "./domEditing";
-import { useStudioPlaybackContext, useStudioShellContext } from "../../contexts/StudioContext";
+import {
+  useStudioPlaybackContextOptional,
+  useStudioShellContextOptional,
+  type StudioPlaybackValue,
+  type StudioShellValue,
+} from "../../contexts/StudioContext";
 import { useDomEditContext } from "../../contexts/DomEditContext";
 import { usePlayerStore, liveTime } from "../../player";
 import {
@@ -94,11 +99,36 @@ interface CollapsedState {
   [key: string]: boolean;
 }
 
+/** Studio state the panel reads; passed by hosts outside Studio's providers. Keep previewIframeRef stable,
+ * and bump refreshKey when the preview document is rebuilt without an iframe load. */
+export type LayersPanelHost = Pick<
+  StudioShellValue,
+  "previewIframeRef" | "activeCompPath" | "showToast"
+> &
+  Pick<StudioPlaybackValue, "timelineElements" | "isPlaying"> &
+  Partial<Pick<StudioPlaybackValue, "refreshKey" | "compositionLoading">>;
+
+function useLayersPanelHost(host: LayersPanelHost | undefined): LayersPanelHost {
+  const shell = useStudioShellContextOptional();
+  const playback = useStudioPlaybackContextOptional();
+  if (host) return host;
+  if (!shell || !playback) {
+    throw new Error("LayersPanel needs a host prop outside Studio's shell and playback providers");
+  }
+  return { ...shell, ...playback };
+}
+
 // fallow-ignore-next-line complexity
-export const LayersPanel = memo(function LayersPanel() {
-  const { previewIframeRef, activeCompPath, showToast } = useStudioShellContext();
-  const { refreshKey, compositionLoading, timelineElements, isPlaying } =
-    useStudioPlaybackContext();
+export const LayersPanel = memo(function LayersPanel({ host }: { host?: LayersPanelHost }) {
+  const {
+    previewIframeRef,
+    activeCompPath,
+    showToast,
+    refreshKey,
+    compositionLoading,
+    timelineElements,
+    isPlaying,
+  } = useLayersPanelHost(host);
   const currentTime = usePlayerStore((s) => s.currentTime);
   // Flashless z commits (canvas menu, timeline lane-drag z-sync) mutate iframe
   // z-indexes with no reload and no refreshKey bump — while paused, nothing
