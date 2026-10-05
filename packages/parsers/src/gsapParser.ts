@@ -22,6 +22,7 @@ import {
   safeJsKey as safeKey,
   resolveConversionProps,
   mergePercentageKeyframes,
+  authorsKeyframes,
 } from "./gsapSerialize";
 
 export type {
@@ -1551,7 +1552,7 @@ export function updateAnimationInScript(
     return script;
   }
   const target = parsed.located.find((l) => l.id === animationId);
-  if (!target) return script;
+  if (!target || (updates.properties && target.animation.hasUnresolvedKeyframes)) return script;
   applyUpdatesToCall(target.call, updates);
   return recast.print(parsed.ast).code;
 }
@@ -1943,14 +1944,14 @@ export function splitAnimationsInScript(
     const dur = anim.duration ?? 0;
     const animEnd = pos + dur;
 
-    if (anim.keyframes) {
+    if (authorsKeyframes(anim)) {
       if (pos >= opts.splitTime) {
         result = updateAnimationSelector(result, anim.id, newSelector);
       } else if (animEnd > opts.splitTime) {
         // Spanning keyframes can't be correctly split without renormalizing
         // percentages and durations — leave on original, warn the caller.
         skippedSelectors.push(`${originalSelector} (keyframes spanning split)`);
-        const kfs = anim.keyframes.keyframes;
+        const kfs = anim.keyframes?.keyframes ?? [];
         for (const kf of kfs) {
           const kfTime = pos + (kf.percentage / 100) * dur;
           if (kfTime <= opts.splitTime) {
@@ -1961,7 +1962,10 @@ export function splitAnimationsInScript(
         }
       } else {
         // Entirely before split — extract final keyframe properties
-        const kfs = anim.keyframes.keyframes;
+        if (anim.hasUnresolvedKeyframes) {
+          skippedSelectors.push(`${originalSelector} (unreadable keyframes before split)`);
+        }
+        const kfs = anim.keyframes?.keyframes ?? [];
         if (kfs.length > 0) {
           for (const [k, v] of Object.entries(kfs[kfs.length - 1]!.properties)) {
             inheritedProps[k] = v;
@@ -2717,7 +2721,7 @@ export function convertToKeyframesInScript(
   if (!loc) return script;
 
   const anim = loc.target.animation;
-  if (anim.keyframes) return script;
+  if (authorsKeyframes(anim)) return script;
 
   const { fromProps, toProps } = resolveConversionProps(anim, resolvedFromValues);
   const varsArg = loc.target.call.varsArg;
@@ -3266,6 +3270,7 @@ export function splitIntoPropertyGroups(
   if (!loc) return { script, ids: [animationId] };
 
   const anim = loc.target.animation;
+  if (anim.hasUnresolvedKeyframes) return { script, ids: [animationId] };
 
   // Collect the properties to partition. For keyframed tweens, gather the
   // union of all properties across all keyframes. For flat tweens, use the

@@ -1005,7 +1005,7 @@ function parsePercentageKeyframes(
   node: any,
   scope: ScopeBindings,
   source: string,
-): GsapKeyframesData {
+): GsapKeyframesData | undefined {
   const keyframes: GsapPercentageKeyframe[] = [];
   let ease: string | undefined;
   let easeEach: string | undefined;
@@ -1017,6 +1017,7 @@ function parsePercentageKeyframes(
 
     const pctMatch = PERCENTAGE_KEY_RE.exec(key);
     if (pctMatch) {
+      if (!isPlainStep(prop.value)) return undefined;
       const percentage = Number.parseFloat(pctMatch[1] ?? "0");
       const record = objectExpressionToRecord(prop.value, scope, source);
       const properties: Record<string, number | string> = {};
@@ -1041,6 +1042,8 @@ function parsePercentageKeyframes(
       ease = tryResolveStringProp(prop.value, scope, source) ?? ease;
     } else if (key === "easeEach") {
       easeEach = tryResolveStringProp(prop.value, scope, source) ?? easeEach;
+    } else {
+      return undefined;
     }
   }
 
@@ -1073,8 +1076,20 @@ function computeKeyframesTotalDuration(
   return getObjectArrayKeyframeTiming(durations)?.totalDuration;
 }
 
-const isFullyReadableStep = (el: any) =>
-  el?.type === "ObjectExpression" && !el.properties.some((p: any) => p.type === "SpreadElement");
+function staticKeyName(prop: any): string | undefined {
+  if (prop.type !== "ObjectProperty" && prop.type !== "Property") return undefined;
+  if (prop.method || (prop.kind && prop.kind !== "init")) return undefined;
+  const key = prop.computed
+    ? prop.key?.type === "Literal" && prop.key.value
+    : (prop.key?.name ?? prop.key?.value);
+  return typeof key === "string" ? key : undefined;
+}
+
+const isPlainObject = (node: any) =>
+  node?.type === "ObjectExpression" &&
+  (node.properties ?? []).every((p: any) => staticKeyName(p) !== undefined);
+
+const isPlainStep = (node: any) => node?.type === "Literal" || isPlainObject(node);
 
 // fallow-ignore-next-line complexity
 function parseObjectArrayKeyframes(
@@ -1090,7 +1105,7 @@ function parseObjectArrayKeyframes(
   }> = [];
 
   for (const el of elements) {
-    if (!isFullyReadableStep(el)) return undefined;
+    if (!isPlainObject(el)) return undefined;
     const record = objectExpressionToRecord(el, scope, source);
     const properties: Record<string, number | string> = {};
     let duration: unknown;
@@ -1122,7 +1137,7 @@ function parseObjectArrayKeyframes(
 }
 
 // fallow-ignore-next-line complexity
-function parseSimpleArrayKeyframes(node: any, scope: ScopeBindings): GsapKeyframesData {
+function parseSimpleArrayKeyframes(node: any, scope: ScopeBindings): GsapKeyframesData | undefined {
   const arrayProps: Map<string, (number | string)[]> = new Map();
   let ease: string | undefined;
   let easeEach: string | undefined;
@@ -1136,9 +1151,8 @@ function parseSimpleArrayKeyframes(node: any, scope: ScopeBindings): GsapKeyfram
       const values: (number | string)[] = [];
       for (const el of prop.value.elements ?? []) {
         const val = resolveNode(el, scope);
-        if (typeof val === "number" || typeof val === "string") {
-          values.push(val);
-        }
+        if (typeof val !== "number" && typeof val !== "string") return undefined;
+        values.push(val);
       }
       if (values.length > 0) arrayProps.set(key, values);
     } else if (key === "ease") {
@@ -1183,6 +1197,7 @@ function parseKeyframesNode(
   if (node.type !== "ObjectExpression") return undefined;
 
   const props = node.properties ?? [];
+  if (!props.every((p: any) => staticKeyName(p) !== undefined)) return undefined;
   let hasPercentageKey = false;
   let hasArrayValue = false;
 

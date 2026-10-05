@@ -18,6 +18,7 @@ import {
   materializeKeyframesInScript as materializeRecast,
   splitIntoPropertyGroups as splitGroupsRecast,
   splitAnimationsInScript as splitAnimsRecast,
+  updateAnimationInScript as updateAnimRecast,
   setArcPathInScript as setArcRecast,
   updateArcSegmentInScript as updateArcSegmentRecast,
   removeArcPathFromScript as removeArcRecast,
@@ -55,6 +56,7 @@ import {
   resizeKeyframedTweenInScript as resizeKeyframedTweenAcorn,
   addAnimationWithKeyframesToScript as addWithKfAcorn,
   removeAnimationFromScript as removeAnimAcorn,
+  updateAnimationInScript as updateAnimAcorn,
   shiftPositionsInScript as shiftAcorn,
   scalePositionsInScript as scaleAcorn,
   retimeClipTweensInScript,
@@ -567,6 +569,150 @@ describe("parity: splitAnimationsInScript (recast vs acorn)", () => {
       elementDuration: 4,
     };
     expect(splitAnimsAcorn(script, opts).script).toBe(script);
+  });
+});
+
+describe("splitAnimationsInScript keeps keyframes the parser cannot read", () => {
+  const STEP_SHAPES = [
+    ["a step with a flag", "", "[{ x: 0 }, { x: 100, runBackwards: true }]"],
+    ["a spread step", "const base = { x: 0 };", "[{ ...base }, { x: 100 }]"],
+    ["a named step", "const last = { x: 100 };", "[{ x: 0 }, last]"],
+    ["keyframes from a call", "", "steps()"],
+  ] as const;
+  const opts = { originalId: "a", newId: "a-2", elementStart: 0, elementDuration: 4 };
+  const writers = [
+    ["recast", splitAnimsRecast],
+    ["acorn", splitAnimsAcorn],
+  ] as const;
+
+  for (const [writer, split] of writers) {
+    for (const [shape, decl, keyframes] of STEP_SHAPES) {
+      const script = `const tl = gsap.timeline({ paused: true });
+${decl}
+tl.to("#a", { duration: 2, keyframes: ${keyframes} }, 0);`;
+
+      it(`${writer}: leaves ${shape} spanning the split as authored`, () => {
+        expect(parseGsapScriptAcorn(script).animations[0]!.hasUnresolvedKeyframes).toBe(true);
+        const result = split(script, { ...opts, splitTime: 1 });
+        expect(result.script).toContain(`tl.to("#a", { duration: 2, keyframes: ${keyframes} }, 0)`);
+        expect(result.skippedSelectors).toContain("#a (keyframes spanning split)");
+      });
+
+      it(`${writer}: moves ${shape} after the split whole`, () => {
+        const result = split(script, { ...opts, splitTime: 0 });
+        expect(result.script).toContain(
+          `tl.to("#a-2", { duration: 2, keyframes: ${keyframes} }, 0)`,
+        );
+      });
+    }
+  }
+});
+
+describe("writers leave keyframes they cannot read as authored", () => {
+  const UNREADABLE = [
+    ["a step with a flag", "[{ x: 0 }, { x: 100, runBackwards: true }]"],
+    ["keyframes from a call", "steps()"],
+  ] as const;
+  const opts = { originalId: "a", newId: "a-2", elementStart: 0, elementDuration: 4 };
+
+  for (const [shape, keyframes] of UNREADABLE) {
+    const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { opacity: 1, x: 5, duration: 1, keyframes: ${keyframes} }, 0);`;
+    const id = () => acornId(script);
+
+    for (const [writer, split] of [
+      ["recast", splitAnimsRecast],
+      ["acorn", splitAnimsAcorn],
+    ] as const) {
+      if (writer === "recast" && keyframes !== "steps()") continue;
+      it(`${writer}: a split after ${shape} reports that the new clip's start is unknown`, () => {
+        const result = split(`${script}\ntl.to("#a", { duration: 2, x: 200 }, 1);`, {
+          ...opts,
+          splitTime: 2,
+        });
+        expect(result.skippedSelectors).toContain("#a (unreadable keyframes before split)");
+      });
+    }
+
+    it.each([
+      ["recast convert to keyframes", () => convertRecast(script, id())],
+      ["acorn convert to keyframes", () => convertAcorn(script, id())],
+      ["recast split into property groups", () => splitGroupsRecast(script, id()).script],
+      ["acorn split into property groups", () => splitGroupsAcorn(script, id()).script],
+      ["acorn add keyframe", () => addKeyframeAcorn(script, id(), 50, { x: 10 })],
+      ["acorn update keyframe", () => updateKeyframeAcorn(script, id(), 100, { x: 10 })],
+      ["acorn remove keyframe", () => removeKeyframeAcorn(script, id(), 100)],
+      ["acorn move keyframe", () => moveKeyframeAcorn(script, id(), 100, 80)],
+      ["acorn resize keyframed tween", () => resizeKeyframedTweenAcorn(script, id(), 0, 2, [])],
+      [
+        "acorn property edit",
+        () => updateAnimAcorn(script, id(), { properties: { opacity: 0.5 } }),
+      ],
+    ])(`%s leaves ${shape} unchanged`, (_name, write) => {
+      expect(parseGsapScriptAcorn(script).animations[0]!.hasUnresolvedKeyframes).toBe(true);
+      expect(write()).toBe(script);
+    });
+  }
+
+  it.each(["{ x: v }", "{ [v]: { x: 1 } }", "{ ...o }"])(
+    "acorn add and resize leave object keyframes %s unchanged",
+    (keyframes) => {
+      const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { duration: 1, keyframes: ${keyframes} }, 0);`;
+      expect(parseGsapScriptAcorn(script).animations[0]!.hasUnresolvedKeyframes).toBe(true);
+      expect(addKeyframeAcorn(script, acornId(script), 50, { x: 5 })).toBe(script);
+      expect(resizeKeyframedTweenAcorn(script, acornId(script), 0, 2, [])).toBe(script);
+    },
+  );
+
+  it.each([
+    ["recast", splitAnimsRecast],
+    ["acorn", splitAnimsAcorn],
+  ] as const)("%s: a split across unreadable keyframes writes no start value", (_writer, split) => {
+    const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { opacity: 0.5, duration: 2, keyframes: steps() }, 0);`;
+    const result = split(script, { ...opts, splitTime: 1 });
+    expect(result.script).not.toContain('"#a-2"');
+    expect(result.skippedSelectors).toContain("#a (keyframes spanning split)");
+  });
+
+  it("treats keyframes with a computed percentage key as unreadable", () => {
+    const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { duration: 1, keyframes: { [k]: { x: 10 }, "100%": { x: 50 } } }, 0);`;
+    const id = acornId(script);
+    expect(parseGsapScriptAcorn(script).animations[0]!.hasUnresolvedKeyframes).toBe(true);
+    expect(updateAnimAcorn(script, id, { properties: { opacity: 0.5 } })).toBe(script);
+    expect(removeKeyframeAcorn(script, id, 100)).toBe(script);
+  });
+
+  it.each([
+    ["a named step", '{ "0%": { x: 0 }, "100%": last }'],
+    ["a spread inside a step", '{ "0%": { x: 0 }, "100%": { ...base, x: 10 } }'],
+    ["a numeric key", '{ "0%": { x: 0 }, [50]: { x: 5 }, "100%": { x: 10 } }'],
+    ["a template key in an array step", "[{ x: 0 }, { x: 10, [`y`]: 5 }]"],
+    ["a variable key in an array step", "[{ x: 0 }, { x: 10, [k]: 5 }]"],
+    ["a getter in a step", '{ "0%": { x: 0 }, "100%": { get x() { return 10; } } }'],
+    ["a method in an array step", "[{ x: 0 }, { x: 10, y() {} }]"],
+    ["an array channel beside % steps", '{ "0%": { x: 0 }, "100%": { x: 10 }, y: [0, 5] }'],
+    ["an unresolved array value", "{ x: [0, 10, v] }"],
+    ["a spread in an array channel", "{ x: [0, ...rest] }"],
+    ["a hole in an array channel", "{ x: [0, , 10] }"],
+  ])(
+    "treats keyframes with %s as unreadable, so drags and deletes keep them",
+    (_shape, keyframes) => {
+      const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { duration: 2, keyframes: ${keyframes} }, 0);`;
+      const id = acornId(script);
+      expect(parseGsapScriptAcorn(script).animations[0]!.hasUnresolvedKeyframes).toBe(true);
+      expect(moveKeyframeAcorn(script, id, 100, 80)).toBe(script);
+      expect(removeKeyframeAcorn(script, id, 0)).toBe(script);
+    },
+  );
+
+  it("recast property edit leaves keyframes from a call unchanged", () => {
+    const script = `const tl = gsap.timeline({ paused: true });
+tl.to("#a", { x: 5, duration: 1, keyframes: steps() }, 0);`;
+    expect(updateAnimRecast(script, acornId(script), { properties: { x: 9 } })).toBe(script);
   });
 });
 
