@@ -201,7 +201,10 @@ function escapeCaseInsensitiveToken(
 }
 
 function inlineScriptTags(scripts: readonly string[]): string {
-  return scripts.map((source) => `<script>${escapeInlineScriptSource(source)}</script>`).join("\n");
+  return scripts
+    .map((source, index) => `${source}\n//# sourceURL=hyperframes://injected/${index}`)
+    .map((source) => `<script>${escapeInlineScriptSource(source)}</script>`)
+    .join("\n");
 }
 
 const RAW_TEXT_TAGS = ["script", "style", "title", "textarea"] as const;

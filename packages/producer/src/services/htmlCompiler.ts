@@ -15,6 +15,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync } from "fs";
 import { join, dirname, resolve, basename, relative } from "path";
 import { parseHTML } from "linkedom";
 import {
+  COMPOSITION_SOURCE_URL,
   compileTimingAttrs,
   injectDurations,
   extractResolvedMedia,
@@ -45,6 +46,7 @@ import {
   ensureExternalScriptTag,
   deferScriptsUntilFonts,
   emitMountedModuleScripts,
+  isJavaScriptType,
   prepareFlattenedInnerRoot,
   emitRootCompositionVariableStyles,
   readDeclaredDefaults,
@@ -129,8 +131,22 @@ function parseSubCompHtmlForValidity(html: string): ParsableDocumentLike {
   return parseHTML(html).document as unknown as ParsableDocumentLike;
 }
 
-function deferBodyScriptsUntilFonts(html: string): string {
+function endsWithSourceUrl(code: string): boolean {
+  const trimmed = code.trimEnd();
+  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1).trimStart();
+  return lastLine.startsWith("//# sourceURL=") || lastLine.startsWith("//@ sourceURL=");
+}
+
+// One name for the composition's inline code lets a render keep its errors and not a widget's.
+function prepareCompositionScripts(html: string): string {
   const { document } = parseHTML(html);
+  for (const el of document.querySelectorAll("script:not([src])")) {
+    const isModule = (el.getAttribute("type") || "").trim().toLowerCase() === "module";
+    const runsAsScript = isModule || isJavaScriptType(el as unknown as Element);
+    const code = el.textContent ?? "";
+    if (!runsAsScript || endsWithSourceUrl(code)) continue;
+    el.textContent = `${code}\n//# sourceURL=${COMPOSITION_SOURCE_URL}`;
+  }
   deferScriptsUntilFonts(document as unknown as Document);
   return document.toString();
 }
@@ -140,7 +156,7 @@ export function injectSdkPositionEditsRenderScript(html: string): string {
     return html;
   }
   const scriptBody = getPositionEditsRenderScript().replace(/<\/script/gi, "<\\/script");
-  const script = `<script>${scriptBody}</script>`;
+  const script = `<script>${scriptBody}\n//# sourceURL=hyperframes://position-edits</script>`;
   return insertBeforeCloseTag(html, "body", script) ?? `${html}${script}`;
 }
 
@@ -1008,7 +1024,6 @@ function inlineSubCompositions(
       // Mirrors the preview bundler: a sub-composition's SIBLING assets resolve
       // against its own directory, project-root refs stay as authored.
       assetExists: (path: string) => existsSync(resolve(projectDir, path)),
-      scriptErrorLabel: "[Compiler] Composition script failed",
       // Preserve the authored root wrapper as a child of the host, matching
       // the preview bundler's shape (htmlBundler.ts's prepareFlattenedInnerRoot,
       // which the runtime compositionLoader mirrors with its own copy for the
@@ -1243,7 +1258,7 @@ export async function inlineExternalScripts(html: string): Promise<string> {
         if (attr.name.toLowerCase() === "src") continue;
         inlineScript.setAttribute(attr.name, attr.value);
       }
-      inlineScript.textContent = `/* inlined: ${src} */\n${safeText}\n`;
+      inlineScript.textContent = `/* inlined: ${src} */\n${safeText}\n//# sourceURL=${new URL(src).href}\n`;
       el.replaceWith(inlineScript);
       defaultLogger.info(`[Compiler] Inlined CDN script: ${src}`);
     } else {
@@ -2042,10 +2057,10 @@ export async function compileForRender(
     ? (insertBeforeCloseTag(
         assembledHtml,
         "body",
-        `<script>${createStudioPositionSeekReapplyScript()}</script>`,
+        `<script>${createStudioPositionSeekReapplyScript()}\n//# sourceURL=hyperframes://position-seek-reapply</script>`,
       ) ?? assembledHtml)
     : assembledHtml;
-  const htmlWithDeferredScripts = deferBodyScriptsUntilFonts(
+  const htmlWithDeferredScripts = prepareCompositionScripts(
     injectSdkPositionEditsRenderScript(htmlWithPositionScript),
   );
 

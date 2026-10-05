@@ -70,6 +70,7 @@ export const AFTER_FONTS_SCRIPTS = `script[type="${AFTER_FONTS_SCRIPT_TYPE}"], s
 
 export const AFTER_FONTS_CLAIM = "__hfAfterFontsClaimed";
 export const INLINED_FILE_ATTR = "data-hf-inlined-src";
+export const COMPOSITION_SOURCE_URL = "hyperframes-composition://body";
 
 export const DEFERRED_FILE = `[defer][src], [defer][${INLINED_FILE_ATTR}]`;
 const AFTER_FONTS_FALLBACK_ATTR = "data-hf-after-fonts-fallback";
@@ -96,7 +97,8 @@ const afterFontsFallback = () => `document.addEventListener("DOMContentLoaded", 
     el.replaceWith(s);
     if (!waits) next();
   })();
-});`;
+});
+//# sourceURL=hyperframes://after-fonts-fallback`;
 
 /** Gives each body script a type the browser does not run, so the runtime can run it once web fonts are ready. */
 export function deferScriptsUntilFonts(
