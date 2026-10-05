@@ -55,7 +55,8 @@ import {
   classifyTweenPropertyGroup,
   GSAP_DEFAULT_DURATION,
   isXYPositionWrite,
-  positionHoldForAnimation,
+  holdScope,
+  keyframeHoldForAnimation,
 } from "./gsapConstants";
 import type { PropertyGroupName } from "./gsapConstants";
 import { BUILTIN_VAR_KEYS, DROPPED_VAR_KEYS, EXTRAS_KEYS, isTweenConfigKey } from "./gsapConstants";
@@ -1862,11 +1863,19 @@ export function isStudioHoldSet(anim: GsapAnimation): boolean {
  * so this pass owns it: every call wipes the prior holds and recomputes from the
  * current keyframes, keeping them in sync as keyframes are added/moved/deleted.
  *
- * Idempotent. Only position props (x/y/xPercent/yPercent) are held — opacity/scale
- * keep their authored pre-tween behavior. A tween already starting at 0 needs no
- * hold (no gap before it).
+ * Idempotent. Only position and size props are held — opacity/scale keep their
+ * authored pre-tween behavior. A tween already starting at 0 needs no hold, unless
+ * it is a lone keyframe, which GSAP never renders by itself.
  */
-export function syncPositionHoldsBeforeKeyframes(script: string): string {
+function animationsOf(script: string): GsapAnimation[] | null {
+  try {
+    return parseGsapScript(script).animations;
+  } catch {
+    return null;
+  }
+}
+
+export function syncPositionHoldsBeforeKeyframes(script: string, previous?: string): string {
   let parsed: ParsedGsap;
   try {
     parsed = parseGsapScript(script);
@@ -1878,15 +1887,19 @@ export function syncPositionHoldsBeforeKeyframes(script: string): string {
   const staleHoldIds = parsed.animations.filter(isStudioHoldSet).map((a) => a.id);
   for (const id of staleHoldIds) result = removeAnimationFromScript(result, id);
 
-  // 2. Re-add a hold for each position-keyframed tween that starts after t=0.
+  // 2. Re-add a hold for each keyframed tween keyframeHoldForAnimation pins.
   let reparsed: ParsedGsap;
   try {
     reparsed = parseGsapScript(result);
   } catch {
     return result;
   }
+  const scope = holdScope(
+    parsed.animations,
+    previous === undefined ? null : animationsOf(previous),
+  );
   for (const anim of reparsed.animations) {
-    const posProps = positionHoldForAnimation(anim, reparsed.animations);
+    const posProps = keyframeHoldForAnimation(anim, reparsed.animations, scope);
     if (!posProps) continue;
     result = insertInheritedStateSet(result, anim.targetSelector, 0, {
       ...posProps,

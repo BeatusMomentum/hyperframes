@@ -21,6 +21,7 @@ import {
 } from "./gsapUndoRestore";
 import { applyPatch } from "./sourcePatcher";
 import { beginStudioManualEditGesture } from "../components/editor/manualEdits";
+import { studioManualEditSavesIn } from "../components/editor/manualEditsDom";
 import { writePlainMove, writeTranslatePx } from "../components/editor/plainTranslate";
 
 // ── Bug 2: undo/redo restore soft-apply ──────────────────────────────────────
@@ -279,6 +280,16 @@ describe("applyUndoRestoreToPreview", () => {
     expect(reloadPreview).toHaveBeenCalledTimes(1);
     // Target a resolved first, but the preflight found missing b before syncing either.
     expect(doc.getElementById("a")!.getAttribute("style")).toBe("z-index: 8");
+  });
+
+  it("counts a script-only restore applied in place, so a reload requested before it loads again", () => {
+    const script = (x: number) => `window.__timelines["root"]=gsap.timeline().to("#a",{x:${x}});`;
+    const page = (x: number) => `<div id="a">t</div><script>${script(x)}</script>`;
+    const { iframe, doc } = buildLiveIframe(page(2));
+    const before = studioManualEditSavesIn(doc);
+    const files = { [ROOT]: { previous: wrap(page(2)), restored: wrap(page(1)) } };
+    applyUndoRestoreToPreview(iframe, ROOT, files, 3, vi.fn());
+    expect(studioManualEditSavesIn(doc)).toBeGreaterThan(before);
   });
 
   it("does NOT re-run an UNCHANGED GSAP script for an attribute-only restore", () => {
@@ -561,6 +572,17 @@ describe("an undo that lands while the layer is being dragged", () => {
 
     expect(el.style.getPropertyValue("translate")).toBe("70px 110px");
     expect(el.style.getPropertyValue("width")).toBe("100px");
+  });
+
+  it("counts an undo shown or applied in place, so a reload requested before it loads again", () => {
+    const { iframe, doc } = buildLiveIframe(undone);
+    const before = studioManualEditSavesIn(doc);
+
+    showRestoreInPlace(iframe, ROOT, files, 3);
+    expect(studioManualEditSavesIn(doc)).toBeGreaterThan(before);
+    const shown = studioManualEditSavesIn(doc);
+    applyUndoRestoreToPreview(iframe, ROOT, files, 3, vi.fn());
+    expect(studioManualEditSavesIn(doc)).toBeGreaterThan(shown);
   });
 
   it("keeps a drag that started after the undo was shown when the undo is put back", () => {

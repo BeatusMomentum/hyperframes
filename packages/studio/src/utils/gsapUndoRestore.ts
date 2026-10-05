@@ -14,7 +14,7 @@ import { findAuthoredElement, parseSavedSource } from "./authoredSource";
 import { STUDIO_EDIT_ATTRS } from "../components/editor/manualEditsSeekReapply";
 import { markScenesStale } from "../player/sceneSwap";
 import { STUDIO_ORIGINAL_INLINE_TRANSLATE_ATTR } from "../components/editor/manualEditsTypes";
-import { studioGestureDraws } from "../components/editor/manualEditsDom";
+import { countStudioPreviewChange, studioGestureDraws } from "../components/editor/manualEditsDom";
 
 type PreviewWindow = Window & {
   __player?: { seek?: (t: number) => void };
@@ -312,7 +312,8 @@ export function showRestoreInPlace(
   const doc = iframe?.contentDocument;
   const win = iframe?.contentWindow as PreviewWindow | null;
   const plan = doc && win ? planRestoreTargets(doc, activeCompPath ?? "index.html", files) : null;
-  if (!iframe || !win || !plan || plan.scripted) return null;
+  if (!iframe || !doc || !win || !plan || plan.scripted) return null;
+  countStudioPreviewChange(doc);
   const before = plan.targets.map(
     ({ live, restored }) => [live, live.cloneNode(false) as Element, restored] as const,
   );
@@ -393,6 +394,7 @@ export function applyUndoRestoreToPreview(
     reloadPreview();
     return "full";
   }
+  countStudioPreviewChange(doc);
   // Sync each changed element's attributes onto the live DOM from the restored
   // markup, so the runtime's seek-reapply reads the reverted values.
   for (const target of plan.targets)

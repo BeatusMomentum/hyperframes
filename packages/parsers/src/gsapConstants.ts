@@ -139,17 +139,45 @@ function knownStart(animation: GsapAnimation): number | undefined {
   return typeof animation.position === "number" ? animation.position : undefined;
 }
 
+export interface HoldScope {
+  touched: (animation: GsapAnimation) => boolean;
+  held: (selector: string) => ReadonlyMap<string, unknown>;
+}
+
+const tweenSignature = (a: GsapAnimation) =>
+  JSON.stringify([a.targetSelector, a.method, a.position, a.duration, a.properties, a.keyframes]);
+
+/** The tweens an edit touched (not in `previous`; none without it), and what the script's holds already pin. */
+export function holdScope(
+  before: readonly GsapAnimation[],
+  previous: readonly GsapAnimation[] | null,
+): HoldScope {
+  const kept = new Set(previous?.map(tweenSignature));
+  const held = new Map<string, Map<string, unknown>>();
+  for (const a of before.filter((b) => b.method === "set" && b.properties?.data === "hf-hold")) {
+    const props = held.get(a.targetSelector) ?? new Map<string, unknown>();
+    for (const [property, value] of Object.entries(a.properties)) props.set(property, value);
+    held.set(a.targetSelector, props);
+  }
+  return {
+    touched: (a) => previous !== null && !kept.has(tweenSignature(a)),
+    held: (selector) => held.get(selector) ?? new Map(),
+  };
+}
+
 /**
- * What a Studio hold pins from t=0 before a later keyframed tween: its 0% keyframe's position props,
- * minus those an earlier timeline tween on the target writes (a global `gsap.set` is a base value).
+ * What a Studio hold pins from t=0: a keyframed tween's 0% position props before a later start, and the position and
+ * size of a lone key (GSAP renders none) only where this edit made it or a hold already pins it, minus earlier tweens.
  */
-export function positionHoldForAnimation(
+export function keyframeHoldForAnimation(
   animation: GsapAnimation,
   animations: readonly GsapAnimation[],
+  scope: HoldScope,
 ): Record<string, number> | null {
   if (!animation.keyframes) return null;
-  const start = knownStart(animation) ?? 0;
-  if (!(start > 0.001)) return null;
+  const start = knownStart(animation);
+  const lone = animation.keyframes.keyframes.length === 1;
+  if (start === undefined || (!(start > 0.001) && !lone)) return null;
   const atStart = animation.keyframes.keyframes.find((keyframe) => keyframe.percentage === 0);
   if (!atStart) return null;
   // A tween whose start the parser could not resolve (a label, say) is not known to come first.
@@ -163,13 +191,22 @@ export function positionHoldForAnimation(
       otherStart < start - 0.001
     );
   });
-  const position: Record<string, number> = {};
+  const touched = scope.touched(animation);
+  const pinned = scope.held(animation.targetSelector);
+  // An untouched tween keeps only the hold it made: one with its own first value.
+  const kept = (property: string, value: unknown) =>
+    touched ? pinned.has(property) : pinned.get(property) === value;
+  const pins = (group: PropertyGroupName, property: string, value: unknown) =>
+    (group === "position" && start > 0.001) ||
+    ((group === "position" || group === "size") && ((lone && touched) || kept(property, value)));
+  const hold: Record<string, number> = {};
   for (const [property, value] of Object.entries(atStart.properties)) {
-    if (classifyPropertyGroup(property) !== "position" || typeof value !== "number") continue;
+    if (!pins(classifyPropertyGroup(property), property, value) || typeof value !== "number")
+      continue;
     if (earlier.some((other) => writesProperty(other, property))) continue;
-    position[property] = value;
+    hold[property] = value;
   }
-  return Object.keys(position).length > 0 ? position : null;
+  return Object.keys(hold).length > 0 ? hold : null;
 }
 
 export const SUPPORTED_EASES = [

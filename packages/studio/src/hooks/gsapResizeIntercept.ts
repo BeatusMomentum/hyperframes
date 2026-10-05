@@ -5,14 +5,18 @@
  * frame can't jump. Split from gsapRuntimeBridge, which owns the shared
  * group-tween resolution used by the drag/resize/rotate intercepts.
  */
-import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
+import type { GsapAnimation, PropertyGroupName } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { clearStudioBoxSize } from "../components/editor/manualEdits";
 import {
   STUDIO_ORIGINAL_BOX_HEIGHT_ATTR,
   STUDIO_ORIGINAL_BOX_WIDTH_ATTR,
 } from "../components/editor/manualEditsTypes";
-import { setElementGsapPosition, setElementGsapScale } from "../utils/elementGsap";
+import {
+  setElementGsapPosition,
+  setElementGsapScale,
+  setElementGsapSize,
+} from "../utils/elementGsap";
 import { usePlayerStore } from "../player/store/playerStore";
 import { readGsapProperty } from "./gsapRuntimeReaders";
 import {
@@ -23,7 +27,11 @@ import {
   findSizeSetAnimation,
 } from "./gsapDragCommit";
 import type { GsapDragCommitCallbacks } from "./gsapDragCommit";
-import { computeDraggedGsapPosition, restoreDragOffset } from "./draggedGsapPosition";
+import {
+  computeDraggedGsapPosition,
+  restoreDragOffset,
+  type DragStamp,
+} from "./draggedGsapPosition";
 import { pickClosestToPlayhead, readGsapPositionFromIframe } from "./gsapPositionDetection";
 import { commitWholePropertyOffset } from "./gsapWholePropertyOffsetCommit";
 import { commitGsapPositionFromDrag } from "./gsapDragPositionCommit";
@@ -39,9 +47,11 @@ import {
 } from "./gsapEditOutcome";
 import { commitValueAtPlayhead } from "./gsapValueAtPlayhead";
 import { preflightGsapResizeIntercept, resizeRoute } from "./gsapResizePreflight";
+import { singleKeyTweenMutation } from "./useEnableKeyframes";
 
 const SIZE_PROPS = new Set(["width", "height"]);
 const POSITION_XY = new Set(["x", "y"]);
+const MOVED_OR_SIZED = new Set(["x", "y", "xPercent", "yPercent", "width", "height"]);
 
 /**
  * The element's box before the resize draft ran, in CSS pixels.
@@ -88,6 +98,7 @@ export async function commitSizeAtPlayhead(
           selection.element,
           dragOffset,
           readGsapPositionFromIframe(iframe, selector) ?? { x: 0, y: 0 },
+          callbacks.stamp,
         )
       : null;
   const written = await commitValueAtPlayhead(
@@ -102,10 +113,41 @@ export async function commitSizeAtPlayhead(
         ...preGestureBoxSize(selection.element),
         ...(anchor && { x: anchor.baseGsapX, y: anchor.baseGsapY }),
       },
-      ...(anchor && { beforeReload: () => restoreDragOffset(selection.element) }),
+      ...(anchor && { beforeReload: () => restoreDragOffset(selection.element, callbacks.stamp) }),
     },
   );
   return written.status === "persisted" && anchor ? { ...written, ownsDragOffset: true } : written;
+}
+
+/** A keyed size is GSAP's at every time; the gesture's draft, re-applied after each seek, would pin it there. */
+function handOverDraftSize(
+  selection: DomEditSelection,
+  written: GsapEditOutcome,
+  size: Record<string, number>,
+  draw: <T>(run: () => T) => T,
+): GsapEditOutcome {
+  const { width, height } = size;
+  if (written.status !== "persisted" || width == null || height == null) return written;
+  draw(() => {
+    clearStudioBoxSize(selection.element);
+    setElementGsapSize(selection.element, width, height);
+  });
+  return written;
+}
+
+/** Under auto-record, a keyframed element's first resize is a size key at the playhead, held at all times. */
+function firstSizeKey(
+  selection: DomEditSelection,
+  size: { width: number; height: number },
+  resizeGroup: PropertyGroupName,
+  animations: GsapAnimation[],
+): Record<string, unknown> | null {
+  const { autoKeyframeEnabled, currentTime } = usePlayerStore.getState();
+  const keyframed = animations.some(
+    (a) => a.keyframes && animationWritesAnyProperty(a, MOVED_OR_SIZED),
+  );
+  if (resizeGroup !== "size" || !autoKeyframeEnabled || !keyframed) return null;
+  return singleKeyTweenMutation(selection, size, currentTime);
 }
 
 /**
@@ -136,6 +178,7 @@ export async function tryGsapResizeIntercept(
   fetchFallbackAnimations?: () => Promise<GsapAnimation[]>,
   dragOffset?: { x: number; y: number },
   draw: <T>(run: () => T) => T = (run) => run(),
+  stamp?: DragStamp,
 ): Promise<GsapEditOutcome> {
   const fetchedAnimations = fetchFallbackAnimations ? await fetchFallbackAnimations() : [];
   const outcome = preflightGsapResizeIntercept(selection, animations, iframe, fetchedAnimations);
@@ -170,10 +213,16 @@ export async function tryGsapResizeIntercept(
     size,
   });
   if (!anim || isInstantHold(anim)) {
+    const sized = { width: roundToLayoutPx(size.width), height: roundToLayoutPx(size.height) };
     const scriptWritesSize = allKnownAnimations.some((a) =>
       animationWritesAnyProperty(a, SIZE_PROPS),
     );
-    if (!scriptWritesSize) return { status: "element-size" };
+    if (!scriptWritesSize) {
+      const firstKey = firstSizeKey(selection, sized, resizeGroup, workingAnimations);
+      if (!firstKey) return { status: "element-size" };
+      await commitMutation(selection, firstKey, { label: "Resize", softReload: true });
+      return handOverDraftSize(selection, { status: "persisted" }, sized, draw);
+    }
     const sel = selectorFromSelection(selection) ?? writeTargetSelector(selection);
     if (!sel) return { status: "blocked", reason: "no-selector" };
     // A scale hold is not a size hold.
@@ -191,8 +240,7 @@ export async function tryGsapResizeIntercept(
         ? (anim ?? findSizeSetAnimation(workingAnimations, sel, selection.element))
         : findSizeSetAnimation(workingAnimations, sel, selection.element);
 
-    // Keyframe the size only when a real tween already animates it, as move and
-    // rotate do; a fade or a slide on the element gets a plain size.
+    // Keyframe the size when a real tween already animates it; a static size set stays a set.
     if (resizeGroup === "size") {
       const animatedTween = pickClosestToPlayhead(
         workingAnimations.filter(
@@ -204,11 +252,19 @@ export async function tryGsapResizeIntercept(
       );
       if (animatedTween) {
         logResize("intercept-route", { route: "keyframed-size", tweenId: animatedTween.id });
-        const sized = { width: roundToLayoutPx(size.width), height: roundToLayoutPx(size.height) };
-        return commitSizeAtPlayhead(selection, animatedTween, sized, iframe, dragOffset, {
-          commitMutation,
-          fetchAnimations: fetchFallbackAnimations,
-        });
+        const written = await commitSizeAtPlayhead(
+          selection,
+          animatedTween,
+          sized,
+          iframe,
+          dragOffset,
+          {
+            commitMutation,
+            fetchAnimations: fetchFallbackAnimations,
+            stamp,
+          },
+        );
+        return handOverDraftSize(selection, written, sized, draw);
       }
     }
 
@@ -333,8 +389,7 @@ export async function tryGsapResizeIntercept(
   // it lands back on the drop point. The compensation only applies to a STATIC
   // position (a `tl.set` hold or none) — a keyframed position path has no
   // single anchor to preserve, so it keeps the plain center-scale behavior.
-  // The size route commits the same width/height channels the draft wrote, so
-  // it needs none of this.
+  // The size route hands its draft to GSAP itself (handOverDraftSize).
   // ponytail: for a 3D-rotated element the rects are AABBs, so the anchor is
   // approximate rather than corner-exact.
   // fallow-ignore-next-line complexity
@@ -363,6 +418,7 @@ export async function tryGsapResizeIntercept(
         selection.element,
         { x: 0, y: 0 },
         gsapPos,
+        stamp,
       );
       const base = { x: baseGsapX, y: baseGsapY };
       setElementGsapPosition(draftEl, base.x, base.y);
@@ -424,6 +480,7 @@ export async function tryGsapResizeIntercept(
         await commitGsapPositionFromDrag(selection, positionTween, delta, base, iframe, {
           commitMutation,
           fetchAnimations: fetchFallbackAnimations,
+          stamp,
         }),
       );
       return true;
@@ -432,6 +489,7 @@ export async function tryGsapResizeIntercept(
     await commitStaticGsapPosition(selection, delta, base, selector, existingSet, {
       commitMutation,
       fetchAnimations: fetchFallbackAnimations,
+      stamp,
     });
     return true;
   };
@@ -453,9 +511,18 @@ export async function tryGsapResizeIntercept(
     return { status: "persisted", ownsDragOffset: await finalizeScaleResizeCommit() };
   }
 
-  const callbacks = { commitMutation, fetchAnimations: fetchFallbackAnimations };
-  if (resizeGroup === "size")
-    return commitSizeAtPlayhead(selection, anim, resizeProps, iframe, dragOffset, callbacks);
+  const callbacks = { commitMutation, fetchAnimations: fetchFallbackAnimations, stamp };
+  if (resizeGroup === "size") {
+    const written = await commitSizeAtPlayhead(
+      selection,
+      anim,
+      resizeProps,
+      iframe,
+      dragOffset,
+      callbacks,
+    );
+    return handOverDraftSize(selection, written, resizeProps, draw);
+  }
   const written = await commitValueAtPlayhead(selection, anim, resizeProps, iframe, callbacks, {
     label: "Resize",
     backfill: resizeBackfill,

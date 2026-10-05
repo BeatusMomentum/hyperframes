@@ -8,7 +8,6 @@
 type ElementGsapWindow = Window & {
   gsap?: {
     set?: (target: Element, vars: Record<string, number>) => void;
-    getProperty?: (target: Element, prop: string) => unknown;
   };
 };
 
@@ -38,10 +37,12 @@ export function setElementGsapScale(element: HTMLElement, x: number, y: number):
   return true;
 }
 
-/** The element's GSAP numeric property, or null when unreadable. */
-export function readElementGsapNumber(element: HTMLElement, prop: string): number | null {
-  const value = Number(gsapOf(element)?.getProperty?.(element, prop));
-  return Number.isFinite(value) ? value : null;
+/** Set the element's GSAP width/height. Returns false when no runtime is reachable. */
+export function setElementGsapSize(element: HTMLElement, width: number, height: number): boolean {
+  const gsap = gsapOf(element);
+  if (!gsap?.set) return false;
+  gsap.set(element, { width, height });
+  return true;
 }
 
 /** The targets CSSPlugin styles: not plain objects (the runtime's filler) or XML-namespace elements. */

@@ -1,7 +1,7 @@
 /** Drag paths and edit sequences: several steps with no settle between, then the usual commit, undo and reload. */
 import { watch } from "node:fs";
 import { dirname, join } from "node:path";
-import { COMPOSITION } from "./grid.mjs";
+import { COMPOSITION, PLAYHEAD } from "./grid.mjs";
 import { centre, dist, percentile, quadDistance } from "./geometry.mjs";
 import {
   VIEWPORT,
@@ -30,6 +30,11 @@ import { scoreTeleport, stopFrames } from "./teleport.mjs";
 const STEP_PX = 28;
 const STRAIGHT_STEPS = 20;
 const UNDONE_QUIET_MS = 3000;
+const AUTO_KEYFRAME = 'button[aria-label="Auto-record manual edits as keyframes"]';
+const ADD_KEYFRAME = 'button[aria-label^="Add keyframe at playhead"]';
+
+/** Every step but a seek or a toggle writes the file once. */
+const saves = (step) => step.do !== "seek" && step.do !== "autokey";
 
 /** `n` evenly spaced points from `a` (excluded) to `b` (included). */
 const legN = (a, b, n) =>
@@ -178,12 +183,31 @@ async function driveStep(ctx, step, state) {
     return { do: "nudge", count: step.count };
   }
   if (step.do === "text") return editText(ctx.A, step, state);
+  if (step.do === "autokey") {
+    const pressed = () =>
+      page.$eval(AUTO_KEYFRAME, (b) => b.getAttribute("aria-pressed") === "true");
+    if (!(await pressed())) await page.click(AUTO_KEYFRAME);
+    state.autokey = await pressed();
+    return { do: "autokey", on: state.autokey };
+  }
+  if (step.do === "addkey") {
+    // The toolbar's own button, pressed where a person would; the box must not move.
+    const pre = await measure(ctx.A);
+    await recording(page, true);
+    await page.click(ADD_KEYFRAME);
+    await nextFrame(page);
+    state.smooth.push(smoothness(await recording(page, false)));
+    state.depth += 1;
+    state.intended = pre.visible;
+    return { do: "addkey" };
+  }
   if (step.do === "seek") {
     const seek = await page.evaluate(
       (time) => window.__editBench.call("studio_seek", { time }),
       step.time,
     );
     if (!seek?.ok) throw new Error(`studio_seek ${step.time} failed: ${JSON.stringify(seek)}`);
+    state.time = step.time;
     return { do: "seek", time: step.time };
   }
   const name = step.element ?? "A";
@@ -281,6 +305,57 @@ async function editText(c, step, state) {
 
 const round = (m) => m.visible.map((p) => p.map((v) => Math.round(v * 100) / 100));
 
+/**
+ * A person's pace: wait for the step's save, then score the settled box against where the step put it
+ * (a seek: the box its keyframe time was left with, unless a size key since holds another size there).
+ */
+async function settleStep(c, steps, step, state, watcher) {
+  await untilSaved(watcher, steps.filter(saves).length);
+  if (step.do === "seek") state.intended = seekIntended(state);
+  const m = await settled(c);
+  const held = heldSize(state.sizeKeys, state.time);
+  Object.assign(steps.at(-1), {
+    saves: watcher.versions.length - 1,
+    box: boxError(state, m),
+    size: step.do === "seek" ? sizeError(held, m.size) : undefined,
+  });
+  rememberSizeKey(step, state, m);
+  rememberBox(step, state, m);
+}
+
+const seekIntended = (state) => {
+  const kept = state.keyBoxes.get(state.time);
+  return kept && !sizeError(kept.size, heldSize(state.sizeKeys, state.time)) ? kept.visible : null;
+};
+
+function rememberSizeKey(step, state, m) {
+  if (step.gesture === "resize" && state.autokey) state.sizeKeys.set(state.time, m.size);
+}
+
+function rememberBox(step, state, m) {
+  if (saves(step))
+    state.keyBoxes.set(state.time, { visible: state.intended ?? m.visible, size: m.size });
+}
+
+/** Under auto-record, size keys hold their nearest value before the first and after the last. */
+export function heldSize(sizeKeys, time) {
+  const times = [...sizeKeys.keys()].sort((a, b) => a - b);
+  if (!times.length) return undefined;
+  return sizeKeys.get(Math.min(Math.max(time, times[0]), times.at(-1)));
+}
+
+const sizeError = (a, b) =>
+  a && b ? Math.max(Math.abs(a.width - b.width), Math.abs(a.height - b.height)) : 0;
+
+async function untilSaved(watcher, owed) {
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; await sleep(50))
+    if (watcher.versions.length - 1 >= owed) return;
+  throw new Error(`save ${owed} never landed`);
+}
+
+const boxError = (state, m) =>
+  state.intended ? quadDistance(state.intended, m.visible) : undefined;
+
 /** One path or sequence case, end to end, against a Studio already serving `dir`. */
 export async function runSequence(args) {
   const drags = args.spec.steps.some((s) => s.do === "drag");
@@ -310,6 +385,11 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
     start: pre.visible,
     intended: null,
     text: null,
+    autokey: false,
+    sizeKeys: new Map(),
+    // Settled cases only: the box each keyframe time was left with, which a later seek there must show.
+    keyBoxes: new Map(),
+    time: spec.playhead ?? PLAYHEAD,
   };
   const steps = [];
   // Back-to-back drags share one recording, so a drag's frames run up to the next press: a jump in
@@ -322,10 +402,11 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
   for (const step of spec.steps) {
     if (step.do !== "drag") await collect();
     steps.push(await driveStep(ctx, step, state));
+    if (spec.settle) await settleStep(ctx.A, steps, step, state, watcher);
   }
-  // Every step but a seek saves once (a nudge burst saves once); wait for all of them. An undo may
+  // Every saving step saves once (a nudge burst saves once); wait for all of them. An undo may
   // cancel the save it follows, so one ending undone stops once the file has stayed original for 3 s.
-  const owed = spec.steps.filter((s) => s.do !== "seek").length;
+  const owed = spec.steps.filter(saves).length;
   const endsUndone = spec.steps.at(-1).do === "undo" && state.depth === 0;
   let backSince = null;
   for (const deadline = Date.now() + 10_000; Date.now() < deadline; await sleep(50)) {
@@ -346,14 +427,17 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
   const committedFiles = readFiles(dir, files);
   evidence.files = committedFiles;
 
-  // The undo stack the steps imply: each save pushes (before, after), an undo pops.
+  // The undo stack the steps imply: each saving step pushes (before, after), an undo pops. A settled
+  // case knows where each step's saves ended, so one action is one undo even when it wrote twice.
   const stack = [];
   let vi = 0;
-  for (const s of spec.steps.filter((s) => s.do !== "seek")) {
-    vi += 1;
+  spec.steps.forEach((s, i) => {
+    if (!saves(s)) return;
+    const next = spec.settle ? steps[i].saves : vi + 1;
     if (s.do === "undo") stack.pop();
-    else stack.push({ before: versions[vi - 1], after: versions[vi] });
-  }
+    else stack.push({ before: versions[vi], after: versions[next] });
+    vi = next;
+  });
   const undo = await walk(ctx.A, "Control+z", stack.map((e) => e.before).reverse(), committedFiles);
   // The file the steps should have left: the last surviving save's, or the original when all were undone.
   const expected = stack.length ? stack.at(-1).after : versions[0];
@@ -392,6 +476,10 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
     shown: shown?.includes(state.text.word) ?? false,
   };
   return {
+    ...(spec.keyRender !== undefined &&
+      state.keyBoxes.has(spec.keyRender) && {
+        keyRender: { time: spec.keyRender, visible: state.keyBoxes.get(spec.keyRender).visible },
+      }),
     zoom,
     saved: versions.length > 1,
     tracking: errors.length
@@ -399,8 +487,12 @@ async function measureSequence({ spec, dir, files, evidence }, session, control,
       : { max: 0, p95: 0, frames: 0 },
     pressJump: drags.length ? Math.max(...drags.map((s) => s.pressJump)) : null,
     teleport: worst ? { ...worst.teleport, trace: undefined, step: steps.indexOf(worst) } : null,
-    // Against the box the last step left: its drag's last frame, the box after its keys, or the start when undone.
-    drop: quadDistance(intended, committed.visible),
+    // Against the box the last step left: its drag's last frame, the box after its keys, or the start when
+    // undone; a settled case also fails on any step whose settled box left where that step put it.
+    drop: Math.max(
+      quadDistance(intended, committed.visible),
+      ...steps.map((s) => Math.max(s.box ?? 0, s.size ?? 0)),
+    ),
     reload: Math.max(
       quadDistance(committed.visible, reloaded.visible),
       quadDistance(intended, reloaded.visible),

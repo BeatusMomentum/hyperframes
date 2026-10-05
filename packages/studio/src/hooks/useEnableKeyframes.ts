@@ -31,6 +31,7 @@ import {
 import { POSITION_PROPS } from "./gsapRuntimeReaders";
 import { findParsedTween, withLiveTiming } from "./gsapParsedTween";
 import { roundTo3 } from "../utils/rounding";
+import { readTranslatePxLeavingPercent } from "../components/editor/plainTranslate";
 import type { CommitMutationOptions } from "./gsapScriptCommitTypes";
 import {
   buildExtendedKeyframes,
@@ -178,6 +179,32 @@ export function resolveNewTweenRange(
   const end = start + duration;
   const clampedStart = Math.min(Math.max(t, start), end);
   return { start: clampedStart, duration: Math.max(0.5, roundTo3(end - clampedStart)) };
+}
+
+export function singleKeyTweenMutation(
+  sel: DomEditSelection,
+  properties: Record<string, number>,
+  currentTime: number,
+): Record<string, unknown> | null {
+  // A brand-new tween: author it against the one element the user selected.
+  // The bare class selectorFromSelection hands back for an id-less element
+  // animates every sibling sharing the class (see writeTargetSelector).
+  const targetSelector = writeTargetSelector(sel);
+  if (!targetSelector) return null;
+  const { start, duration } = resolveNewTweenRange(
+    sel.dataAttributes?.start,
+    sel.dataAttributes?.duration,
+    currentTime,
+  );
+  // One keyframe at the playhead, a single diamond capturing the current value;
+  // motion comes from the keyframes the user adds or drags later.
+  return {
+    type: "add-with-keyframes",
+    targetSelector,
+    position: roundTo3(start),
+    duration: roundTo3(duration),
+    keyframes: [{ percentage: 0, properties }],
+  };
 }
 
 // Authoritative parse of the current source for `sel`. Returns `null` when the
@@ -514,43 +541,11 @@ export function useEnableKeyframes(
       }
     } else {
       const position = readElementPosition(iframe, sel, null);
-      const { start: elStart, duration: elDuration } = resolveNewTweenRange(
-        sel.dataAttributes?.start,
-        sel.dataAttributes?.duration,
-        t,
-      );
-      // A brand-new tween: author it against the one element the user selected.
-      // The bare class selectorFromSelection hands back for an id-less element
-      // animates every sibling sharing the class (see writeTargetSelector).
-      const selector = writeTargetSelector(sel);
-
-      if (!selector) {
-        session.handleGsapAddAnimation("to");
-        return;
-      }
-
-      if (Object.keys(position).length === 0) {
-        position.x = 0;
-        position.y = 0;
-      }
-
-      // One keyframe at the playhead — a single diamond capturing the current
-      // value. Motion comes from the user adding/dragging more keyframes later;
-      // creating 0%+100% up front showed two diamonds for a single "add keyframe".
-      const keyframes: Array<{ percentage: number; properties: Record<string, number | string> }> =
-        [{ percentage: 0, properties: { ...position } }];
-
-      if (session.commitMutation) {
-        await session.commitMutation(
-          {
-            type: "add-with-keyframes",
-            targetSelector: selector,
-            position: roundTo3(elStart),
-            duration: roundTo3(elDuration),
-            keyframes,
-          },
-          { label: "Enable keyframes", softReload: true },
-        );
+      if (Object.keys(position).length === 0)
+        Object.assign(position, readTranslatePxLeavingPercent(sel.element));
+      const mutation = singleKeyTweenMutation(sel, position, t);
+      if (mutation && session.commitMutation) {
+        await session.commitMutation(mutation, { label: "Enable keyframes", softReload: true });
       } else {
         session.handleGsapAddAnimation("to");
       }

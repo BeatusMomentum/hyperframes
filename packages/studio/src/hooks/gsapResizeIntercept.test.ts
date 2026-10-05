@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { usePlayerStore } from "../player/store/playerStore";
@@ -182,6 +182,7 @@ it("reuses the ownership parse instead of fetching a resolved size group twice",
   await expect(
     tryGsapResizeIntercept(
       selection,
+      // fallow-ignore-next-line code-duplication
       { width: 344, height: 344 },
       [],
       null,
@@ -571,6 +572,76 @@ it("hands the size to the element's CSS when its only tween is a fade", async ()
 
   expect(handled).toEqual({ status: "element-size" });
   expect(commitMutation).not.toHaveBeenCalled();
+});
+
+describe("the first resize of a keyframed element under auto-record", () => {
+  const positionKeys = {
+    id: "#title-to-1-position",
+    targetSelector: "#title",
+    propertyGroup: "position",
+    method: "to",
+    properties: {},
+    keyframes: { keyframes: [{ percentage: 0, properties: { x: 300, y: 200 } }] },
+    position: 1,
+    resolvedStart: 1,
+    duration: 3,
+  } as unknown as GsapAnimation;
+
+  it("writes a size key at the playhead in one mutation and hands the draft size to GSAP", async () => {
+    usePlayerStore.setState({ currentTime: 2 });
+    const commitMutation = vi.fn();
+    const selection = titleSelection();
+    selection.element.setAttribute("data-hf-studio-box-size", "true");
+
+    // fallow-ignore-next-line code-duplication
+    const handled = await tryGsapResizeIntercept(
+      selection,
+      { width: 424.2, height: 237 },
+      [positionKeys],
+      null,
+      commitMutation,
+    );
+
+    expect(handled).toEqual({ status: "persisted" });
+    expect(commitMutation.mock.calls.map((call) => call[1])).toEqual([
+      {
+        type: "add-with-keyframes",
+        targetSelector: "#title",
+        position: 2,
+        duration: 1,
+        keyframes: [{ percentage: 0, properties: { width: 424, height: 237 } }],
+      },
+    ]);
+    expect(selection.element.hasAttribute("data-hf-studio-box-size")).toBe(false);
+  });
+
+  const fadeKeys = {
+    ...positionKeys,
+    id: "#title-to-1-visual",
+    propertyGroup: "visual",
+    keyframes: { keyframes: [{ percentage: 0, properties: { opacity: 0 } }] },
+  } as unknown as GsapAnimation;
+
+  it.each([
+    ["with auto-record off", positionKeys, false],
+    ["on an element whose only keyframes fade it", fadeKeys, true],
+  ])("hands the size to CSS %s", async (_, keyed, autoKeyframeEnabled) => {
+    usePlayerStore.setState({ autoKeyframeEnabled });
+    const commitMutation = vi.fn();
+    try {
+      const handled = await tryGsapResizeIntercept(
+        titleSelection(),
+        { width: 424, height: 237 },
+        [keyed],
+        null,
+        commitMutation,
+      );
+      expect(handled).toEqual({ status: "element-size" });
+      expect(commitMutation).not.toHaveBeenCalled();
+    } finally {
+      usePlayerStore.setState({ autoKeyframeEnabled: true });
+    }
+  });
 });
 
 it.each([
