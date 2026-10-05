@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  arcPathFromMotionPathValue,
-  hasNonHoldTweenForElement,
-  readRuntimeKeyframes,
-} from "./gsapRuntimeKeyframes";
+import { hasNonHoldTweenForElement, readRuntimeKeyframes } from "./gsapRuntimeKeyframes";
+import { arcPathFromMotionPathValue } from "./gsapRuntimeMotionPath";
 import { tweensTargeting, withTweenIndex } from "./gsapRuntimeTweenIndex";
 
 // Build a fake preview iframe whose runtime timeline holds the given child tweens
@@ -260,6 +257,32 @@ describe("arcPathFromMotionPathValue", () => {
     expect(arcPathFromMotionPathValue({ curviness: 2 })).toBeUndefined();
     expect(arcPathFromMotionPathValue({ path: "M0 0 L10 10" })).toBeUndefined();
     expect(arcPathFromMotionPathValue(null)).toBeUndefined();
+  });
+});
+
+describe("readRuntimeKeyframes — a motion path runs GSAP's default tween ease", () => {
+  const el = { id: "arc" };
+  const arcTween = (ease?: string) => ({
+    targets: () => [el],
+    vars: {
+      motionPath: {
+        path: [
+          { x: 0, y: 0 },
+          { x: 100, y: -50 },
+          { x: 200, y: 0 },
+        ],
+      },
+      ease,
+    },
+    duration: () => 2,
+    startTime: () => 0,
+  });
+
+  it("reads power1.out when the tween sets no ease, and the authored ease otherwise", () => {
+    const read = (ease?: string) =>
+      readRuntimeKeyframes(fakeIframe(el, [arcTween(ease)]), "#arc")?.runEase;
+    expect(read()).toBe("power1.out");
+    expect(read("none")).toBe("none");
   });
 });
 

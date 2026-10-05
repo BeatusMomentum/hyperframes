@@ -568,6 +568,19 @@ describe("planValueAtPlayhead", () => {
       });
     });
 
+    it("refuses an inner node of a motionPath tween, which GSAP runs power1.out", () => {
+      const path = kf([
+        { percentage: 0, properties: { x: 0 } },
+        { percentage: 50, properties: { x: 100 } },
+        { percentage: 100, properties: { x: 300 } },
+      ]);
+      const anim = { ...path, keyframes: { ...path.keyframes!, fromMotionPath: true as const } };
+      expect(plan({ anim, at: { time: 2 }, values: { x: 5 } })).toEqual({
+        ok: false,
+        reason: "eased-keyframes",
+      });
+    });
+
     it("changes an inner keyframe picked by its percentage, which the ease does not move", () => {
       const anim = {
         ...kf([

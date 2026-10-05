@@ -8,7 +8,7 @@
  * Reads GSAP runtime values only (no CSS offset — it applies separately via translate).
  */
 import { useCallback } from "react";
-import type { GsapAnimation, GsapPercentageKeyframe } from "@hyperframes/core/gsap-parser";
+import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
 import type { DomEditSelection } from "../components/editor/domEditingTypes";
 import { usePlayerStore } from "../player/store/playerStore";
 import { fetchParsedAnimations, getAnimationsForElement } from "./useGsapTweenCache";
@@ -18,19 +18,25 @@ import {
   keyframeEases,
   KEYFRAME_PCT_MATCH,
   isInstantHold,
-  resolveEditableTweenDuration,
+  playsNear,
   writeTargetSelector,
 } from "./gsapShared";
 import {
   absoluteToPercentage,
+  absoluteToPercentageForAnimation,
   resolveTweenStart,
   resolveTweenDuration,
   isTimeWithinTween,
 } from "../utils/globalTimeCompiler";
 import { POSITION_PROPS } from "./gsapRuntimeReaders";
+import { findParsedTween, withLiveTiming } from "./gsapParsedTween";
 import { roundTo3 } from "../utils/rounding";
 import type { CommitMutationOptions } from "./gsapScriptCommitTypes";
-import { buildTemporalArcKeyframes } from "./gsapDragPositionCommit";
+import {
+  buildExtendedKeyframes,
+  buildTemporalArcKeyframes,
+  linearArcKeyframes,
+} from "./gsapDragPositionCommit";
 
 let enableKeyframesTransactionCounter = 0;
 
@@ -80,58 +86,11 @@ export function animatedProps(anim: GsapAnimation | null): string[] {
  * Whether the playhead sits inside an animation's tween range. When the tween's
  * start can't be resolved we don't block (the percentage falls back to clip range,
  * preserving prior behavior for elements without explicit timing).
- *
- * Pass the selection whenever the caller has one: a duration-less tween spans
- * its clip, and answering from GSAP's 0.5s default reports the playhead outside
- * a window the edit paths treat as clip-wide.
  */
-export function isPlayheadWithinTween(
-  anim: GsapAnimation,
-  currentTime: number,
-  selection?: DomEditSelection | null,
-): boolean {
+export function isPlayheadWithinTween(anim: GsapAnimation, currentTime: number): boolean {
   const start = resolveTweenStart(anim);
   if (start === null) return true;
-  const duration = selection
-    ? resolveEditableTweenDuration(anim, selection)
-    : resolveTweenDuration(anim);
-  return isTimeWithinTween(currentTime, start, duration);
-}
-
-/**
- * Grow a keyframe tween's range to reach a playhead that sits outside it, and add a
- * keyframe there. Existing keyframes keep their *absolute* timing (percentages
- * rescale into the new range), so the current motion is preserved — the playhead
- * just becomes a new hold at the start or end. Used when "add keyframe at playhead"
- * fires beyond the tween instead of disabling the action.
- */
-export function buildExtendedKeyframes(
-  anim: GsapAnimation,
-  currentTime: number,
-  position: Record<string, number>,
-  sourceDuration = resolveTweenDuration(anim),
-): { position: number; duration: number; keyframes: GsapPercentageKeyframe[] } {
-  const oldStart = resolveTweenStart(anim) ?? 0;
-  const oldDuration = sourceDuration;
-  const newStart = Math.min(oldStart, currentTime);
-  const newEnd = Math.max(oldStart + oldDuration, currentTime);
-  const newDuration = roundTo3(newEnd - newStart);
-  const toPct = (absoluteTime: number) =>
-    newDuration > 0
-      ? Math.max(
-          0,
-          Math.min(100, Math.round(((absoluteTime - newStart) / newDuration) * 1000) / 10),
-        )
-      : 0;
-  const stops = anim.keyframes?.keyframes ?? [];
-  const rescaled: GsapPercentageKeyframe[] = stops.map((stop) => ({
-    percentage: toPct(oldStart + (stop.percentage / 100) * oldDuration),
-    properties: stop.properties,
-    ...(stop.ease ? { ease: stop.ease } : {}),
-  }));
-  const added: GsapPercentageKeyframe = { percentage: toPct(currentTime), properties: position };
-  const keyframes = [...rescaled, added].sort((a, b) => a.percentage - b.percentage);
-  return { position: roundTo3(newStart), duration: newDuration, keyframes };
+  return isTimeWithinTween(currentTime, start, resolveTweenDuration(anim));
 }
 
 async function replaceSetWithSingleKeyframe(
@@ -285,17 +244,24 @@ async function extendKeyframedTweenToPlayhead(
  * buildExtendedKeyframes). Shared by native keyframe tweens and flat tweens that
  * were just converted, so both behave identically.
  */
-async function applyKeyframeAtPlayhead(
+export async function applyKeyframeAtPlayhead(
   session: EnableKeyframesSession,
   sel: DomEditSelection,
   kfAnim: GsapAnimation,
   t: number,
   iframe: HTMLIFrameElement | null,
   commitOverrides?: Partial<CommitMutationOptions>,
+  liveTween?: ReturnType<typeof findParsedTween>,
 ): Promise<void> {
-  const duration = resolveEditableTweenDuration(kfAnim, sel);
+  const keepAuthoredDuration = kfAnim.durationUnresolved === true;
+  if (keepAuthoredDuration) {
+    kfAnim = withLiveTiming(kfAnim, liveTween ?? findParsedTween(iframe, sel.element, kfAnim));
+  }
+  if (keepAuthoredDuration && kfAnim.duration == null) return;
+  const duration = resolveTweenDuration(kfAnim);
   const start = resolveTweenStart(kfAnim);
   if (start !== null && !isTimeWithinTween(t, start, duration)) {
+    if (keepAuthoredDuration) return;
     await extendKeyframedTweenToPlayhead(
       session,
       sel,
@@ -308,10 +274,10 @@ async function applyKeyframeAtPlayhead(
     return;
   }
   const pct =
-    start === null ? computeElementPercentage(t, sel) : absoluteToPercentage(t, start, duration);
-  const existing = kfAnim.keyframes?.keyframes.find(
-    (k) => Math.abs(k.percentage - pct) <= KEYFRAME_PCT_MATCH,
-  );
+    start === null
+      ? computeElementPercentage(t, sel)
+      : (absoluteToPercentageForAnimation(t, kfAnim) ?? 0);
+  const existing = kfAnim.keyframes?.keyframes.find((k) => playsNear(kfAnim, k.percentage, pct));
   if (existing) {
     session.handleGsapRemoveKeyframe(kfAnim.id, existing.percentage);
     return;
@@ -404,21 +370,27 @@ export async function applyArcKeyframeAtPlayhead(
   const targetSelector = existingTweenTargetSelector(arcAnim, sel);
   if (!targetSelector) return;
   const start = resolveTweenStart(arcAnim) ?? 0;
-  const duration = resolveEditableTweenDuration(arcAnim, sel);
+  const duration = resolveTweenDuration(arcAnim);
   if (!isTimeWithinTween(t, start, duration)) {
-    if (t > start) {
-      await session.commitMutation(
-        {
-          type: "update-meta",
-          animationId: arcAnim.id,
-          updates: { duration: roundTo3(t - start) },
-        },
-        { label: "Extend motion path", softReload: true },
-      );
-    }
+    const held = readElementPosition(iframe, sel, arcAnim);
+    if (t <= start || typeof held.x !== "number" || typeof held.y !== "number") return;
+    const extended = buildExtendedKeyframes(arcAnim, t, { x: held.x, y: held.y }, duration, "none");
+    await session.commitMutation(
+      {
+        type: "replace-with-keyframes",
+        animationId: arcAnim.id,
+        targetSelector,
+        position: extended.position,
+        duration: extended.duration,
+        keyframes: extended.keyframes,
+        ease: "none",
+      },
+      { label: "Add keyframe", keyframeAction: "add", softReload: true },
+    );
     return;
   }
-  const nodes = arcAnim.keyframes?.keyframes ?? [];
+  // The arc is rewritten linear: compare and write at the times GSAP plays each node.
+  const nodes = linearArcKeyframes(arcAnim);
   const playheadPercentage = absoluteToPercentage(t, start, duration);
   const timedNodeIndex = nodes.findIndex(
     (node) => Math.abs(node.percentage - playheadPercentage) <= KEYFRAME_PCT_MATCH,
@@ -502,6 +474,9 @@ export function useEnableKeyframes(
       // resolvedFromValues, so the 0%/100% stops keep the real start→end motion
       // (passing the playhead value would flatten it). Then apply uniformly so an
       // out-of-range playhead extends the range just like a keyframe tween.
+      const flatLive = flatAnim.durationUnresolved
+        ? findParsedTween(iframe, sel.element, flatAnim)
+        : undefined;
       enableKeyframesTransactionCounter += 1;
       const coalesceKey = `enable-keyframes:${flatAnim.id}:${enableKeyframesTransactionCounter}`;
       const convertCommitOverrides: Partial<CommitMutationOptions> = {
@@ -527,7 +502,15 @@ export function useEnableKeyframes(
           // conversion splits into two undo entries under real latency.
           coalesceMs: Number.POSITIVE_INFINITY,
         };
-        await applyKeyframeAtPlayhead(session, sel, converted, t, iframe, applyCommitOverrides);
+        await applyKeyframeAtPlayhead(
+          session,
+          sel,
+          converted,
+          t,
+          iframe,
+          applyCommitOverrides,
+          flatLive,
+        );
       }
     } else {
       const position = readElementPosition(iframe, sel, null);
