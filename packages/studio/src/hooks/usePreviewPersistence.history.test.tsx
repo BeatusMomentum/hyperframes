@@ -4,6 +4,10 @@ import React, { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { usePlayerStore } from "../player/store/playerStore";
 import type { TimelineElement } from "../player/store/timelineElement";
+import {
+  beginStudioManualEditGesture,
+  endStudioManualEditGesture,
+} from "../components/editor/manualEdits";
 import { mountReactHarness } from "./domSelectionTestHarness";
 import { usePreviewPersistence } from "./usePreviewPersistence";
 
@@ -130,5 +134,84 @@ describe("undo that re-runs the top-level script over an element of a nested com
     expect(fetch).not.toHaveBeenCalled();
     expect(reloadPreview).toHaveBeenCalledTimes(1);
     expect(nwid.getAttribute("style")).toBe("left: 40px; width: 337px");
+  });
+});
+
+describe("undo that lands while a newer gesture holds an element", () => {
+  const page = (left: number) =>
+    `<html><body><div id="root" data-composition-id="root"><div id="box" data-hf-id="hf-b" style="left: ${left}px"></div></div></body></html>`;
+  const files = { "index.html": { previous: page(0), restored: page(200) } };
+
+  function heldPreview(held = true) {
+    const doc = document.implementation.createHTMLDocument("");
+    doc.head.innerHTML = `<meta name="hf-scene-parts" content='{"shared":"s1","scenes":{}}'>`;
+    doc.body.innerHTML = `<div id="root" data-composition-id="root"><div id="box" data-hf-id="hf-b" style="left: 90px"></div></div>`;
+    const box = doc.getElementById("box")!;
+    if (held) beginStudioManualEditGesture(box, "move");
+    const contentWindow = {
+      __hfForceTimelineRebind: vi.fn(),
+      __timelines: {},
+      __player: { getTime: () => 1, seek: vi.fn() },
+      __hfStudioManualEditsApply: vi.fn(),
+    };
+    const iframe = { contentWindow, contentDocument: doc } as unknown as HTMLIFrameElement;
+    const reloadPreview = vi.fn();
+    let hook: ReturnType<typeof usePreviewPersistence> | null = null;
+    function Harness() {
+      hook = usePreviewPersistence({
+        showToast: () => {},
+        readOptionalProjectFile: async () => "",
+        writeProjectFile: async () => {},
+        recordEdit: async () => {},
+        previewIframeRef: { current: iframe },
+        activeCompPathRef: { current: "index.html" },
+        reloadPreview,
+      });
+      return null;
+    }
+    mountReactHarness(<Harness />);
+    usePlayerStore.getState().setSelectedElementId("box");
+    const sharedPart = () =>
+      JSON.parse(doc.querySelector<HTMLMetaElement>('meta[name="hf-scene-parts"]')!.content).shared;
+    return { box, win: contentWindow, reloadPreview, sharedPart, hook: () => hook! };
+  }
+
+  it("leaves the held element where the gesture drew it and reloads the preview once it ends", async () => {
+    const { box, win, reloadPreview, sharedPart, hook } = heldPreview();
+
+    await act(async () => hook().syncHistoryPreviewAfterApply({ paths: ["index.html"], files }));
+
+    expect(box.style.left).toBe("90px");
+    expect(win.__player.seek).not.toHaveBeenCalled();
+    expect(win.__hfStudioManualEditsApply).not.toHaveBeenCalled();
+    expect(reloadPreview).not.toHaveBeenCalled();
+    endStudioManualEditGesture(box);
+    expect(reloadPreview).toHaveBeenCalledTimes(1);
+    // The scene swap must load the restored file again, not keep the part it showed before the undo.
+    expect(sharedPart()).toBe("");
+    expect(usePlayerStore.getState().selectedElementId).toBe("box");
+  });
+
+  it("does not paint a predicted undo under the gesture", () => {
+    const { box, win, hook } = heldPreview();
+
+    expect(hook().showHistoryRestoreNow(files)).toBeNull();
+    expect(box.style.left).toBe("90px");
+    expect(win.__player.seek).not.toHaveBeenCalled();
+  });
+
+  it("puts a refused predicted undo back through the preview reload once a gesture took the element", async () => {
+    const { box, win, reloadPreview, hook } = heldPreview(false);
+    const putBack = hook().showHistoryRestoreNow(files)!;
+    beginStudioManualEditGesture(box, "move");
+    win.__player.seek.mockClear();
+
+    putBack();
+    await act(async () => {});
+    expect(reloadPreview).not.toHaveBeenCalled();
+    endStudioManualEditGesture(box);
+
+    expect(reloadPreview).toHaveBeenCalledTimes(1);
+    expect(win.__player.seek).not.toHaveBeenCalled();
   });
 });
