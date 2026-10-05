@@ -200,7 +200,8 @@ export function useTimelinePlayer({
     applyPreviewAudioFlags(iframeRef.current, audioMuted, audioVolume);
   }, []);
   const play = useCallback(() => {
-    if (!usePlayerStore.getState().timelineReady) return;
+    const { timelineReady, playLocked } = usePlayerStore.getState();
+    if (!timelineReady || playLocked) return;
     stopRAFLoop();
     stopReverseLoop();
     stopScrubPreviewAudio();
@@ -286,9 +287,8 @@ export function useTimelinePlayer({
   const pause = useCallback(() => {
     stopReverseLoop();
     const adapter = getAdapter();
-    if (!adapter) return;
-    adapter.pause();
-    setCurrentTime(adapter.getTime()); // sync store so Split/Delete have accurate time
+    adapter?.pause();
+    if (adapter) setCurrentTime(adapter.getTime()); // sync store so Split/Delete have accurate time
     setIsPlaying(false);
     shuttleDirectionRef.current = null;
     shuttleSpeedIndexRef.current = 0;
@@ -306,17 +306,19 @@ export function useTimelinePlayer({
       const duration = Math.max(0, adapter.getDuration());
       const nextTime = clampToDuration(time, duration);
       const keepPlaying = options?.keepPlaying === true;
+      const { playLocked, isPlaying: storeWasPlaying } = usePlayerStore.getState();
       const shouldResumeAfterSeek = shouldResumeForwardPlaybackAfterSeek({
         keepPlaying,
         wasReverseShuttle,
-        storeWasPlaying: usePlayerStore.getState().isPlaying,
+        storeWasPlaying,
         duration,
         nextTime,
+        playLocked,
       });
       adapter.seek(nextTime, options);
       publishSeek(nextTime, options); // Direct DOM updates (playhead, timecode, progress) — no re-render
       setCurrentTime(nextTime); // sync store so Split/Delete have accurate time
-      if (!shouldResumeAfterSeek && !keepPlaying) scrubMusicAtSeek(iframeRef.current, nextTime);
+      if (!keepPlaying && !playLocked) scrubMusicAtSeek(iframeRef.current, nextTime);
       if (shouldResumeAfterSeek) {
         stopRAFLoop();
         applyPlaybackRate(usePlayerStore.getState().playbackRate);
@@ -349,6 +351,13 @@ export function useTimelinePlayer({
     ],
   );
 
+  useEffect(
+    () =>
+      usePlayerStore.subscribe((state, prev) => {
+        if (state.playLocked && !prev.playLocked && state.isPlaying) pause();
+      }),
+    [pause],
+  );
   useEffect(() => {
     return usePlayerStore.subscribe((state, prev) => {
       if (state.requestedSeekTime !== null && state.requestedSeekTime !== prev.requestedSeekTime) {
