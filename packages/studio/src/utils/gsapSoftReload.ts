@@ -277,12 +277,26 @@ export function applySoftReloadFinalization(
   }
 }
 
-function timelineKeys(scriptText: string): string[] {
+export function timelineKeys(scriptText: string): string[] {
   return [...scriptText.matchAll(/__timelines\s*\[\s*["'`]([^"'`]+)["'`]\s*\]/g)]
     .map((m) => m[1]!)
     .filter((key) => key !== "__proxied");
 }
 
+/** The live script elements that register one of `keys` on `window.__timelines`. */
+export function scriptsRegistering(
+  scripts: readonly HTMLScriptElement[],
+  keys: readonly string[],
+): HTMLScriptElement[] {
+  return scripts.filter((script) => {
+    const text = script.textContent || "";
+    return keys.some(
+      (key) => text.includes(`__timelines["${key}"]`) || text.includes(`__timelines['${key}']`),
+    );
+  });
+}
+
+// fallow-ignore-next-line complexity
 export function applySoftReload(
   iframe: HTMLIFrameElement | null,
   scriptText: string,
@@ -311,12 +325,7 @@ export function applySoftReload(
   if (gsapScripts.length === 0) return "cannot-soft-reload";
   // Remove only the stale script element(s) that registered a target key; one we
   // can't match in the doc is left alone (re-running appends a fresh element).
-  const staleScripts = gsapScripts.filter((script) =>
-    targetKeys.some((key) => {
-      const text = script.textContent || "";
-      return text.includes(`__timelines["${key}"]`) || text.includes(`__timelines['${key}']`);
-    }),
-  );
+  const staleScripts = scriptsRegistering(gsapScripts, targetKeys);
   // Multiple GSAP scripts exist but none registers a key this script owns — we
   // can't identify which element to replace (ambiguous, matching
   // extractGsapScriptText's single-script requirement). Escalate to a full reload

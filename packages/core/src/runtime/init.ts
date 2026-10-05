@@ -1,4 +1,5 @@
 // fallow-ignore-file code-duplication complexity
+import { RUNTIME_FILLER } from "./protocol";
 import { preloadMedia, releaseMedia, lengthIsAuthored, stopMediaDownload } from "./preloadMedia";
 import { installRuntimeControlBridge, postRuntimeMessage, setRuntimeProtocolFps } from "./bridge";
 import { instantTolerance } from "../clipFacts";
@@ -166,6 +167,15 @@ function pauseTimelineIfPossible(tl: RuntimeTimelineLike | null | undefined): vo
     tl.pause();
   } catch (err) {
     swallow("runtime.timeline.pause", err);
+  }
+}
+
+/** A timeline the runtime already padded is padded again from scratch, as a fresh load pads it. */
+function dropRuntimeFillers(timeline: RuntimeTimelineLike): void {
+  const removable = timeline as RuntimeTimelineLike & { remove?: (child: unknown) => unknown };
+  if (typeof removable.remove !== "function") return;
+  for (const child of timeline.getChildren?.(false, true, false) ?? []) {
+    if (child.data === RUNTIME_FILLER) removable.remove(child);
   }
 }
 
@@ -351,8 +361,6 @@ const MEDIA_URL_ATTRS = new Map([
 ]);
 
 const SLOW_IDLE_HEARTBEAT_MS = 1000;
-// GSAP `data` on the tweens the runtime adds to stretch a timeline; never animation.
-const RUNTIME_FILLER = "hf-runtime-filler";
 
 // One document.getAnimations() per seek and the pause after it, read on first use, shared by all adapters.
 function pageAnimationsForOnePass(): () => Animation[] {
@@ -1600,6 +1608,7 @@ export function initSandboxRuntimeModular(): void {
           /* ignore */
         }
       }
+      dropRuntimeFillers(rootTimeline);
       const rootDurationSeconds = getTimelineDurationSeconds(rootTimeline);
       if (!isUsableTimelineDuration(rootDurationSeconds) && rootChildCandidates.length > 0) {
         const selectedTimelineIds = rootChildCandidates.map((candidate) => candidate.compositionId);
@@ -2035,6 +2044,12 @@ export function initSandboxRuntimeModular(): void {
     if (state.capturedTimeline !== resolution.timeline) {
       childrenBound = false;
       bindRootTimelineIfAvailable();
+    } else {
+      const length = getSafeTimelineDurationSeconds(state.capturedTimeline, 0);
+      if (length > 0 && length !== clock.getDuration()) {
+        clock.setDuration(length);
+        postTimeline();
+      }
     }
     syncTimedElementVisibility(state.currentTime);
   };
