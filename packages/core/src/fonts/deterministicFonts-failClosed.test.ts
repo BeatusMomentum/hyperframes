@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Tests for `injectDeterministicFontFaces`'s `failClosedFontFetch` gate.
  *
@@ -14,8 +15,7 @@
  * The tests inject `fetchImpl` so no real network call happens.
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { defaultLogger } from "../logger.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _clearGoogleFontCssCacheForTests,
   FONT_FETCH_FAILED,
@@ -104,6 +104,23 @@ describe("injectDeterministicFontFaces — failClosedFontFetch: false (default)"
     // No @font-face was injected because the fetch failed — but the call
     // resolves successfully with the original HTML.
     expect(result.includes("data-hyperframes-deterministic-fonts")).toBe(false);
+  });
+
+  it("sends its warnings to the caller's logger instead of the console", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.fn();
+    try {
+      await injectDeterministicFontFaces(HTML_REQUESTING_UNRESOLVED_FONT, {
+        failClosedFontFetch: false,
+        allowSystemFontCapture: false,
+        fetchImpl: makeFailingFetch(),
+        logger: { warn, info: vi.fn() },
+      });
+      expect(warn).toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
   it("swallows a 404 response and returns the original HTML (no throw)", async () => {
@@ -431,10 +448,10 @@ describe("fail-closed fonts named only in an undefined var() fallback", () => {
       `body { font-family: var(--brand, "Acme Brand Sans", sans-serif); }`,
     );
     let warnings: string[] = [];
-    let warnSpy: ReturnType<typeof spyOn>;
+    let warnSpy: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {
       warnings = [];
-      warnSpy = spyOn(defaultLogger, "warn").mockImplementation((message: string) => {
+      warnSpy = vi.spyOn(console, "warn").mockImplementation((message: string) => {
         warnings.push(message);
       });
     });

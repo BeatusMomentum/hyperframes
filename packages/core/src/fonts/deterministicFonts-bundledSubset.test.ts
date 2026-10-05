@@ -1,19 +1,18 @@
+// @vitest-environment node
 /**
  * Regression test for the coverage a bundled face claims.
  *
  * `scripts/generate-font-data.ts` embeds the `-latin-` subset file of every
  * canonical family, so an embedded face carries only Google's `latin` subset.
- * The emitted `@font-face` used to omit `unicode-range` — advertising full
- * coverage — and the supplementary Google fetch then skipped every subset of a
- * weight the bundle "covered". A bundled family therefore could not render the
- * scripts its own subset omits: `Noto Sans JP` weight 400 carries 218
- * codepoints with no kana and no kanji.
+ * The emitted `@font-face` therefore carries the latin `unicode-range`, and the
+ * supplementary Google fetch fills the subsets it omits: `Noto Sans JP` weight
+ * 400 carries 218 codepoints with no kana and no kanji.
  *
  * These tests inject `fetchImpl` (no network) and a temp
  * `HYPERFRAMES_FONT_CACHE_DIR` so they are hermetic.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,7 +105,7 @@ describe("bundled Latin precedence", () => {
     const fetchImpl = (async (input: unknown) => {
       const url = String(input);
       if (url.startsWith("https://fonts.googleapis.com/")) {
-        expect(new URL(url).searchParams.get("family")).toStartWith("Inter:");
+        expect(new URL(url).searchParams.get("family")).toMatch(/^Inter:/);
         return new Response(`@font-face {
           font-family: 'Inter'; font-style: normal; font-weight: 400;
           src: url(https://fonts.gstatic.com/s/inter/text-subset.woff2) format('woff2');
