@@ -6,6 +6,7 @@ import {
   beginStudioPendingEdit,
   flushStudioPendingEdits,
   hasStudioPendingEdits,
+  isStudioEditSaving,
   paintBackNewestStudioPendingEdit,
   trackStudioPendingEdit,
   trackedStudioEdit,
@@ -196,6 +197,128 @@ describe("a drain that meets a conflict", () => {
     finish();
     await expect(drain).resolves.toEqual({ status: "conflict", error: conflict });
     expect(laterSaved).toBe(true);
+  });
+});
+
+describe("a new edit after a debounced one", () => {
+  it("commits the debounced edit first, so history records them in the order they were made", () => {
+    const order: string[] = [];
+    const remove = addStudioPendingEditFlushListener(() => void order.push("nudge"));
+    trackedStudioEdit(() => void order.push("panel"))();
+    const drag = beginStudioPendingEdit(null);
+    drag.adopt(() => void order.push("drag"));
+    drag.settle();
+    remove();
+    expect(order).toEqual(["nudge", "panel", "nudge", "drag"]);
+  });
+  it("starts a new edit only after a flushed save that was still waiting has written", async () => {
+    const order: string[] = [];
+    let fetched!: () => void;
+    // A nudge on an animated layer: its save waits on the animation fetch before it writes.
+    const remove = addStudioPendingEditFlushListener(async () => {
+      await new Promise<void>((resolve) => (fetched = resolve));
+      order.push("nudge write");
+    });
+    const panelEdit = trackedStudioEdit(async () => void order.push("width write"), {
+      afterOlderSaves: true,
+    })();
+    fetched();
+    await panelEdit;
+    remove();
+    expect(order).toEqual(["nudge write", "width write"]);
+  });
+
+  it("keeps every later edit behind one that waits on a flushed save, so the newest value lands last", async () => {
+    const order: string[] = [];
+    let fetched!: () => void;
+    let saving = false;
+    const remove = addStudioPendingEditFlushListener(() => {
+      if (saving) return undefined;
+      saving = true;
+      return new Promise<void>((resolve) => (fetched = resolve)).then(
+        () => void order.push("nudge"),
+      );
+    });
+    const userEdit = (body: () => unknown) => trackedStudioEdit(body, { afterOlderSaves: true });
+    const first = userEdit(async () => void order.push("W 200"))();
+    const second = userEdit(async () => void order.push("W 300"))();
+    const drag = beginStudioPendingEdit(null);
+    const dragged = drag.adopt(() => Promise.resolve().then(() => void order.push("resize")));
+    fetched();
+    await Promise.all([first, second, dragged]);
+    drag.settle();
+    remove();
+    expect(order).toEqual(["nudge", "W 200", "W 300", "resize"]);
+  });
+
+  it("never waits on itself: a deferred edit or a flushed save may call a wrapped edit", async () => {
+    let fetched!: () => void;
+    let saving = false;
+    const internal = trackedStudioEdit(async () => undefined);
+    // The flushed save calls an internal wrapped commit after its fetch, as an animated nudge does.
+    const remove = addStudioPendingEditFlushListener(() => {
+      if (saving) return undefined;
+      saving = true;
+      return new Promise<void>((resolve) => (fetched = resolve)).then(() => internal());
+    });
+    const userEdit = (body: () => unknown) => trackedStudioEdit(body, { afterOlderSaves: true });
+    const panel = userEdit(() => internal())();
+    const drag = beginStudioPendingEdit(null);
+    const dragged = drag.adopt(() => internal());
+    fetched();
+    await Promise.all([panel, dragged]);
+    drag.settle();
+    await userEdit(async () => undefined)();
+    remove();
+    expect(isStudioEditSaving()).toBe(false);
+  });
+
+  it("lets a second burst flushed behind the first one save, though its commit is a panel action", async () => {
+    const order: string[] = [];
+    let fetched!: () => void;
+    const commitNudge = trackedStudioEdit(
+      async (name: string) => {
+        if (name === "nudge A") await new Promise<void>((resolve) => (fetched = resolve));
+        else await Promise.resolve();
+        order.push(name);
+      },
+      { afterOlderSaves: true },
+    );
+    let burst: { name: string; edit: ReturnType<typeof beginStudioPendingEdit> } | null = null;
+    const startBurst = (name: string) => {
+      const edit = beginStudioPendingEdit(null);
+      burst = { name, edit };
+    };
+    const remove = addStudioPendingEditFlushListener(() => {
+      if (!burst) return undefined;
+      const { name, edit } = burst;
+      burst = null;
+      const saved = edit.adopt(() => commitNudge(name));
+      edit.settle(saved);
+      return saved;
+    });
+    const panelEdit = trackedStudioEdit(async (name: string) => void order.push(name), {
+      afterOlderSaves: true,
+    });
+    startBurst("nudge A");
+    const first = panelEdit("W 200");
+    startBurst("nudge B");
+    const second = panelEdit("W 300");
+    fetched();
+    await Promise.all([first, second]);
+    remove();
+    expect(order).toEqual(["nudge A", "W 200", "nudge B", "W 300"]);
+    expect(isStudioEditSaving()).toBe(false);
+  });
+
+  it("never flushes from inside an edit's own save, where a flushed save would go untracked", () => {
+    let flushes = 0;
+    const remove = addStudioPendingEditFlushListener(() => void (flushes += 1));
+    const drag = beginStudioPendingEdit(null);
+    drag.adopt(() => trackedStudioEdit(() => undefined)());
+    drag.settle();
+    remove();
+    expect(flushes).toBe(1);
   });
 });
 

@@ -1,3 +1,4 @@
+// fallow-ignore-file code-duplication
 import { trackStudioEvent } from "../../utils/studioTelemetry";
 // @vitest-environment happy-dom
 import React, { act } from "react";
@@ -7,7 +8,11 @@ import { installReactActEnvironment, makeSelection } from "../../hooks/domSelect
 import { useDomEditNudge, type UseDomEditNudgeParams } from "./useDomEditNudge";
 import { CANVAS_NUDGE_COMMIT_DEBOUNCE_MS, CANVAS_NUDGE_STEP_PX } from "./domEditNudge";
 import { __resetForTests } from "../../utils/canvasNudgeGate";
-import { flushStudioPendingEdits, hasStudioPendingEdits } from "../../utils/studioPendingEdits";
+import {
+  flushStudioPendingEdits,
+  hasStudioPendingEdits,
+  trackedStudioEdit,
+} from "../../utils/studioPendingEdits";
 import type { DomEditSelection } from "./domEditing";
 import type { OverlayRect } from "./domEditOverlayGeometry";
 
@@ -392,23 +397,32 @@ describe("useDomEditNudge pauses playback before it snapshots the timelines", ()
   });
 });
 
+/** A burst-ready Harness on a fresh element, under fake timers. */
+function mountBurstHarness(
+  id: string,
+  onPathOffsetCommit: UseDomEditNudgeParams["onPathOffsetCommitRef"]["current"],
+) {
+  __resetForTests();
+  vi.useFakeTimers();
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  const element = document.body.appendChild(document.createElement("div"));
+  element.id = id;
+  act(() => {
+    root.render(
+      React.createElement(Harness, {
+        selection: makeSelection("Dot", element),
+        onPathOffsetCommit,
+      }),
+    );
+  });
+  return root;
+}
+
 describe("useDomEditNudge — undo right after a burst", () => {
   it("undo's drain commits a burst still inside its debounce and waits for its save", async () => {
-    __resetForTests();
-    vi.useFakeTimers();
-    const root = createRoot(document.body.appendChild(document.createElement("div")));
-    const element = document.body.appendChild(document.createElement("div"));
-    element.id = "dot-undo";
     let saved!: () => void;
     const commit = vi.fn(() => new Promise<void>((resolve) => (saved = resolve)));
-    act(() => {
-      root.render(
-        React.createElement(Harness, {
-          selection: makeSelection("Dot", element),
-          onPathOffsetCommit: commit,
-        }),
-      );
-    });
+    const root = mountBurstHarness("dot-undo", commit);
     act(() => dispatchArrowRight());
 
     let drained = false;
@@ -424,21 +438,9 @@ describe("useDomEditNudge — undo right after a burst", () => {
   });
 
   it("counts the burst as a pending edit from its first key until its save lands", async () => {
-    __resetForTests();
-    vi.useFakeTimers();
-    const root = createRoot(document.body.appendChild(document.createElement("div")));
-    const element = document.body.appendChild(document.createElement("div"));
-    element.id = "dot-pending";
     let saved!: () => void;
     const commit = vi.fn(() => new Promise<void>((resolve) => (saved = resolve)));
-    act(() => {
-      root.render(
-        React.createElement(Harness, {
-          selection: makeSelection("Dot", element),
-          onPathOffsetCommit: commit,
-        }),
-      );
-    });
+    const root = mountBurstHarness("dot-pending", commit);
     expect(hasStudioPendingEdits()).toBe(false);
     act(() => dispatchArrowRight());
     expect(hasStudioPendingEdits()).toBe(true);
@@ -449,6 +451,25 @@ describe("useDomEditNudge — undo right after a burst", () => {
     saved();
     await vi.waitFor(() => expect(hasStudioPendingEdits()).toBe(false));
     act(() => root.unmount());
+  });
+});
+
+describe("useDomEditNudge — a Design-panel edit during a burst", () => {
+  it("commits the burst before the panel edit, so one undo takes back the panel edit", async () => {
+    const order: string[] = [];
+    const root = mountBurstHarness("dot-panel", async () => void order.push("nudge"));
+    try {
+      act(() => dispatchArrowRight());
+      const panelEdit = trackedStudioEdit(async () => void order.push("width"), {
+        afterOlderSaves: true,
+      })();
+      vi.useRealTimers();
+      await panelEdit;
+      expect(order).toEqual(["nudge", "width"]);
+    } finally {
+      vi.useRealTimers();
+      act(() => root.unmount());
+    }
   });
 });
 

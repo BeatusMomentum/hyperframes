@@ -2,7 +2,13 @@ import { COLOR_GRADING_SOURCE_HIDDEN_ATTR } from "@hyperframes/core/color-gradin
 import { motionPathPluginUrl } from "@hyperframes/core/gsap-cdn";
 import { findAuthoredElement } from "./authoredSource";
 import { applyAuthoredInlineOpacity, readStampedAuthoredOpacity } from "./authoredOpacity";
-import { authoringFile, collectResetTargets, compositionFile, fileDocs } from "./softReloadTargets";
+import {
+  authoringFile,
+  collectResetTargets,
+  compositionFile,
+  fileDocs,
+  forgetLiveSets,
+} from "./softReloadTargets";
 
 type IframeWindow = Window & {
   __timelines?: Record<string, { kill?: () => void; pause?: () => void }>;
@@ -370,7 +376,12 @@ export function applySoftReload(
   // fallow-ignore-next-line complexity
   const doReload = () => {
     const timelines = win.__timelines;
-    const targets = collectResetTargets(win, doc, targetKeys);
+    const targets = collectResetTargets(
+      win,
+      doc,
+      targetKeys,
+      staleScripts.map((script) => script.textContent ?? ""),
+    );
 
     // Kill ONLY the target composition's timeline(s) — leaving every other
     // composition's timeline (and its children on the global timeline) intact.
@@ -423,6 +434,7 @@ export function applySoftReload(
         }
       }
     }
+    forgetLiveSets(targets);
 
     for (const script of staleScripts) script.remove();
 
