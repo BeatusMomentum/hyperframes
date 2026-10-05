@@ -1,5 +1,5 @@
 import type { GsapAnimation } from "@hyperframes/core/gsap-parser";
-import { parseGsapScriptAcorn } from "@hyperframes/core/gsap-parser-acorn";
+import { parseGsapScriptAcorn, scriptShape } from "@hyperframes/parsers/gsap-parser-acorn";
 import { hasExplicitTime } from "@hyperframes/parsers/gsap-writer-acorn";
 import { RUNTIME_FILLER } from "@hyperframes/core/runtime/protocol";
 import {
@@ -30,19 +30,14 @@ export type LiveRetimePlan =
 
 const RERUN = { kind: "rerun" } as const;
 
-/** The preview runs a reformatted copy of the script: compare code, not its layout. */
-const withoutLayout = (code: string) =>
-  code
-    .replace(/\s+/g, " ")
-    .replace(/ ?([^\w$ ]) ?/g, "$1")
-    .trim();
-
 function untimedShape(animation: GsapAnimation): string {
   const { id: _id, position: _p, resolvedStart: _s, duration: _d, ...rest } = animation;
   // An offset into the text, which moves when the preview reformats its copy of the script.
   const provenance = rest.provenance && { ...rest.provenance, sourceRange: undefined };
   return JSON.stringify({ ...rest, provenance }, (_key, value) =>
-    typeof value === "string" && value.startsWith("__raw:") ? withoutLayout(value) : value,
+    typeof value === "string" && value.startsWith("__raw:")
+      ? (scriptShape(`(${value.slice(6)}\n)`) ?? value)
+      : value,
   );
 }
 
@@ -55,13 +50,22 @@ const placedAlone = (animation: GsapAnimation) =>
 const lengthOf = (animation: GsapAnimation) =>
   animation.method === "set" ? 0 : animation.durationUnresolved ? undefined : animation.duration;
 
-/** A timing edit rewrites numbers only; anything else may be code the parser does not read. */
-const withoutNumbers = (script: string) =>
-  withoutLayout(script.replace(/(?<![\w$#.])\d*\.?\d+/g, "0"));
+/** The last two script shapes, by text: a repeat drag starts from the script the last one saved. */
+const shapes = new Map<string, string | null>();
+
+function shapeOf(code: string): string | null {
+  const shape = shapes.has(code) ? (shapes.get(code) as string | null) : scriptShape(code, true);
+  shapes.delete(code);
+  shapes.set(code, shape);
+  if (shapes.size > 2) shapes.delete(shapes.keys().next().value!);
+  return shape;
+}
 
 /** Decides, from the two scripts alone, whether a saved edit moved tweens and nothing else. */
 export function planLiveRetime(before: string, after: string): LiveRetimePlan {
-  if (withoutNumbers(before) !== withoutNumbers(after)) return RERUN;
+  // The preview runs the script re-printed by the bundler; a timing edit rewrites numbers only.
+  const shape = shapeOf(before);
+  if (shape === null || shape !== shapeOf(after)) return RERUN;
   const keys = timelineKeys(after);
   if (keys.length !== 1 || timelineKeys(before).join() !== keys.join()) return RERUN;
   const was = parseGsapScriptAcorn(before).animations.filter(onTimeline);
@@ -180,16 +184,6 @@ function sharesOneStretch(tweens: TweenTiming[]): boolean {
   return stretch > 0 && fits;
 }
 
-/** The runtime places a sub-composition's timeline at its host's start once; moving the host leaves it there. */
-function inOrHostsSubComposition(target: unknown, ownId: string): boolean {
-  const element = target as Element;
-  const owner = element.closest?.("[data-composition-id]");
-  return (
-    (owner != null && owner.getAttribute("data-composition-id") !== ownId) ||
-    element.querySelector?.("[data-composition-id]") != null
-  );
-}
-
 /** Tweens on one element still start in the order they did, an equal start in script order. */
 const keepsOrder = (tweens: TweenTiming[]) =>
   tweens.every(
@@ -204,6 +198,7 @@ function movesKeepEachElementsHistory(
   timeline: LiveTimeline,
   plan: LiveRetime,
   children: LiveTween[],
+  registry: unknown[],
 ): boolean {
   const byElement = new Map<unknown, number[]>();
   children.forEach((child, i) => {
@@ -216,7 +211,6 @@ function movesKeepEachElementsHistory(
   const moved = new Set<unknown>();
   for (const [target, indexes] of byElement) {
     if (!indexes.some((i) => plan.tweens[i]!.moved)) continue;
-    if (inOrHostsSubComposition(target, plan.key)) return false;
     const tweens = indexes.map((i) => plan.tweens[i]!);
     // GSAP adds delays to the schedule unstretched; a shift keeps every length.
     const shifted = tweens.every((t) => t.duration === t.wasDuration);
@@ -224,13 +218,26 @@ function movesKeepEachElementsHistory(
     if (!keepsOrder(tweens) || !sharesOneStretch(tweens) || !(shifted || undelayed)) return false;
     moved.add(target);
   }
-  return !timeline
-    .getChildren(false, false, true)
-    .some((sub) =>
-      sub
-        .getChildren(true, true, false)
-        .some((tween) => tween.targets?.().some((t) => moved.has(t))),
+  return !animatedElsewhere(timeline, registry, moved);
+}
+
+/** Whether a timeline other than `own` (nested in it, or another registered one) animates any of `targets`. */
+function animatedElsewhere(own: LiveTimeline, registry: unknown[], targets: Set<unknown>): boolean {
+  const seen = new Set<unknown>([own]);
+  const visit = (timeline: LiveTimeline): boolean => {
+    if (seen.has(timeline)) return false;
+    seen.add(timeline);
+    return (
+      timeline
+        .getChildren(false, true, false)
+        .some((tween) => tween.targets?.().some((target) => targets.has(target))) ||
+      timeline.getChildren(false, false, true).some(visit)
     );
+  };
+  const timelines = registry.filter(
+    (entry): entry is LiveTimeline => typeof (entry as LiveTimeline)?.getChildren === "function",
+  );
+  return own.getChildren(false, false, true).some(visit) || timelines.some(visit);
 }
 
 /**
@@ -245,7 +252,8 @@ export function applyLiveRetime(iframe: HTMLIFrameElement | null, plan: LiveReti
   const children = pairedLiveTweens(timeline, plan);
   if (!children) return false;
   if (plan.tweens.some((t) => t.moved)) {
-    if (!movesKeepEachElementsHistory(timeline, plan, children)) return false;
+    const registry = Object.values(win?.__timelines ?? {});
+    if (!movesKeepEachElementsHistory(timeline, plan, children, registry)) return false;
     // Re-added in script order: GSAP orders equal starts by when they were added, as a fresh run does.
     const bySource = plan.tweens
       .map((t, i) => ({ ...t, tween: children[i]! }))

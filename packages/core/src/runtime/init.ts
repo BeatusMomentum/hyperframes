@@ -1372,8 +1372,8 @@ export function initSandboxRuntimeModular(): void {
     return seconds;
   };
 
-  // Sub-composition timelines the runtime nested into the root, by host composition id.
-  const autoNestedHostIds = new WeakMap<object, string>();
+  // Sub-composition timelines the runtime nested into the root: the host composition id, and where.
+  const autoNested = new WeakMap<object, { hostId: string; parent: unknown; at: number }>();
 
   const resolveRootTimelineFromDocument = (): TimelineResolution => {
     const timelines = (window.__timelines ?? {}) as Record<string, RuntimeTimelineLike | undefined>;
@@ -1425,8 +1425,22 @@ export function initSandboxRuntimeModular(): void {
       parent: RuntimeTimelineLike,
       candidate: { compositionId: string; timeline: RuntimeTimelineLike },
     ): void => {
-      parent.add(candidate.timeline, resolveCompositionStartSeconds(candidate.compositionId));
-      autoNestedHostIds.set(candidate.timeline, candidate.compositionId);
+      const at = resolveCompositionStartSeconds(candidate.compositionId);
+      parent.add(candidate.timeline, at);
+      autoNested.set(candidate.timeline, { hostId: candidate.compositionId, parent, at });
+    };
+    const followHostStart = (
+      root: RuntimeTimelineLike,
+      candidate: { compositionId: string; timeline: RuntimeTimelineLike },
+    ): void => {
+      const nested = candidate.timeline as RuntimeTimelineLike & RuntimeTimelineChildLike;
+      const placed = autoNested.get(nested);
+      // Under another root, a re-run script placed it, and owns that place as on a fresh load.
+      if (!placed || placed.parent !== root || nested.parent !== (root as unknown)) return;
+      if (Math.abs(placed.at - resolveCompositionStartSeconds(candidate.compositionId)) < 1e-6)
+        return;
+      // GSAP takes a child out of its parent before adding it; the rebind's unpause aligns it to the root.
+      nestAtHostStart(root, candidate);
     };
     const createCompositeTimelineFromCandidates = (
       candidates: Array<{
@@ -1505,8 +1519,10 @@ export function initSandboxRuntimeModular(): void {
         if (!Array.isArray(existingChildren)) return none;
         const addedIds: string[] = [];
         for (const candidate of candidates) {
-          const alreadyIncluded = existingChildren.some((child) => child === candidate.timeline);
-          if (alreadyIncluded) continue;
+          if (existingChildren.includes(candidate.timeline)) {
+            followHostStart(rootTimeline, candidate);
+            continue;
+          }
           try {
             nestAtHostStart(rootTimeline, candidate);
             addedIds.push(candidate.compositionId);
@@ -2980,7 +2996,7 @@ export function initSandboxRuntimeModular(): void {
   };
   // A sub-composition is hidden after its host clip, so its animation counts only until then.
   const autoNestedHostEndSeconds = (child: RuntimeTimelineChildLike): number => {
-    const hostId = autoNestedHostIds.get(child);
+    const hostId = autoNested.get(child)?.hostId;
     const host = hostId
       ? document.querySelector(`[data-composition-id="${CSS.escape(hostId)}"]`)
       : null;
