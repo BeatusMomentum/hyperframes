@@ -209,6 +209,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
   projectIdRef.current = projectId;
   const [own] = useState(createOwnHistory);
   const [pageKeyScope] = useState(generateId);
+  const claimKey = useCallback((key: string) => `${pageKeyScope}:${key}`, [pageKeyScope]);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -246,7 +247,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
         paths,
         overwrote: await overwroteVersions(files),
         ...(coalesceKey && {
-          coalesceKey: `${pageKeyScope}:${coalesceKey}`,
+          coalesceKey: claimKey(coalesceKey),
           idleMs: coalesceMs ?? DEFAULT_COALESCE_MS,
         }),
       });
@@ -258,7 +259,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
       heldClaimRef.current = claimed && coalesceKey ? { paths, at: Date.now() } : null;
       await refresh();
     },
-    [projectId, refresh, own, pageKeyScope],
+    [projectId, refresh, own, claimKey],
   );
 
   const step = useCallback(
@@ -341,6 +342,7 @@ export function usePersistentEditHistory({ projectId }: UsePersistentEditHistory
     redoPaths: view.forward?.paths ?? [],
     state,
     recordEdit,
+    claimKey,
     undo,
     redo,
     predict: own.predict,
