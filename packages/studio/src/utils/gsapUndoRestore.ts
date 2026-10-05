@@ -9,7 +9,7 @@ import {
   findGsapScriptElements,
   readNestedFiles,
 } from "./gsapSoftReload";
-import { isCompositionTemplate } from "@hyperframes/parsers/hf-ids";
+import { ensureHfIds, isCompositionTemplate } from "@hyperframes/parsers/hf-ids";
 import { findAuthoredElement, parseSavedSource } from "./authoredSource";
 import { STUDIO_EDIT_ATTRS } from "../components/editor/manualEditsSeekReapply";
 import { markScenesStale } from "../player/sceneSwap";
@@ -252,8 +252,11 @@ function fileTargets(
   isActive: boolean,
   file: UndoRestoreFile,
 ): RestorePlan | null {
-  const prevDoc = parseRestoreSource(file.previous);
-  const nextDoc = parseRestoreSource(file.restored);
+  const previewStamped = doc.querySelector("[data-hf-id]") !== null;
+  const stampedLikeThePreview = (html: string) =>
+    previewStamped && !html.includes("data-hf-id") ? ensureHfIds(html) : html;
+  const prevDoc = parseRestoreSource(stampedLikeThePreview(file.previous));
+  const nextDoc = parseRestoreSource(stampedLikeThePreview(file.restored));
   const scripted = restoreScripted(prevDoc, nextDoc, isActive);
   if (scripted === null) return null;
   const keys = diffRestoreDocs(prevDoc, nextDoc);

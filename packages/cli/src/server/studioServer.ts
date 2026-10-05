@@ -436,17 +436,25 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
   };
 
   // Opened on first use, so a server that never serves Studio's history never writes one. A failed open stays off
-  // for this run; one another process was holding is tried again on the next request.
+  // for this run; one another process was holding is tried again on the next request, which no write waits for.
+  let ownerWaitMs: number | undefined;
   const histories = historyCache(() =>
     openProjectHistory({
       projectDir,
       historyRoot: options.historyRoot ?? DEFAULT_HISTORY_ROOT,
-    }).catch((error: unknown) => {
-      console.warn(`[studio] Project history is off: ${String(error)}`);
-      if (error instanceof HistoryBusyError || error instanceof HistoryClosedError)
-        histories.forget(projectDir);
-      return null;
-    }),
+      ownerWaitMs,
+    })
+      .then((history) => {
+        ownerWaitMs = undefined;
+        return history;
+      })
+      .catch((error: unknown) => {
+        console.warn(`[studio] Project history is off: ${String(error)}`);
+        if (error instanceof HistoryBusyError) ownerWaitMs = 0;
+        if (error instanceof HistoryBusyError || error instanceof HistoryClosedError)
+          histories.forget(projectDir);
+        return null;
+      }),
   );
   const projectHistory = () => histories.get(projectDir);
   watcher.addListener((changedPath) => {

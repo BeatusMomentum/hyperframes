@@ -1,6 +1,19 @@
 // @vitest-environment happy-dom
 
 import { describe, it, expect, vi } from "vitest";
+import { ensureHfIds } from "@hyperframes/parsers/hf-ids";
+
+const stamping = vi.hoisted(() => ({ calls: 0 }));
+vi.mock("@hyperframes/parsers/hf-ids", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@hyperframes/parsers/hf-ids")>();
+  return {
+    ...real,
+    ensureHfIds: (html: string) => {
+      stamping.calls += 1;
+      return real.ensureHfIds(html);
+    },
+  };
+});
 import {
   applyUndoRestoreToPreview,
   diffSoftReloadableRestore,
@@ -99,6 +112,36 @@ function buildLiveIframe(bodyHtml: string) {
 
 describe("applyUndoRestoreToPreview", () => {
   const ROOT = "index.html";
+
+  it("never stamps an undo whose sides are both already stamped", () => {
+    const film = (color: string) =>
+      `<div id="root" data-composition-id="root"><div id="target" style="background-color: ${color}">T</div><p>caption</p></div>`;
+    const blue = ensureHfIds(film("blue"));
+    const red = blue.replace("background-color: blue", "background-color: red");
+    const { iframe } = buildLiveIframe(red);
+    stamping.calls = 0;
+
+    const files = { [ROOT]: { previous: wrap(red), restored: wrap(blue) } };
+    expect(applyUndoRestoreToPreview(iframe, ROOT, files, 3, vi.fn())).toBe("soft");
+    expect(stamping.calls).toBe(0);
+  });
+
+  it("repaints in place an undo back to the film before Studio first stamped it", () => {
+    const film = (color: string) =>
+      `<div id="root" data-composition-id="root"><div id="target" style="background-color: ${color}">T</div><p>caption</p></div>`;
+    // The preview stamped the film as it loaded; the first edit wrote those stamps with its red.
+    const edited = ensureHfIds(film("blue")).replace(
+      "background-color: blue",
+      "background-color: red",
+    );
+    const { iframe, doc } = buildLiveIframe(edited);
+    const reloadPreview = vi.fn();
+    const files = { [ROOT]: { previous: wrap(edited), restored: wrap(film("blue")) } };
+
+    expect(applyUndoRestoreToPreview(iframe, ROOT, files, 3, reloadPreview)).toBe("soft");
+    expect(reloadPreview).not.toHaveBeenCalled();
+    expect((doc.getElementById("target") as HTMLElement).style.backgroundColor).toBe("blue");
+  });
 
   it("soft-applies an attribute/style-only restore: syncs the live element, no full reload", () => {
     const { iframe, contentWindow, doc } = buildLiveIframe(
