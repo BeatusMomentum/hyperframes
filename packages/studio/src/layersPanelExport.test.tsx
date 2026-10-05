@@ -29,12 +29,17 @@ afterEach(() => {
 });
 
 /** The host's preview (title in front of bg, rows to match) and its edit session, mounted around the panel. */
-async function mountPanel(wrap: (panel: ReactNode) => ReactNode = (panel) => panel) {
+const TWO_BOXES =
+  '<div data-composition-id="main"><div id="bg" style="z-index:1"></div><div id="title" style="z-index:2"></div></div>';
+
+async function mountPanel(
+  wrap: (panel: ReactNode) => ReactNode = (panel) => panel,
+  picture = TWO_BOXES,
+) {
   const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument!;
-  doc.body.innerHTML =
-    '<div data-composition-id="main"><div id="bg" style="z-index:1"></div><div id="title" style="z-index:2"></div></div>';
+  doc.body.innerHTML = picture;
   usePlayerStore.setState({ elements: [clip("title", 0), clip("bg", 1)] });
   const session = {
     domEditSelection: null,
@@ -84,7 +89,7 @@ async function dragBackRowToFront() {
 it("lists, selects and reorders the host's preview layers through the host's session", async () => {
   const { doc, session, root } = await mountPanel();
 
-  expect(rowLabels()).toEqual(["DiTitle", "DiBg"]);
+  expect(rowLabels()).toEqual(["Title", "Bg"]);
 
   const rows = document.querySelectorAll<HTMLElement>("[data-layer-index]");
   await act(async () => rows[0]!.click());
@@ -111,5 +116,41 @@ it("mirrors the reorder into the timeline rows through the host's move handler",
   await dragBackRowToFront();
   expect(onMoveElements).toHaveBeenCalledTimes(1);
   expect(bgTrack()).not.toBe(1);
+  await act(async () => root.unmount());
+});
+
+it("puts a caret only on a group's row and starts each child's icon where its parent's label starts", async () => {
+  const { root } = await mountPanel(
+    undefined,
+    '<div data-composition-id="main"><h1 id="title" style="z-index:2">Hi</h1>' +
+      '<div id="intro" data-hf-group="Intro" style="z-index:1"><img id="logo">' +
+      '<div id="inner" data-hf-group="Inner"><img id="mark"></div></div>' +
+      '<div id="wrap" style="z-index:0"><div id="box"></div></div></div>',
+  );
+  const rows = [...document.querySelectorAll<HTMLElement>("[data-layer-index]")];
+  const byLabel = (label: string) => rows.find((row) => row.textContent?.startsWith(label))!;
+  const kind = (label: string) =>
+    byLabel(label).querySelector("[data-layer-kind]")?.getAttribute("data-layer-kind");
+  expect(["Title", "Intro", "Logo", "Inner", "Mark"].map(kind)).toEqual([
+    "text",
+    "group",
+    "image",
+    "group",
+    "image",
+  ]);
+  expect([kind("Wrap"), kind("Box")]).toEqual(["group", "shape"]);
+  expect(byLabel("Wrap").firstElementChild?.getAttribute("aria-label")).toBe("Collapse children");
+  const icons = ["Title", "Intro", "Logo", "Box"].map(
+    (l) => byLabel(l).querySelector("[data-layer-kind]")!.innerHTML,
+  );
+  expect(new Set(icons).size).toBe(4);
+  for (const row of rows.filter((r) => r.title)) {
+    expect(row.querySelector<HTMLElement>("[data-layer-kind]")!.title).toContain(row.title);
+  }
+  expect(byLabel("Title").firstElementChild?.hasAttribute("data-layer-kind")).toBe(true);
+  expect(byLabel("Intro").firstElementChild?.getAttribute("aria-label")).toBe("Collapse children");
+  expect(
+    ["Title", "Intro", "Logo", "Inner", "Mark"].map((l) => byLabel(l).style.paddingLeft),
+  ).toEqual(["8px", "8px", "56px", "56px", "104px"]);
   await act(async () => root.unmount());
 });
