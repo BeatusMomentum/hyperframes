@@ -1,8 +1,17 @@
 import { runCommand } from "citty";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { chmodSync, existsSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { WhisperUnavailableError } from "../whisper/manager.js";
 import { CliRuntimeError, consumeCommandResult } from "../utils/commandResult.js";
 
@@ -18,10 +27,24 @@ vi.mock("../whisper/transcribe.js", () => ({
 
 // Engine selection: which runners look installed, and the sherpa decode child it spawns.
 const runners = { sherpa: false, mlx: false };
-vi.mock("../whisper/sherpa.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../whisper/sherpa.js")>()),
-  sherpaParakeetInstalled: () => runners.sherpa,
-}));
+let runtimeDir: string;
+vi.mock("../whisper/sherpa.js", async (importOriginal) => {
+  const sherpa = await importOriginal<typeof import("../whisper/sherpa.js")>();
+  return {
+    ...sherpa,
+    sherpaParakeetInstalled: () => runners.sherpa,
+    transcribeWithSherpa: (
+      wavPath: string,
+      dir: string,
+      options: Parameters<typeof sherpa.transcribeWithSherpa>[2],
+    ) =>
+      sherpa.transcribeWithSherpa(wavPath, dir, {
+        ...options,
+        runtimeDir,
+        cliUrl: pathToFileURL(join(runtimeDir, "dist", "cli.js")).href,
+      }),
+  };
+});
 const mlxMock = vi.fn();
 vi.mock("../whisper/parakeet.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../whisper/parakeet.js")>()),
@@ -165,6 +188,12 @@ describe("transcribe command", () => {
 
   describe("engine selection", () => {
     beforeEach(() => {
+      runtimeDir = mkdtempSync(join(tmpdir(), "hf-transcribe-runtime-"));
+      dirs.push(runtimeDir);
+      const pkg = join(runtimeDir, "node_modules", "sherpa-onnx-node");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ main: "index.js" }));
+      writeFileSync(join(pkg, "index.js"), "module.exports = {};");
       transcribeMock.mockImplementation(async (_in: string, dir: string) =>
         fakeTranscript(dir, "whisper"),
       );
