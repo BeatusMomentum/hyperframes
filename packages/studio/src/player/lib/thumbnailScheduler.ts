@@ -316,7 +316,7 @@ export class ThumbnailScheduler {
       slotFree = true;
       this.activeByBucket[bucket]--;
       this.activeByKind[entry.request.kind]--;
-      this.pump();
+      queueMicrotask(() => this.pump());
     };
     controller.signal.addEventListener("abort", freeSlot, { once: true });
     this.notify(entry);
