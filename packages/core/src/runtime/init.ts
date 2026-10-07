@@ -4025,6 +4025,9 @@ export function initSandboxRuntimeModular(): void {
     createFrameSourceAdapter({
       start: (element) => resolveStartForElement(element, 0),
       duration: (element) => resolveDurationForElement(element),
+      compositionDuration: () => getSafeTimelineDurationSeconds(state.capturedTimeline, 0),
+      canonicalFps: () => state.canonicalFps,
+      exportRenderSeek: () => Boolean(window.__HF_EXPORT_RENDER_SEEK_CONFIG),
     }),
     createWaapiAdapter(),
     createCssAdapter({
