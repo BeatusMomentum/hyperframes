@@ -14,6 +14,7 @@ import { getVariables } from "./getVariables";
 import { clearRuntimeData, registerRuntimeDataHandler, setRuntimeData } from "./runtimeData";
 import { runScriptsAfterFonts } from "./afterFonts";
 import { AFTER_FONTS_SCRIPTS } from "../compiler/scriptRuns";
+import { hasFrameSources, registerFrameSource } from "./frameSources";
 
 type HyperframeWindow = Window & {
   __hyperframeRuntimeBootstrapped?: boolean;
@@ -25,6 +26,7 @@ type HyperframeWindow = Window & {
     registerRuntimeDataHandler: typeof registerRuntimeDataHandler;
     setRuntimeData: typeof setRuntimeData;
     clearRuntimeData: typeof clearRuntimeData;
+    registerFrameSource: typeof registerFrameSource;
   };
 };
 
@@ -38,6 +40,7 @@ type HyperframeWindow = Window & {
 installAuthoredOpacityCapture();
 installAuthoredMediaCapture();
 installFlatGsapTransforms();
+window.__hfHasFrameSources = hasFrameSources;
 
 hideTimedClipsUntilFirstPass();
 deferMediaUntilDue();
@@ -53,6 +56,7 @@ deferMediaUntilDue();
   registerRuntimeDataHandler,
   setRuntimeData,
   clearRuntimeData,
+  registerFrameSource,
 };
 
 function bootstrapHyperframeRuntime(): void {

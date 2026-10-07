@@ -35,9 +35,11 @@ type ThreeLike = {
 
 declare global {
   interface Window {
+    __hfHasFrameSources?: () => boolean;
     __timelines: Record<string, RuntimeTimelineLike>;
     __player?: PlayerAPI;
     __hyperframes?: {
+      registerFrameSource: typeof import("./frameSources").registerFrameSource;
       /** A path the calling composition wrote relative to its own file, as a URL the page can load. */
       assetUrl?: (path: string) => string;
       registerRuntimeDataHandler?: (
