@@ -26,7 +26,7 @@ import { ShaderLoaderState } from "./shader-loader-state.js";
 import { PLAYER_STYLES } from "./styles.js";
 import { type DirectTimelineAdapter } from "./timeline-adapters.js";
 import { createVideoSource, isVideoType, type VideoSource } from "./video-source.js";
-import { runtimeProtocolMetadata } from "@hyperframes/core/runtime/protocol";
+import { frameDisplayScale, runtimeProtocolMetadata } from "@hyperframes/core/runtime/protocol";
 import {
   FIRST_FRAME_READINESS_SCOPE,
   scanPendingCompositionAssets,
@@ -431,6 +431,7 @@ class HyperframesPlayer extends HTMLElement {
     // starts playback — this premature call must not ALSO dispatch "play"
     // for what hasn't started, or a host listener sees it fire twice.
     let queuedForReady = false;
+    this._sendDisplayScale();
     if (!directTimelineStarted) {
       this._sendControl("play");
       // Only start the parent tick clock once the composition is ready and
@@ -1002,6 +1003,12 @@ class HyperframesPlayer extends HTMLElement {
       disabled: this._isSlideshowPlayer(),
     });
     this._sendControl("set-idle-heartbeat", { slow: this.hasAttribute(LOW_POWER_IDLE_ATTR) });
+    this._sendDisplayScale();
+  }
+
+  private _sendDisplayScale(): void {
+    const scale = frameDisplayScale(this.iframe);
+    if (scale) this._sendControl("set-display-scale", { scale });
   }
 
   private _reloadShaderOptions(): void {
@@ -1538,6 +1545,7 @@ class HyperframesPlayer extends HTMLElement {
     // why in the field. Surface it once (not on every ResizeObserver tick —
     // a legitimately hidden/zero-sized player, e.g. a collapsed tab or
     // off-screen carousel card, would otherwise spam the console forever).
+    if (applied) this._sendDisplayScale();
     if (!applied && this._ready && !this._rescaleWarned) {
       this._rescaleWarned = true;
       console.warn("[hyperframes-player] rescale no-op after ready — zero-size player element", {
